@@ -1,4 +1,6 @@
 #include "market_data/service.hpp"
+#include "mock_matching_engine/mock_shard.hpp"
+#include "client/client.hpp"
 
 #include <csignal>
 #include <iostream>
@@ -56,21 +58,7 @@ int main(int argc, char** argv) {
       Publisher publisher(config);
       publisher.run(stop);
     } else if (command == "mock") {
-      std::vector<std::unique_ptr<MockShard>> engines;
-      std::vector<std::thread> workers;
-      std::atomic_bool failed{false};
-      for (const auto& shard : config.shards)
-        if (shard_name.empty() || shard.name == shard_name) engines.push_back(std::make_unique<MockShard>(config, shard, is_static));
-      if (engines.empty()) throw std::runtime_error("No matching shard");
-      for (auto& engine : engines) {
-        auto* ptr = engine.get();
-        workers.emplace_back([&, ptr] {
-          try { ptr->run(stop); }
-          catch (const std::exception& e) { Log(std::cerr) << "Mock failed: " << e.what() << '\n'; failed.store(true); stop.store(true); }
-        });
-      }
-      for (auto& worker : workers) worker.join();
-      if (failed.load()) throw std::runtime_error("A mock shard failed");
+      run_mock(config, shard_name, is_static, stop);
     } else if (command == "observe") observe_udp(config.receivers.front(), count, stop);
     else if (command == "query") print_message(query_snapshot(config.query, symbol, config.query_timeout_ms));
     else { usage(); throw std::runtime_error("Unknown command: " + command); }

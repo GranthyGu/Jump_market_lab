@@ -1,4 +1,4 @@
-#include "market_data/protocol.hpp"
+#include "common/protocol.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -6,7 +6,6 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -61,18 +60,22 @@ std::uint64_t read_uint(std::span<const std::uint8_t> data, std::size_t& offset,
 }
 void validate_levels(const std::vector<Level>& levels, bool delta) {
   if (levels.size() > (delta ? 4 : 2) * depth) throw std::runtime_error("Too many levels");
-  std::set<std::pair<Side, std::int32_t>> seen;
   std::size_t buys = 0, sells = 0;
-  for (const auto& x : levels) {
+  for (std::size_t i = 0; i < levels.size(); ++i) {
+    const auto& x = levels[i];
     if ((x.side != Side::Buy && x.side != Side::Sell) || x.price <= 0)
       throw std::runtime_error("Invalid side or price");
     if (!((x.quantity > 0 && x.num_orders > 0) || (delta && x.quantity == 0 && x.num_orders == 0)))
       throw std::runtime_error("Invalid aggregate values");
-    if (!seen.emplace(x.side, x.price).second) throw std::runtime_error("Duplicate price level");
+    if (i != 0) {
+      const auto& previous = levels[i - 1];
+      if (previous.side == x.side && previous.price == x.price)
+        throw std::runtime_error("Duplicate price level");
+      if (ordered(x, previous)) throw std::runtime_error("Unsorted levels");
+    }
     x.side == Side::Buy ? ++buys : ++sells;
   }
   if (!delta && (buys > depth || sells > depth)) throw std::runtime_error("Depth exceeds five");
-  if (!std::is_sorted(levels.begin(), levels.end(), ordered)) throw std::runtime_error("Unsorted levels");
 }
 void validate_book(const Book& book) {
   if (book.symbol_id == 0) throw std::runtime_error("Symbol zero is reserved");
@@ -82,14 +85,32 @@ std::vector<Level> difference(const Book& before, const Book& after) {
   validate_book(before);
   validate_book(after);
   if (before.symbol_id != after.symbol_id) throw std::runtime_error("Different symbols");
-  using Key = std::pair<Side, std::int32_t>;
-  std::map<Key, Level> old, now;
-  for (const auto& x : before.levels) old.emplace(Key{x.side, x.price}, x);
-  for (const auto& x : after.levels) now.emplace(Key{x.side, x.price}, x);
+  if (before.levels == after.levels) return {};
+
   std::vector<Level> changes;
-  for (const auto& [key, x] : old) if (!now.contains(key)) changes.push_back({x.side, x.price, 0, 0});
-  for (const auto& [key, x] : now) if (!old.contains(key) || old.at(key) != x) changes.push_back(x);
-  std::sort(changes.begin(), changes.end(), ordered);
+  changes.reserve(before.levels.size() + after.levels.size());
+  std::size_t old_index = 0, new_index = 0;
+  // Merge validated, sorted keys so changes are emitted in wire order directly.
+  while (old_index < before.levels.size() && new_index < after.levels.size()) {
+    const auto& old = before.levels[old_index];
+    const auto& now = after.levels[new_index];
+    if (old.side == now.side && old.price == now.price) {
+      if (old != now) changes.push_back(now);
+      ++old_index;
+      ++new_index;
+    } else if (ordered(old, now)) {
+      changes.push_back({old.side, old.price, 0, 0});
+      ++old_index;
+    } else {
+      changes.push_back(now);
+      ++new_index;
+    }
+  }
+  for (; old_index < before.levels.size(); ++old_index) {
+    const auto& old = before.levels[old_index];
+    changes.push_back({old.side, old.price, 0, 0});
+  }
+  for (; new_index < after.levels.size(); ++new_index) changes.push_back(after.levels[new_index]);
   return changes;
 }
 Bytes encode(const Message& m) {

@@ -6,13 +6,6 @@
 #include <thread>
 
 namespace marketlab::md {
-namespace {
-void sleep_until_or_stop(Deadline deadline, const std::atomic_bool& stop, const std::atomic_bool& cancelled) {
-  while (!stop.load() && !cancelled.load() && Clock::now() < deadline)
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-}
-}  // namespace
-
 Publisher::Publisher(Config config) : config_(std::move(config)), sender_(config_.receivers) {
   for (const auto& shard : config_.shards) sources_.push_back(make_source(shard, config_.shm_max_age_ms));
   set_latest(nullptr);
@@ -101,46 +94,4 @@ void Publisher::run(const std::atomic_bool& stop) {
         }, stop);
 }
 
-MockShard::MockShard(const Config& config, ShardConfig shard, bool is_static)
-    : config_(config), shard_(std::move(shard)), epoch_(new_epoch()), static_(is_static), current_(generate(0)) {}
-ShardView MockShard::generate(std::uint64_t step) const {
-  ShardView out{epoch_, {}};
-  for (const auto id : shard_.symbols) {
-    Book book{id, {}};
-    if (config_.symbols.at(id) != "EMPTY") {
-      const auto shift = static_cast<std::int32_t>((step / 3) % 3);
-      const std::int32_t center = 10000 + static_cast<std::int32_t>(id) * 100 + shift;
-      // A quantity change and an order-count-only change exercise both aggregates.
-      for (int i = 0; i < static_cast<int>(depth); ++i)
-        book.levels.push_back({Side::Buy, center - i, 100 + (i == 0 ? step % 5 : 0),
-            static_cast<std::uint64_t>(2 + (i == 1 ? step % 2 : 0))});
-      for (int i = 0; i < static_cast<int>(depth); ++i)
-        book.levels.push_back({Side::Sell, center + 10 + i, static_cast<std::uint64_t>(200 + i), 4});
-    }
-    validate_book(book);
-    out.books.emplace(id, std::move(book));
-  }
-  return out;
-}
-void MockShard::run(const std::atomic_bool& stop) {
-  // The cached view is copied under the mutex, then encoded/sent without it.
-  SnapshotProvider provider = [this] { std::lock_guard lock(mutex_); return current_; };
-  SharedViewWriter shared(shard_.mmap_path, shard_.symbols.size());
-  shared.publish(provider());
-  auto listener = listen_tcp(shard_.host, shard_.port);
-  Log(std::cout) << "Mock " << shard_.name << " TCP=" << shard_.host << ':' << shard_.port
-      << " mmap=" << shard_.mmap_path << " source_epoch=" << epoch_text(epoch_) << '\n';
-  StopThread updater([&](const std::atomic_bool& cancelled) {
-    const auto started = Clock::now();
-    while (!stop.load() && !cancelled.load()) {
-      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
-      auto view = generate(static_ ? 0 : static_cast<std::uint64_t>(elapsed / config_.mock_step_ms));
-      { std::lock_guard lock(mutex_); current_ = view; }
-      try { shared.publish(view); }
-      catch (const std::exception& e) { Log(std::cerr) << "Shared-view update failed: " << e.what() << '\n'; }
-      sleep_until_or_stop(Clock::now() + std::chrono::milliseconds(config_.mock_update_ms), stop, cancelled);
-    }
-  });
-  serve_shard(std::move(listener), provider, stop, config_.query_timeout_ms, config_.max_query_connections);
-}
 }  // namespace marketlab::md

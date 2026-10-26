@@ -1,6 +1,6 @@
 #pragma once
 
-#include "market_data/protocol.hpp"
+#include "common/protocol.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -16,6 +16,9 @@
 namespace marketlab::md {
 using Clock = std::chrono::steady_clock;
 using Deadline = Clock::time_point;
+
+void sleep_until_or_stop(Deadline deadline, const std::atomic_bool& stop,
+                         const std::atomic_bool& cancelled);
 
 // A small joining thread keeps this C++20 program compatible with older libc++.
 class StopThread {
@@ -58,6 +61,7 @@ class Fd {
 
 Fd connect_tcp(const std::string& host, std::uint16_t port, Deadline deadline);
 Fd listen_tcp(const std::string& host, std::uint16_t port);
+Fd bind_udp(const std::string& host, std::uint16_t port);
 void send_all(int fd, std::span<const std::uint8_t> data, Deadline deadline);
 Bytes receive_exact(int fd, std::size_t length, Deadline deadline);
 
@@ -127,6 +131,4 @@ class UdpSender {
   struct Target;
   std::vector<std::shared_ptr<Target>> targets_;
 };
-void observe_udp(const Endpoint& endpoint, std::size_t count, const std::atomic_bool& stop);
-Message query_snapshot(const Endpoint& endpoint, std::uint16_t symbol, int timeout_ms);
 }  // namespace marketlab::md
