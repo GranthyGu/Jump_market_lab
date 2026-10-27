@@ -10,7 +10,7 @@ add_library(marketlab_common STATIC common/protocol.cpp common/io.cpp)
 target_include_directories(marketlab_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(marketlab_common PUBLIC Threads::Threads)
 
-add_library(marketlab_md STATIC market_data/service.cpp)
+add_library(marketlab_md STATIC market_publisher/service.cpp)
 target_link_libraries(marketlab_md PUBLIC marketlab_common)
 
 add_library(marketlab_mock_engine STATIC mock_matching_engine/mock_shard.cpp)
@@ -34,7 +34,7 @@ target_link_libraries(broadcast_tests PRIVATE marketlab_md marketlab_client)
 target_compile_options(broadcast_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME broadcast_tests COMMAND broadcast_tests)
 add_test(NAME broadcast_demo COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_test.sh
-    $<TARGET_FILE:market_broadcast> ${CMAKE_CURRENT_SOURCE_DIR}/market_data/example.conf)
+    $<TARGET_FILE:market_broadcast> ${CMAKE_CURRENT_SOURCE_DIR}/market_publisher/example.conf)
 set_tests_properties(broadcast_tests broadcast_demo PROPERTIES TIMEOUT 30)
 
 # Build explicitly when measuring the local algorithm; timing is not a test threshold.
@@ -43,3 +43,5 @@ target_link_libraries(difference_benchmark PRIVATE marketlab_common)
 target_compile_options(difference_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 
 include(tests/extended_tests.cmake)
+
+add_subdirectory(gateway)

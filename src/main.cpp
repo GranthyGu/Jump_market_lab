@@ -1,4 +1,4 @@
-#include "market_data/service.hpp"
+#include "market_publisher/service.hpp"
 #include "mock_matching_engine/mock_shard.hpp"
 #include "client/client.hpp"
 
@@ -12,7 +12,7 @@ volatile std::sig_atomic_t interrupted = 0;
 void on_signal(int) { interrupted = 1; }
 void usage() {
   std::cout << "Usage: market_broadcast <publish|mock|observe|query> [options]\n"
-      << "  --config PATH        Configuration file (default src/market_data/example.conf)\n"
+      << "  --config PATH        Configuration file (default src/market_publisher/example.conf)\n"
       << "  --source tcp|shm     Override the input transport of every shard\n"
       << "  --shard NAME         Mock one shard (default: run all configured shards)\n"
       << "  --static             Mock unchanged books\n"
@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
   if (argc < 2) { usage(); return 1; }
   const std::string command = argv[1];
   if (command == "--help" || command == "help") { usage(); return 0; }
-  std::string path = "src/market_data/example.conf", source, shard_name;
+  std::string path = "src/market_publisher/example.conf", source, shard_name;
   bool is_static = false;
   std::size_t count = 0;
   std::uint16_t symbol = 1;

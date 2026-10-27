@@ -1,0 +1,31 @@
+#pragma once
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace marketlab::orders {
+struct Address { std::string host; std::uint16_t port; };
+struct Account { std::string name, password; };
+struct EngineShard { std::uint16_t id; Address address; };
+struct Product { std::string symbol; std::int32_t previous_close; std::uint16_t shard; };
+struct OrderConfig {
+  bool direct = true;
+  Address gateway_listen{"127.0.0.1", 7000};
+  Address router_listen{"127.0.0.1", 7100};
+  Address engine_endpoint{"127.0.0.1", 7100};
+  std::vector<Account> accounts;
+  std::vector<EngineShard> shards;
+  std::vector<Product> products;
+  std::size_t max_connections = 4096;
+  std::size_t max_pending = 65536;
+  std::size_t max_pending_per_client = 1024;
+  std::size_t max_buffer_bytes = 4 * 1024 * 1024;
+  int heartbeat_ms = 500;
+  int link_timeout_ms = 5000;
+  int request_timeout_ms = 5000;
+  int partial_timeout_ms = 2000;
+  int reconnect_ms = 200;
+  bool trace = false;
+};
+OrderConfig load_order_config(const std::string& path);
+}  // namespace marketlab::orders
