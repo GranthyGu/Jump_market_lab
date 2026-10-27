@@ -1,7 +1,7 @@
 #pragma once
 #include "gateway/config.hpp"
 #include "gateway/protocol/engine_link.hpp"
-#include "common/io.hpp"
+#include "market_publisher/net/transport.hpp"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -53,12 +53,13 @@ class Process {
   ~Process() { stop(); }
   Process(const Process&) = delete;
   Process& operator=(const Process&) = delete;
-  void start(const std::string& binary,const std::vector<std::string>& args,const std::filesystem::path& log) {
+  void start(const std::string& binary,const std::vector<std::string>& args,const std::filesystem::path& log,int stdin_fd = -1) {
     check(pid_ == 0,"Process already running");
     std::vector<std::string> storage{binary}; storage.insert(storage.end(),args.begin(),args.end());
     std::vector<char*> argv; for (auto& s : storage) argv.push_back(s.data()); argv.push_back(nullptr);
     posix_spawn_file_actions_t actions;
     check(posix_spawn_file_actions_init(&actions) == 0,"spawn actions");
+    if (stdin_fd >= 0) posix_spawn_file_actions_adddup2(&actions,stdin_fd,STDIN_FILENO);
     posix_spawn_file_actions_addopen(&actions,STDOUT_FILENO,log.c_str(),O_WRONLY|O_CREAT|O_TRUNC,0600);
     posix_spawn_file_actions_adddup2(&actions,STDOUT_FILENO,STDERR_FILENO);
     const int result = posix_spawn(&pid_,binary.c_str(),&actions,nullptr,argv.data(),environ);

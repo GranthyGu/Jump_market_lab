@@ -1,18 +1,18 @@
 add_executable(difference_stress_tests tests/difference_stress_tests.cpp)
-target_link_libraries(difference_stress_tests PRIVATE marketlab_common)
+target_link_libraries(difference_stress_tests PRIVATE marketlab_market_data_link)
 target_compile_options(difference_stress_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME difference_stress COMMAND difference_stress_tests)
 set_tests_properties(difference_stress PROPERTIES TIMEOUT 120 LABELS "stress;correctness")
 
 add_executable(transport_corner_tests tests/transport_corner_tests.cpp)
-target_link_libraries(transport_corner_tests PRIVATE marketlab_common)
+target_link_libraries(transport_corner_tests PRIVATE marketlab_market_data_link)
 target_compile_options(transport_corner_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME transport_corners COMMAND transport_corner_tests)
 set_tests_properties(transport_corners PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE LABELS "stress;correctness;network")
 
 # Generate a test-only previous implementation without adding baseline branches to production.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/common/protocol.cpp")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/common/protocol.cpp" baseline_source)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/market_publisher/protocol/market_data.cpp")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/market_publisher/protocol/market_data.cpp" baseline_source)
 function(replace_test_function input begin_marker end_marker replacement output)
   string(FIND "${input}" "${begin_marker}" first)
   string(FIND "${input}" "${end_marker}" last)
@@ -29,23 +29,25 @@ replace_test_function("${baseline_source}" "\nvoid validate_levels(" "\nvoid val
 replace_test_function("${baseline_source}" "\nstd::vector<Level> difference(" "\nBytes encode("
   "std::vector<Level> difference(const Book& before, const Book& after) { return test::reference_difference(before, after); }"
   baseline_source)
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/baseline_protocol.cpp"
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/baseline_market_data.cpp"
   CONTENT "#include \"tests/reference_difference.hpp\"\n${baseline_source}" @ONLY)
 
-add_library(marketlab_common_baseline STATIC "${CMAKE_CURRENT_BINARY_DIR}/generated/baseline_protocol.cpp" common/io.cpp)
-target_include_directories(marketlab_common_baseline PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(marketlab_common_baseline PUBLIC Threads::Threads)
-add_library(marketlab_md_baseline STATIC market_publisher/service.cpp)
-target_link_libraries(marketlab_md_baseline PUBLIC marketlab_common_baseline)
+add_library(marketlab_market_data_link_baseline STATIC
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/baseline_market_data.cpp"
+  market_publisher/config.cpp market_publisher/net/transport.cpp)
+target_include_directories(marketlab_market_data_link_baseline PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(marketlab_market_data_link_baseline PUBLIC Threads::Threads)
+add_library(marketlab_publisher_baseline STATIC market_publisher/publisher.cpp)
+target_link_libraries(marketlab_publisher_baseline PUBLIC marketlab_market_data_link_baseline)
 
 foreach(variant baseline optimized)
   add_executable(network_stress_${variant} tests/network_stress.cpp)
   target_compile_definitions(network_stress_${variant} PRIVATE STRESS_IMPLEMENTATION="${variant}")
   target_compile_options(network_stress_${variant} PRIVATE -Wall -Wextra -Wpedantic)
   if(variant STREQUAL "baseline")
-    target_link_libraries(network_stress_${variant} PRIVATE marketlab_md_baseline)
+    target_link_libraries(network_stress_${variant} PRIVATE marketlab_publisher_baseline)
   else()
-    target_link_libraries(network_stress_${variant} PRIVATE marketlab_md)
+    target_link_libraries(network_stress_${variant} PRIVATE marketlab_publisher)
   endif()
 endforeach()
 

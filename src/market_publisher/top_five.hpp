@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/protocol.hpp"
+#include "market_publisher/protocol/market_data.hpp"
 
 namespace marketlab::md {
 // Matching engines keep these aggregates as part of their own order books.

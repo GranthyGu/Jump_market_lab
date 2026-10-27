@@ -1,4 +1,4 @@
-#include "market_publisher/service.hpp"
+#include "market_publisher/publisher.hpp"
 #include "tests/stress_support.hpp"
 
 #include <arpa/inet.h>

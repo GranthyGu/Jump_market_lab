@@ -1,6 +1,6 @@
-#include "market_publisher/service.hpp"
+#include "market_publisher/publisher.hpp"
 #include "client/client.hpp"
-#include "common/top_five.hpp"
+#include "market_publisher/top_five.hpp"
 #include "tests/reference_difference.hpp"
 
 #include <arpa/inet.h>

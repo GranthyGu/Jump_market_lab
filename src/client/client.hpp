@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/io.hpp"
+#include "market_publisher/net/transport.hpp"
 
 namespace marketlab::md {
 // Decode and print datagrams; this diagnostic client does not reconstruct a book.

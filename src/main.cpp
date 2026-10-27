@@ -1,4 +1,4 @@
-#include "market_publisher/service.hpp"
+#include "market_publisher/publisher.hpp"
 #include "mock_matching_engine/mock_shard.hpp"
 #include "client/client.hpp"
 

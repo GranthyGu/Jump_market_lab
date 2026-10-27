@@ -2,7 +2,7 @@
 #include "gateway/protocol/engine_link.hpp"
 #include "gateway/protocol/engine_backend.hpp"
 #include "gateway/config.hpp"
-#include "common/protocol.hpp"
+#include "market_publisher/protocol/market_data.hpp"
 #include <functional>
 #include <list>
 #include <map>
