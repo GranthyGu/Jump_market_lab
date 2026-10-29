@@ -1,12 +1,12 @@
-#include "mock_matching_engine/mock_shard.hpp"
+#include "market_publisher/demo_source.hpp"
 
 #include <iostream>
 #include <stdexcept>
 
 namespace marketlab::md {
-MockShard::MockShard(const Config& config, ShardConfig shard, bool is_static)
+SyntheticMarketSource::SyntheticMarketSource(const Config& config, ShardConfig shard, bool is_static)
     : config_(config), shard_(std::move(shard)), epoch_(new_epoch()), static_(is_static), current_(generate(0)) {}
-ShardView MockShard::generate(std::uint64_t step) const {
+ShardView SyntheticMarketSource::generate(std::uint64_t step) const {
   ShardView out{epoch_, {}};
   for (const auto id : shard_.symbols) {
     Book book{id, {}};
@@ -25,7 +25,7 @@ ShardView MockShard::generate(std::uint64_t step) const {
   }
   return out;
 }
-void MockShard::run(const std::atomic_bool& stop) {
+void SyntheticMarketSource::run(const std::atomic_bool& stop) {
   // The cached view is copied under the mutex, then encoded/sent without it.
   SnapshotProvider provider = [this] { std::lock_guard lock(mutex_); return current_; };
   SharedViewWriter shared(shard_.mmap_path, shard_.symbols.size());
@@ -47,13 +47,13 @@ void MockShard::run(const std::atomic_bool& stop) {
   serve_shard(std::move(listener), provider, stop, config_.query_timeout_ms, config_.max_query_connections);
 }
 
-void run_mock(const Config& config, const std::string& shard_name, bool is_static, std::atomic_bool& stop) {
-  std::vector<std::unique_ptr<MockShard>> engines;
+void run_demo_sources(const Config& config, const std::string& shard_name, bool is_static, std::atomic_bool& stop) {
+  std::vector<std::unique_ptr<SyntheticMarketSource>> engines;
   std::vector<std::thread> workers;
   std::atomic_bool failed{false};
   for (const auto& shard : config.shards)
     if (shard_name.empty() || shard.name == shard_name)
-      engines.push_back(std::make_unique<MockShard>(config, shard, is_static));
+      engines.push_back(std::make_unique<SyntheticMarketSource>(config, shard, is_static));
   if (engines.empty()) throw std::runtime_error("No matching shard");
   for (auto& engine : engines) {
     auto* ptr = engine.get();

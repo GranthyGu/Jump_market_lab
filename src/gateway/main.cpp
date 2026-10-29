@@ -1,5 +1,6 @@
 #include "gateway/gateway.hpp"
-#include "mock_matching_engine/order_router.hpp"
+#include "gateway/net/order_router.hpp"
+#include "matching_engine/server.hpp"
 #include <atomic>
 #include <csignal>
 #include <iostream>
@@ -21,6 +22,7 @@ int main(int argc,char** argv) {
   try {
     if (argc < 2 || std::string(argv[1]) == "--help") {
       std::cout << "market_gateway <gateway|router|shard> [--config PATH] [--shard ID]\n"
+          << "  --config PATH           Default: src/gateway/scale_32x1000.conf\n"
           << "  --trace                 Log internal message metadata (no passwords)\n"
           << "  --stats PATH            Write counters on graceful shutdown\n"
           << "  --market-port PORT      Shard's optional existing market-data TCP IPC\n"
@@ -28,7 +30,7 @@ int main(int argc,char** argv) {
       return argc < 2 ? 1 : 0;
     }
     const std::string role = argv[1];
-    std::string path = "src/gateway/example.conf", stats, mmap_path;
+    std::string path = "src/gateway/scale_32x1000.conf", stats, mmap_path;
     std::uint16_t shard = 0, market_port = 0;
     bool trace = false;
     for (int i = 2; i < argc; ++i) {

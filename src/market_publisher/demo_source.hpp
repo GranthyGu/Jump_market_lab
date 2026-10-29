@@ -4,9 +4,9 @@
 
 namespace marketlab::md {
 // This simulator only supplies aggregate views; it does not execute orders.
-class MockShard {
+class SyntheticMarketSource {
  public:
-  MockShard(const Config& config, ShardConfig shard, bool is_static);
+  SyntheticMarketSource(const Config& config, ShardConfig shard, bool is_static);
   void run(const std::atomic_bool& stop);
  private:
   ShardView generate(std::uint64_t step) const;
@@ -19,6 +19,6 @@ class MockShard {
 };
 
 // An empty shard name starts all configured mock shards in this process.
-void run_mock(const Config& config, const std::string& shard_name, bool is_static,
+void run_demo_sources(const Config& config, const std::string& shard_name, bool is_static,
               std::atomic_bool& stop);
 }  // namespace marketlab::md

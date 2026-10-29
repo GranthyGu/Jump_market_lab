@@ -14,6 +14,7 @@
 #include <csignal>
 #include <cerrno>
 #include <cmath>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -161,9 +162,11 @@ struct Fixture {
   std::filesystem::path directory;
   std::string binary;
   OrderConfig config;
-  std::array<Process,2> shards;
+  std::deque<Process> shards;
+  std::vector<std::uint16_t> market_ports;
   Process router,gateway;
-  explicit Fixture(std::string executable,const std::filesystem::path& output,bool direct = true,bool trace = false)
+  explicit Fixture(std::string executable,const std::filesystem::path& output,bool direct = true,bool trace = false,
+                   const std::filesystem::path& profile = {},bool with_market = false)
       : directory(output), binary(std::move(executable)) {
     std::signal(SIGPIPE,SIG_IGN);
     std::filesystem::create_directories(directory);
@@ -175,11 +178,21 @@ struct Fixture {
     config.products = {{"AAPL",100,1},{"MSFT",200,2},{"EMPTY",100,1},{"FRACT",101,1}};
     config.accounts = {{"alice","pass"},{"bob","pass"},{"carol","pass"},{"probe","pass"}};
     for (unsigned i = 0; i < 96; ++i) config.accounts.push_back({"load" + std::to_string(i),"pass"});
+    if (!profile.empty()) {
+      config = load_order_config(profile.string());
+      config.direct = direct;
+      config.gateway_listen.port = port(); config.router_listen.port = port(); config.engine_endpoint = config.router_listen;
+      for (auto& shard : config.shards) shard.address = {"127.0.0.1",port()};
+      config.accounts.push_back({"probe","pass"});
+    }
     config.heartbeat_ms = 100; config.link_timeout_ms = 1800; config.request_timeout_ms = 5000;
     config.partial_timeout_ms = 500; config.reconnect_ms = 50;
     config.trace = trace;
+    shards.resize(config.shards.size());
+    market_ports.resize(shards.size());
+    if (with_market) for (auto& market_port : market_ports) market_port = port();
     write_config();
-    start_shard(0); start_shard(1);
+    for (unsigned i = 0; i < shards.size(); ++i) start_shard(i,market_ports[i]);
     if (!direct) start_router();
     start_gateway(); wait_ready();
   }
@@ -204,10 +217,12 @@ struct Fixture {
   }
   void start_shard(unsigned index,std::uint16_t market_port = 0,const std::string& mmap_path = "") {
     auto a = args("shard"); a[4] = (directory / ("shard" + std::to_string(index + 1) + ".json")).string();
-    a.insert(a.end(),{"--shard",std::to_string(index + 1)});
+    a.insert(a.end(),{"--shard",std::to_string(config.shards[index].id)});
     if (market_port) a.insert(a.end(),{"--market-port",std::to_string(market_port)});
     if (!mmap_path.empty()) a.insert(a.end(),{"--market-shm",mmap_path});
-    shards[index].start(binary,a,directory / ("shard" + std::to_string(index + 1) + ".log"));
+    a.erase(a.begin()); // The component executable takes flags, not a gateway role.
+    const auto engine_binary = (std::filesystem::path(binary).parent_path() / "market_matching_engine").string();
+    shards[index].start(engine_binary,a,directory / ("shard" + std::to_string(index + 1) + ".log"));
   }
   void start_router() { router.start(binary,args("router"),directory / "router.log"); }
   void start_gateway() { gateway.start(binary,args("gateway"),directory / "gateway.log"); }

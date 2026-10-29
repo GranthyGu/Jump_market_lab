@@ -1,0 +1,185 @@
+#include "matching_engine/engine.hpp"
+#include <algorithm>
+#include <limits>
+
+namespace marketlab::orders {
+namespace {
+constexpr std::uint64_t sequence_limit = (1ULL << 48) - 1;
+std::uint64_t allocate(std::uint16_t shard,std::uint64_t& sequence) {
+  if (sequence > sequence_limit) throw std::overflow_error("Shard ID sequence exhausted");
+  return (static_cast<std::uint64_t>(shard) << 48) | sequence++;
+}
+}
+MatchingEngine::MatchingEngine(const OrderConfig& config,std::uint16_t shard)
+    : shard_(shard),epoch_(md::new_epoch()),users_(config.accounts.size() + 1,nullptr) {
+  if (!shard || config.products.size() > 65535) throw std::runtime_error("Invalid shard/products");
+  const auto count = std::count_if(config.products.begin(),config.products.end(),[&](const auto& p) { return p.shard == shard; });
+  if (!count) throw std::runtime_error("Shard has no products");
+  books_.reserve(static_cast<std::size_t>(count));
+  symbols_.reserve(static_cast<std::size_t>(count));
+  for (std::size_t i = 0; i < config.products.size(); ++i) {
+    const auto& product = config.products[i];
+    if (product.shard != shard) continue;
+    books_.emplace_back(&price_memory_);
+    auto& book = books_.back();
+    put_string(book.symbol,product.symbol);
+    book.symbol_id = static_cast<std::uint16_t>(i + 1);
+    book.lower = static_cast<std::int64_t>(product.previous_close) * 90 / 100;
+    book.upper = static_cast<std::int64_t>(product.previous_close) * 110 / 100;
+    symbols_.emplace(std::string_view(book.symbol,product.symbol.size()),books_.size() - 1);
+  }
+  outgoing_.reserve(64);
+}
+MatchingEngine::Order* MatchingEngine::Pool::acquire() {
+  if (!free_) {
+    auto block = std::make_unique<Order[]>(block_size);
+    for (std::size_t i = 0; i + 1 < block_size; ++i) block[i].next = &block[i + 1];
+    auto* first = block.get();
+    blocks_.push_back(std::move(block)); free_ = first;
+  }
+  auto* order = free_; free_ = free_->next; *order = Order{}; return order;
+}
+void MatchingEngine::Pool::release(Order* order) noexcept { order->next = free_; free_ = order; }
+template <typename T> void MatchingEngine::queue(LinkKind kind,const LinkHeader& context,const T& record) {
+  static_assert(sizeof(T) <= max_client_frame);
+  outgoing_.emplace_back(); auto& event = outgoing_.back();
+  event.kind = kind; event.context = context; event.size = sizeof(T);
+  std::memcpy(event.payload.data(),&record,sizeof(T));
+}
+void MatchingEngine::command(const LinkHeader& h,std::span<const std::uint8_t> bytes,const Emit& emit) {
+  // The reactor is the sole command owner. No network writes under state_mutex_.
+  outgoing_.clear();
+  {
+    std::lock_guard lock(state_mutex_);
+    if (!h.user || h.user >= users_.size()) throw std::runtime_error("Unknown engine user");
+    if (h.kind == LinkKind::NewOrder) new_order(h,copy_record<NewOrderRequest>(bytes));
+    else if (h.kind == LinkKind::Cancel) cancel(h,copy_record<CancelRequest>(bytes));
+    else if (h.kind == LinkKind::Snapshot) snapshot(h,copy_record<Header>(bytes));
+    else throw std::runtime_error("Unexpected engine command");
+  }
+  for (const auto& event : outgoing_) emit(event.kind,event.context,{event.payload.data(),event.size});
+}
+void MatchingEngine::update(const Order& order,RequestId request,const LinkHeader& context,Timestamp time) {
+  OrderUpdate record{};
+  record.header = {MessageType::OrderUpdate,sizeof(record),request};
+  record.timestamp = time ? time : unix_ns();
+  record.order = order.state;
+  auto destination = context; destination.user = order.user;
+  queue(LinkKind::Event,destination,record);
+}
+void MatchingEngine::trade(const Order& order,TradeId id,Price price,Quantity quantity,Timestamp time) {
+  Trade record{};
+  record.header = {MessageType::Trade,sizeof(record),0};
+  record.timestamp = time; record.tradeId = id; record.orderId = order.state.orderId;
+  std::memcpy(record.symbol,order.state.symbol,sizeof(SymbolName));
+  record.side = order.state.side; record.price = price; record.quantity = quantity;
+  queue(LinkKind::Event,{0,LinkKind::Event,0,order.user,0},record);
+}
+void MatchingEngine::new_order(const LinkHeader& h,const NewOrderRequest& request) {
+  // Validate fixed-width strings without allocating a temporary std::string.
+  const auto end = std::find(std::begin(request.symbol),std::end(request.symbol),'\0');
+  if (end == std::end(request.symbol) || !std::all_of(end,std::end(request.symbol),[](char c) { return c == 0; }))
+    throw std::runtime_error("Invalid symbol wire field");
+  const auto found = symbols_.find(std::string_view(request.symbol,static_cast<std::size_t>(end - request.symbol)));
+  if (found == symbols_.end() || (request.side != Side::Buy && request.side != Side::Sell) ||
+      request.price <= 0 || request.quantity <= 0 || request.price < books_[found->second].lower ||
+      request.price > books_[found->second].upper || next_order_ > sequence_limit || next_trade_ > sequence_limit) {
+    queue(LinkKind::Event,h,rejected(request.header.requestId,RejectReason::InvalidOrder)); return;
+  }
+  auto& book = books_[found->second];
+  Order incoming{}; incoming.user = h.user; incoming.book = &book;
+  incoming.state.orderId = allocate(shard_,next_order_);
+  std::memcpy(incoming.state.symbol,book.symbol,sizeof(SymbolName));
+  incoming.state.side = request.side; incoming.state.price = request.price;
+  incoming.state.originalQuantity = incoming.state.remainingQuantity = request.quantity;
+  incoming.state.status = OrderStatus::Accepted;
+  update(incoming,request.header.requestId,h);
+  match(incoming,request.side == Side::Buy ? book.asks : book.bids);
+  if (incoming.state.remainingQuantity) rest(incoming);
+}
+void MatchingEngine::match(Order& incoming,Levels& opposite) {
+  while (incoming.state.remainingQuantity && !opposite.empty()) {
+    auto best = incoming.state.side == Side::Buy ? opposite.begin() : std::prev(opposite.end());
+    const auto price = best->first;
+    if ((incoming.state.side == Side::Buy && price > incoming.state.price) ||
+        (incoming.state.side == Side::Sell && price < incoming.state.price)) break;
+    auto* resting = best->second.head; // No order-ID lookup in the fill loop.
+    const Quantity incoming_remaining = incoming.state.remainingQuantity;
+    const Quantity resting_remaining = resting->state.remainingQuantity;
+    const Quantity quantity = std::min(incoming_remaining,resting_remaining);
+    const auto id = allocate(shard_,next_trade_); const auto time = unix_ns();
+    for (auto* order : {&incoming,resting}) {
+      order->state.filledQuantity += quantity; order->state.remainingQuantity -= quantity;
+      order->state.status = order->state.remainingQuantity ? OrderStatus::PartiallyFilled : OrderStatus::Filled;
+      trade(*order,id,price,quantity,time);
+      update(*order,0,{0,LinkKind::Event,0,order->user,0},time);
+    }
+    best->second.quantity -= static_cast<std::uint64_t>(quantity);
+    if (!resting->state.remainingQuantity) {
+      unlink(*resting); active_.erase(resting->state.orderId); pool_.release(resting);
+      if (!best->second.count) opposite.erase(best);
+    }
+  }
+}
+void MatchingEngine::rest(const Order& incoming) {
+  auto* order = pool_.acquire(); *order = incoming;
+  auto& levels = order->state.side == Side::Buy ? order->book->bids : order->book->asks;
+  const Price price = order->state.price; // Never bind STL references to packed fields.
+  const auto [position,inserted] = levels.try_emplace(price);
+  (void)inserted;
+  auto& level = position->second;
+  active_.insert(order->state.orderId,order);
+  order->position = position; order->prev = level.tail;
+  if (level.tail) level.tail->next = order; else level.head = order;
+  level.tail = order;
+  level.quantity += static_cast<std::uint64_t>(order->state.remainingQuantity); ++level.count;
+  order->user_next = users_[order->user];
+  if (order->user_next) order->user_next->user_prev = order;
+  users_[order->user] = order;
+}
+void MatchingEngine::unlink(Order& order) {
+  auto& level = order.position->second;
+  if (order.prev) order.prev->next = order.next; else level.head = order.next;
+  if (order.next) order.next->prev = order.prev; else level.tail = order.prev;
+  --level.count;
+  if (order.user_prev) order.user_prev->user_next = order.user_next; else users_[order.user] = order.user_next;
+  if (order.user_next) order.user_next->user_prev = order.user_prev;
+}
+void MatchingEngine::cancel(const LinkHeader& h,const CancelRequest& request) {
+  auto* order = active_.find(request.orderId);
+  if (!order || order->user != h.user) {
+    queue(LinkKind::Event,h,rejected(request.header.requestId,RejectReason::CancelFailed)); return;
+  }
+  auto& levels = order->state.side == Side::Buy ? order->book->bids : order->book->asks;
+  const auto position = order->position;
+  position->second.quantity -= static_cast<std::uint64_t>(order->state.remainingQuantity);
+  unlink(*order);
+  if (!position->second.count) levels.erase(position);
+  order->state.remainingQuantity = 0; order->state.status = OrderStatus::Canceled;
+  update(*order,request.header.requestId,h);
+  active_.erase(request.orderId); pool_.release(order);
+}
+void MatchingEngine::snapshot(const LinkHeader& h,const Header& request) {
+  for (auto* order = users_[h.user]; order; order = order->user_next) {
+    auto record = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot,request.requestId);
+    record.order = order->state; queue(LinkKind::Event,h,record);
+  }
+  auto end = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot,request.requestId);
+  end.isEnd = 1; queue(LinkKind::SnapshotEnd,h,end);
+}
+md::ShardView MatchingEngine::market_view() {
+  std::lock_guard lock(state_mutex_);
+  md::ShardView view{epoch_,{}};
+  for (const auto& book : books_) {
+    md::Book top{book.symbol_id,{}}; top.levels.reserve(2 * md::depth);
+    auto copy = [&](auto begin,auto end,md::Side side) {
+      for (unsigned count = 0; begin != end && count < md::depth; ++begin,++count)
+        top.levels.push_back({side,begin->first,begin->second.quantity,begin->second.count});
+    };
+    copy(book.bids.rbegin(),book.bids.rend(),md::Side::Buy);
+    copy(book.asks.begin(),book.asks.end(),md::Side::Sell);
+    view.books.emplace(top.symbol_id,std::move(top));
+  }
+  return view;
+}
+}  // namespace marketlab::orders

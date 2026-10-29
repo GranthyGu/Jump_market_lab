@@ -1,5 +1,5 @@
-#include "mock_matching_engine/order_router.hpp"
-#include "mock_matching_engine/order_book.hpp"
+#include "matching_engine/server.hpp"
+#include "matching_engine/engine.hpp"
 #include "gateway/net/engine_connections.hpp"
 #include "market_publisher/net/transport.hpp"
 #include <fstream>
@@ -26,8 +26,7 @@ void serve_order_engine(EngineBackend& book,const OrderConfig& c,std::uint16_t s
     });
   };
   io.listen(found->address,Framing::Internal,4);
-  // Optional bridge reuses the existing market-data IPC exactly, allowing the
-  // publisher to sample the same orders used by gateway integration tests.
+  // Publisher samples the same live order state through the existing IPC.
   std::atomic_bool market_failed{false};
   std::unique_ptr<md::StopThread> market_tcp, market_shared;
   if (market_port) {
@@ -63,7 +62,7 @@ void serve_order_engine(EngineBackend& book,const OrderConfig& c,std::uint16_t s
 }
 void run_order_shard(const OrderConfig& c,std::uint16_t shard,const std::atomic_bool& stop,
                      const std::string& stats_path,std::uint16_t market_port,const std::string& mmap_path) {
-  MockOrderBook book(c,shard);
+  MatchingEngine book(c,shard);
   serve_order_engine(book,c,shard,stop,stats_path,market_port,mmap_path);
 }
 }  // namespace marketlab::orders

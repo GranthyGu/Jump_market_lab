@@ -7,19 +7,16 @@ find_package(Threads REQUIRED)
 
 add_subdirectory(market_publisher)
 
-add_library(marketlab_mock_engine STATIC mock_matching_engine/mock_shard.cpp)
-target_link_libraries(marketlab_mock_engine PUBLIC marketlab_market_data_link)
-
 add_library(marketlab_client STATIC client/client.cpp)
 target_link_libraries(marketlab_client PUBLIC marketlab_market_data_link)
 
-foreach(target marketlab_mock_engine marketlab_client)
+foreach(target marketlab_client)
   target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
 endforeach()
 
 # One executable keeps the existing publish/mock/observe/query command interface.
 add_executable(market_broadcast main.cpp)
-target_link_libraries(market_broadcast PRIVATE marketlab_publisher marketlab_mock_engine marketlab_client)
+target_link_libraries(market_broadcast PRIVATE marketlab_publisher marketlab_demo_source marketlab_client)
 target_compile_options(market_broadcast PRIVATE -Wall -Wextra -Wpedantic)
 
 enable_testing()
@@ -39,3 +36,4 @@ target_compile_options(difference_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 include(tests/extended_tests.cmake)
 
 add_subdirectory(gateway)
+add_subdirectory(matching_engine)

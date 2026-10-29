@@ -4,12 +4,12 @@
 #include <functional>
 
 namespace marketlab::orders {
-// Implement this interface to replace the simulator while retaining TCP framing,
-// heartbeats, routing and client sessions. Emit before returning; do not retain
-// the callback or payload span. The adapter performs network writes afterwards.
+// One command owner (the shard reactor). market_view() may run concurrently.
+// Emit is synchronous: the receiver must copy the span before returning.
+// Neither the callback nor its span may be retained or reenter command().
 class EngineBackend {
  public:
-  using Emit = std::function<void(LinkKind,const LinkHeader&,const Bytes&)>;
+  using Emit = std::function<void(LinkKind,const LinkHeader&,std::span<const std::uint8_t>)>;
   virtual ~EngineBackend() = default;
   virtual void command(const LinkHeader&,std::span<const std::uint8_t>,const Emit&) = 0;
   virtual md::ShardView market_view() = 0;
