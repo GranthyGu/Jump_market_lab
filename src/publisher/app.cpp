@@ -14,7 +14,7 @@ volatile std::sig_atomic_t interrupted = 0;
 void on_signal(int) { interrupted = 1; }
 void usage() {
   std::cout << "Usage: market_broadcast <publish|mock|observe|query> [options]\n"
-      << "  --config PATH        Configuration file (default src/publisher/scale_32x1000.conf)\n"
+      << "  --config PATH        Configuration file (default src/config/publisher.conf)\n"
       << "  --source tcp|shm     Override the input transport of every shard\n"
       << "  --shard NAME         Mock one shard (default: run all configured shards)\n"
       << "  --static             Mock unchanged books\n"

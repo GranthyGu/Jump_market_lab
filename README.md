@@ -4,6 +4,7 @@ Status: approved instructor specification.
 
 Implementation layout, file migration records, and independent component builds:
 [Project layout](docs/PROJECT_LAYOUT.md). Runtime guides remain under `docs/`.
+See [running the exchange](docs/EXCHANGE_RUN.md) for current configuration paths and separate-process startup.
 
 ## Project objective
 
