@@ -21,17 +21,17 @@ trap 'exit 143' TERM
 }
 cluster_shard=1
 while [ "$cluster_shard" -le 32 ]; do
-  ./build/market_matching_engine --config src/gateway/scale_32x1000.conf \
+  ./build/market_matching_engine --config src/config/exchange.conf \
     --shard "$cluster_shard" --market-port "$((9200 + cluster_shard))" \
     --stats "$cluster_output/shard-${cluster_shard}.json" \
     > "$cluster_output/shard-${cluster_shard}.log" 2>&1 &
   cluster_pids="$cluster_pids $!"
   cluster_shard=$((cluster_shard + 1))
 done
-./build/market_gateway gateway --config src/gateway/scale_32x1000.conf \
+./build/market_gateway gateway --config src/config/exchange.conf \
   --stats "$cluster_output/gateway.json" > "$cluster_output/gateway.log" 2>&1 &
 cluster_pids="$cluster_pids $!"
-./build/market_broadcast publish --config src/market_publisher/scale_32x1000.conf \
+./build/market_broadcast publish --config src/publisher/scale_32x1000.conf \
   > "$cluster_output/publisher.log" 2>&1 &
 cluster_pids="$cluster_pids $!"
 printf '%s\n' 'Started 32 shards + gateway + publisher; gateway TCP 7000, orders 7201..7232, market sources 9201..9232.'

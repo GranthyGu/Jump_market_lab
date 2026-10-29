@@ -1,6 +1,6 @@
 #pragma once
-#include "gateway/protocol/engine_link.hpp"
-#include "market_publisher/protocol/market_data.hpp"
+#include "shared_data/orders/engine_link.hpp"
+#include "shared_data/market_data/market_data.hpp"
 #include <functional>
 
 namespace marketlab::orders {

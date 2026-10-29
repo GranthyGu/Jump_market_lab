@@ -1,5 +1,5 @@
-#include "gateway/protocol/engine_link.hpp"
-#include "market_publisher/net/transport.hpp"
+#include "shared_data/orders/engine_link.hpp"
+#include "shared_data/market_data/transport.hpp"
 
 #include <arpa/inet.h>
 #include <poll.h>

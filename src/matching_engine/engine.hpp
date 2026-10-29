@@ -1,7 +1,7 @@
 #pragma once
 #include "matching_engine/active_index.hpp"
 #include "matching_engine/backend.hpp"
-#include "gateway/config.hpp"
+#include "shared_data/orders/config.hpp"
 #include <map>
 #include <memory>
 #include <memory_resource>

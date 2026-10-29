@@ -1,7 +1,7 @@
 #include "matching_engine/server.hpp"
 #include "matching_engine/engine.hpp"
-#include "gateway/net/engine_connections.hpp"
-#include "market_publisher/net/transport.hpp"
+#include "shared_data/orders/engine_connections.hpp"
+#include "shared_data/market_data/transport.hpp"
 #include <fstream>
 
 namespace marketlab::orders {

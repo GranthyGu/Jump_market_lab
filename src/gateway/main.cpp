@@ -1,19 +1,30 @@
 #include "gateway/gateway.hpp"
 #include "gateway/net/order_router.hpp"
-#include "matching_engine/server.hpp"
+#include "shared_data/paths.hpp"
 #include <atomic>
+#include <cerrno>
 #include <csignal>
+#include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 volatile std::sig_atomic_t interrupted = 0;
 void signal_handler(int) { interrupted = 1; }
-std::uint16_t port_or_shard(const std::string& text) {
-  if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos) throw std::runtime_error("Invalid numeric argument");
-  const auto value = std::stoul(text);
-  if (!value || value > 65535) throw std::runtime_error("Port/shard outside 1..65535");
-  return static_cast<std::uint16_t>(value);
+int run_legacy_shard(int argc, char** argv) {
+  // Keep the old command as a process launcher, without linking engine business
+  // code into the gateway. Standalone engine builds can live in another folder.
+  const auto binary = std::filesystem::canonical(argv[0]).parent_path() / "market_matching_engine";
+  std::string executable = binary.string();
+  std::vector<char*> arguments{executable.data()};
+  for (int i = 2; i < argc; ++i) arguments.push_back(argv[i]);
+  arguments.push_back(nullptr);
+  execv(executable.c_str(), arguments.data());
+  std::cerr << "Cannot launch " << executable << ": " << std::strerror(errno)
+      << ". Build market_matching_engine alongside market_gateway or run it directly.\n";
+  return 1;
 }
 }
 int main(int argc,char** argv) {
@@ -22,7 +33,7 @@ int main(int argc,char** argv) {
   try {
     if (argc < 2 || std::string(argv[1]) == "--help") {
       std::cout << "market_gateway <gateway|router|shard> [--config PATH] [--shard ID]\n"
-          << "  --config PATH           Default: src/gateway/scale_32x1000.conf\n"
+          << "  --config PATH           Default: src/config/exchange.conf\n"
           << "  --trace                 Log internal message metadata (no passwords)\n"
           << "  --stats PATH            Write counters on graceful shutdown\n"
           << "  --market-port PORT      Shard's optional existing market-data TCP IPC\n"
@@ -30,8 +41,9 @@ int main(int argc,char** argv) {
       return argc < 2 ? 1 : 0;
     }
     const std::string role = argv[1];
-    std::string path = "src/gateway/scale_32x1000.conf", stats, mmap_path;
-    std::uint16_t shard = 0, market_port = 0;
+    if (role == "shard") return run_legacy_shard(argc, argv);
+    if (role != "gateway" && role != "router") throw std::runtime_error("Unknown role");
+    std::string path = marketlab::default_exchange_config, stats;
     bool trace = false;
     for (int i = 2; i < argc; ++i) {
       const std::string flag = argv[i];
@@ -40,9 +52,6 @@ int main(int argc,char** argv) {
       const std::string value = argv[i];
       if (flag == "--config") path = value;
       else if (flag == "--stats") stats = value;
-      else if (flag == "--shard") shard = port_or_shard(value);
-      else if (flag == "--market-port") market_port = port_or_shard(value);
-      else if (flag == "--market-shm") mmap_path = value;
       else throw std::runtime_error("Unknown option: " + flag);
     }
     auto config = load_order_config(path); config.trace = trace;
@@ -54,8 +63,6 @@ int main(int argc,char** argv) {
     try {
       if (role == "gateway") run_gateway(config,stop,stats);
       else if (role == "router") run_order_router(config,stop,stats);
-      else if (role == "shard" && shard) run_order_shard(config,shard,stop,stats,market_port,mmap_path);
-      else throw std::runtime_error("Unknown role or missing --shard");
     } catch (...) { done.store(true); signals.join(); throw; }
     done.store(true); signals.join();
     return 0;

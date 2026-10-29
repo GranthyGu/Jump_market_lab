@@ -1,0 +1,10 @@
+# Setup used by both the exchange and each standalone component build.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+get_filename_component(MARKETLAB_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+find_package(Threads REQUIRED)
+if(NOT TARGET marketlab_order_link)
+  add_subdirectory("${MARKETLAB_SOURCE_DIR}/shared_data" "${CMAKE_BINARY_DIR}/shared_data" EXCLUDE_FROM_ALL)
+endif()

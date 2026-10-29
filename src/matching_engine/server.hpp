@@ -1,6 +1,6 @@
 #pragma once
 #include "matching_engine/backend.hpp"
-#include "gateway/config.hpp"
+#include "shared_data/orders/config.hpp"
 #include <atomic>
 
 namespace marketlab::orders {

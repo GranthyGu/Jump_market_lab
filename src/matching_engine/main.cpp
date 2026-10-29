@@ -1,5 +1,6 @@
+#include "shared_data/paths.hpp"
 #include "matching_engine/server.hpp"
-#include "market_publisher/net/transport.hpp"
+#include "shared_data/market_data/transport.hpp"
 #include <csignal>
 #include <iostream>
 
@@ -21,14 +22,14 @@ int main(int argc,char** argv) {
   try {
     if (argc == 1 || std::string(argv[1]) == "--help") {
       std::cout << "market_matching_engine --shard ID [options]\n"
-        << "  --config PATH       Shared deployment config; default src/gateway/scale_32x1000.conf\n"
+        << "  --config PATH       Shared deployment config; default src/config/exchange.conf\n"
         << "  --market-port PORT  Enable publisher TCP source on this port\n"
         << "  --market-shm PATH   Enable local shared-memory market view\n"
         << "  --stats PATH        Write counters on graceful shutdown\n"
         << "  --trace             Log internal message metadata\n";
       return argc == 1 ? 1 : 0;
     }
-    std::string path = "src/gateway/scale_32x1000.conf",stats,mmap_path;
+    std::string path = marketlab::default_exchange_config,stats,mmap_path;
     std::uint16_t shard = 0,market_port = 0; bool trace = false;
     for (int i = 1; i < argc; ++i) {
       const std::string flag = argv[i];

@@ -2,6 +2,9 @@
 
 Status: approved instructor specification.
 
+Implementation layout, file migration records, and independent component builds:
+[Project layout](docs/PROJECT_LAYOUT.md). Runtime guides remain under `docs/`.
+
 ## Project objective
 
 Implement an exchange with a TCP order gateway, matching engines sharded by symbol, and a UDP market-data publisher. Students work individually and may implement all core components in C++20 or Python. The required runtime platform is Linux.
