@@ -17,7 +17,7 @@ All shell entry points are in `src/scripts/`:
 - `build.sh`: build runtime programs.
 - `run_matching_engine.sh`, `run_gateway.sh`, `run_publisher.sh`: start services.
 - `run_market_client.sh`: subscribe and display public market data.
-- `run_snapshot_client.sh`: query one full snapshot over publisher TCP (default port 9100).
+- `run_snapshot_client.sh`: interactive snapshot queries over publisher TCP (default port 9100).
 - `run_client.sh`: terminal login with hidden password input, followed by trading.
 
 Run each service in its own terminal. Start a market client with
@@ -26,8 +26,9 @@ Run each service in its own terminal. Start a market client with
 use `--interface LOCAL_IPV4` for the market client or `--host GATEWAY_IPV4`
 for the trading client when running across machines.
 
-Query a full snapshot with `./src/scripts/run_snapshot_client.sh --symbol 1`;
-add `--host PUBLISHER_IPV4 --port 9100` for a remote publisher.
+Open `./src/scripts/run_snapshot_client.sh`, then enter `query 1` or a symbol ID.
+Enter `quit` to exit. Add `--host PUBLISHER_IPV4 --port 9100` for a remote publisher;
+`--symbol 1` remains available for a single query followed by exit.
 
 `src/CMakeLists.txt` is the full-exchange build entry point and supplies shared
 C++20, thread, dependency and output-directory settings. Component CMakeLists
