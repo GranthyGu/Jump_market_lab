@@ -306,6 +306,23 @@ UdpSender::UdpSender(const std::vector<Endpoint>& destinations) : socket_(socket
   for (const auto& d : destinations)
     targets_.push_back(std::make_shared<Target>(Target{address(d.host, d.port), d.host + ":" + std::to_string(d.port)}));
 }
+UdpSender::UdpSender(const MulticastConfig& config) : UdpSender(std::vector<Endpoint>{config.group}) {
+  validate_multicast(config);
+  const auto iface = address(config.interface, 0).sin_addr;
+  const auto ttl = static_cast<unsigned char>(config.ttl);
+  const unsigned char loopback = config.loopback ? 1 : 0;
+  if (setsockopt(socket_.get(), IPPROTO_IP, IP_MULTICAST_IF, &iface, sizeof(iface)) < 0)
+    throw system_error("IP_MULTICAST_IF (select a local interface IPv4)");
+  if (setsockopt(socket_.get(), IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) < 0)
+    throw system_error("IP_MULTICAST_TTL");
+  if (setsockopt(socket_.get(), IPPROTO_IP, IP_MULTICAST_LOOP, &loopback, sizeof(loopback)) < 0)
+    throw system_error("IP_MULTICAST_LOOP");
+}
+UdpSender::UdpSender(const Config& config)
+    : UdpSender(config.multicast ? UdpSender(*config.multicast) : UdpSender(config.receivers)) {
+  if (config.multicast && !config.receivers.empty())
+    throw std::runtime_error("Do not mix multicast and unicast destinations");
+}
 void UdpSender::send(std::span<const std::uint8_t> bytes) const {
   for (const auto& target : targets_) {
     const auto n = sendto(socket_.get(), bytes.data(), bytes.size(), 0,
@@ -318,6 +335,34 @@ Fd bind_udp(const std::string& host, std::uint16_t port) {
   if (!fd) throw system_error("UDP receiver");
   const auto addr = address(host, port);
   if (bind(fd.get(), reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) throw system_error("UDP bind");
+  return fd;
+}
+Fd join_multicast(const MulticastConfig& config) {
+  validate_multicast(config);
+  Fd fd(socket(AF_INET, SOCK_DGRAM, 0));
+  if (!fd) throw system_error("Multicast receiver socket");
+  const int yes = 1;
+  if (setsockopt(fd.get(), SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+    throw system_error("Multicast SO_REUSEADDR");
+#if defined(__APPLE__)
+  // BSD requires port reuse for multiple local subscribers to the same group.
+  if (setsockopt(fd.get(), SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) < 0)
+    throw system_error("Multicast SO_REUSEPORT");
+#endif
+#if defined(__linux__) && defined(IP_MULTICAST_ALL)
+  const int no = 0;
+  if (setsockopt(fd.get(), IPPROTO_IP, IP_MULTICAST_ALL, &no, sizeof(no)) < 0)
+    throw system_error("IP_MULTICAST_ALL");
+#endif
+  const auto local = address("0.0.0.0", config.group.port);
+  if (bind(fd.get(), reinterpret_cast<const sockaddr*>(&local), sizeof(local)) < 0)
+    throw system_error("Multicast bind");
+  ip_mreq membership{};
+  membership.imr_multiaddr = address(config.group.host, config.group.port).sin_addr;
+  membership.imr_interface = address(config.interface, 0).sin_addr;
+  if (setsockopt(fd.get(), IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof(membership)) < 0)
+    throw system_error("IP_ADD_MEMBERSHIP (select a local interface IPv4)");
+  // Closing this owned socket automatically drops its membership.
   return fd;
 }
 }  // namespace marketlab::md

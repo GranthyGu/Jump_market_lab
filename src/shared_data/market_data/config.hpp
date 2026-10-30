@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,10 +16,19 @@ struct ShardConfig {
   std::vector<std::uint16_t> symbols;
 };
 struct Endpoint { std::string host; std::uint16_t port; };
+struct MulticastConfig {
+  Endpoint group{"239.10.10.1", 9001};
+  // Local interface IPv4, or 0.0.0.0 to use the system routing decision.
+  std::string interface = "0.0.0.0";
+  int ttl = 1;
+  bool loopback = true;
+};
+void validate_multicast(const MulticastConfig& config);
 struct Config {
   std::map<std::uint16_t, std::string> symbols;
   std::vector<ShardConfig> shards;
   std::vector<Endpoint> receivers;
+  std::optional<MulticastConfig> multicast;
   Endpoint query{"127.0.0.1", 9100};
   std::uint64_t snapshot_every = 5;
   int source_timeout_ms = 800;

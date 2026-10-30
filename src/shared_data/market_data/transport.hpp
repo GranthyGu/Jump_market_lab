@@ -63,6 +63,8 @@ class Fd {
 Fd connect_tcp(const std::string& host, std::uint16_t port, Deadline deadline);
 Fd listen_tcp(const std::string& host, std::uint16_t port);
 Fd bind_udp(const std::string& host, std::uint16_t port);
+// Bind the shared UDP port and join the group on the selected local interface.
+Fd join_multicast(const MulticastConfig& config);
 void send_all(int fd, std::span<const std::uint8_t> data, Deadline deadline);
 Bytes receive_exact(int fd, std::size_t length, Deadline deadline);
 
@@ -102,6 +104,8 @@ void serve_shard(Fd listener, SnapshotProvider provider, const std::atomic_bool&
 class UdpSender {
  public:
   explicit UdpSender(const std::vector<Endpoint>& destinations);
+  explicit UdpSender(const MulticastConfig& config);
+  explicit UdpSender(const Config& config);
   void send(std::span<const std::uint8_t> bytes) const;
  private:
   Fd socket_;

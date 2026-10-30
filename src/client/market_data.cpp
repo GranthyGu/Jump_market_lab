@@ -9,19 +9,31 @@
 #include <stdexcept>
 
 namespace marketlab::md {
-void observe_udp(const Endpoint& endpoint, std::size_t count, const std::atomic_bool& stop) {
-  auto fd = bind_udp(endpoint.host, endpoint.port);
-  std::cout << "Listening UDP " << endpoint.host << ':' << endpoint.port << std::endl;
+namespace {
+void observe_datagrams(Fd fd, std::size_t count, const std::atomic_bool& stop) {
   std::size_t received = 0;
   while (!stop.load() && (!count || received < count)) {
     pollfd p{fd.get(), POLLIN, 0};
     if (poll(&p, 1, 100) <= 0) continue;
     std::array<std::uint8_t, 65536> data{};
     const auto n = recv(fd.get(), data.data(), data.size(), 0);
+    if (n < 0 && errno == EINTR) continue;
     if (n < 0) throw std::runtime_error(std::string("UDP recv: ") + std::strerror(errno));
     try { print_message(decode(std::span(data.data(), static_cast<std::size_t>(n)))); ++received; }
     catch (const std::exception& e) { std::cerr << "Ignored invalid datagram: " << e.what() << '\n'; }
   }
+}
+}  // namespace
+void observe_udp(const Endpoint& endpoint, std::size_t count, const std::atomic_bool& stop) {
+  auto fd = bind_udp(endpoint.host, endpoint.port);
+  std::cout << "Listening UDP " << endpoint.host << ':' << endpoint.port << std::endl;
+  observe_datagrams(std::move(fd), count, stop);
+}
+void observe_multicast(const MulticastConfig& config, std::size_t count, const std::atomic_bool& stop) {
+  auto fd = join_multicast(config);
+  std::cout << "Joined UDP multicast " << config.group.host << ':' << config.group.port
+      << " interface=" << config.interface << std::endl;
+  observe_datagrams(std::move(fd), count, stop);
 }
 Message query_snapshot(const Endpoint& endpoint, std::uint16_t symbol, int timeout_ms) {
   const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);

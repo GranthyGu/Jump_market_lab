@@ -42,10 +42,22 @@ std::uint16_t identifier(const std::string& text) {
 
 }  // namespace
 
+void validate_multicast(const MulticastConfig& config) {
+  const auto group = address(config.group.host, config.group.port);
+  if (!IN_MULTICAST(ntohl(group.sin_addr.s_addr)) || !config.group.port)
+    throw std::runtime_error("Multicast group must be an IPv4 multicast address with a nonzero port");
+  const auto iface = address(config.interface, 0);
+  if (IN_MULTICAST(ntohl(iface.sin_addr.s_addr)) || iface.sin_addr.s_addr == INADDR_BROADCAST)
+    throw std::runtime_error("Multicast interface must be a local unicast IPv4 address or 0.0.0.0");
+  if (config.ttl < 1 || config.ttl > 255)
+    throw std::runtime_error("Multicast TTL must be in 1..255");
+}
+
 Config load_config(const std::string& path, const std::string& source_override) {
   std::ifstream input(path);
   if (!input) throw std::runtime_error("Cannot open config: " + path);
   Config cfg;
+  MulticastConfig multicast;
   std::string line;
   std::set<std::string> singular;
   while (std::getline(input, line)) {
@@ -74,6 +86,17 @@ Config load_config(const std::string& path, const std::string& source_override) 
     } else if (key == "udp_receiver") {
       if (fields.size() != 2) throw std::runtime_error("Invalid UDP destination");
       cfg.receivers.push_back({fields[0], identifier(fields[1])});
+    } else if (key == "multicast_group") {
+      if (fields.size() != 2) throw std::runtime_error("Expected multicast_group=IPv4,port");
+      multicast.group = {fields[0], identifier(fields[1])};
+    } else if (key == "multicast_interface") multicast.interface = value;
+    else if (key == "multicast_ttl") {
+      const auto ttl = number(value);
+      if (ttl < 1 || ttl > 255) throw std::runtime_error("Multicast TTL must be in 1..255");
+      multicast.ttl = static_cast<int>(ttl);
+    } else if (key == "multicast_loopback") {
+      if (value != "0" && value != "1") throw std::runtime_error("multicast_loopback must be 0 or 1");
+      multicast.loopback = value == "1";
     } else if (key == "query_host") cfg.query.host = value;
     else if (key == "query_port") cfg.query.port = identifier(value);
     else if (key == "snapshot_every") cfg.snapshot_every = number(value);
@@ -89,7 +112,13 @@ Config load_config(const std::string& path, const std::string& source_override) 
       else throw std::runtime_error("Unknown setting: " + key);
     }
   }
-  if (cfg.symbols.empty() || cfg.shards.empty() || cfg.receivers.empty() || cfg.snapshot_every < 5 || cfg.source_timeout_ms >= 1000)
+  if (singular.contains("multicast_group")) {
+    if (!cfg.receivers.empty()) throw std::runtime_error("Do not mix multicast_group and legacy udp_receiver destinations");
+    validate_multicast(multicast);
+    cfg.multicast = multicast;
+  } else if (singular.contains("multicast_interface") || singular.contains("multicast_ttl") || singular.contains("multicast_loopback"))
+    throw std::runtime_error("Multicast options require multicast_group");
+  if (cfg.symbols.empty() || cfg.shards.empty() || (!cfg.multicast && cfg.receivers.empty()) || cfg.snapshot_every < 5 || cfg.source_timeout_ms >= 1000)
     throw std::runtime_error("Missing config, snapshot period <5, or source timeout >=1000ms");
   std::set<std::uint16_t> owned;
   std::set<std::string> names, paths, symbol_names;
@@ -105,7 +134,11 @@ Config load_config(const std::string& path, const std::string& source_override) 
       if (!cfg.symbols.contains(id) || !owned.insert(id).second) throw std::runtime_error("Invalid symbol ownership");
   }
   if (owned.size() != cfg.symbols.size()) throw std::runtime_error("Unassigned symbols");
-  for (const auto& receiver : cfg.receivers) (void)address(receiver.host, receiver.port);
+  for (const auto& receiver : cfg.receivers) {
+    const auto receiver_address = address(receiver.host, receiver.port);
+    if (IN_MULTICAST(ntohl(receiver_address.sin_addr.s_addr)))
+      throw std::runtime_error("Use multicast_group for multicast destinations");
+  }
   (void)address(cfg.query.host, cfg.query.port);
   return cfg;
 }

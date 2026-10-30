@@ -6,7 +6,7 @@
 #include <thread>
 
 namespace marketlab::md {
-Publisher::Publisher(Config config) : config_(std::move(config)), sender_(config_.receivers) {
+Publisher::Publisher(Config config) : config_(std::move(config)), sender_(config_) {
   for (const auto& shard : config_.shards) sources_.push_back(make_source(shard, config_.shm_max_age_ms));
   set_latest(nullptr);
 }
@@ -79,6 +79,12 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
 void Publisher::run(const std::atomic_bool& stop) {
   auto listener = listen_tcp(config_.query.host, config_.query.port);
   Log(std::cout) << "Snapshot TCP " << config_.query.host << ':' << config_.query.port << '\n';
+  if (config_.multicast) {
+    const auto& multicast = *config_.multicast;
+    Log(std::cout) << "Market data UDP multicast " << multicast.group.host << ':' << multicast.group.port
+        << " interface=" << multicast.interface << " ttl=" << multicast.ttl
+        << " loopback=" << multicast.loopback << " (one datagram per message)\n";
+  }
   StopThread sampler([&](const std::atomic_bool& cancelled) { sample_loop(stop, cancelled); });
   serve_requests(std::move(listener), 2, 2 + max_snapshot_size, config_.query_timeout_ms,
         config_.max_query_connections, [this](std::span<const std::uint8_t> request) {

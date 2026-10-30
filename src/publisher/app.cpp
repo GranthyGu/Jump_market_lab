@@ -16,6 +16,7 @@ void usage() {
   std::cout << "Usage: market_broadcast <publish|mock|observe|query> [options]\n"
       << "  --config PATH        Configuration file (default src/config/publisher.conf)\n"
       << "  --source tcp|shm     Override the input transport of every shard\n"
+      << "  --interface IPv4     Local multicast interface (publish/observe; default from config)\n"
       << "  --shard NAME         Mock one shard (default: run all configured shards)\n"
       << "  --static             Mock unchanged books\n"
       << "  --count N            Observe N datagrams, then exit (default unlimited)\n"
@@ -30,7 +31,7 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
   if (argc < 2) { usage(); return 1; }
   const std::string command = argv[1];
   if (command == "--help" || command == "help") { usage(); return 0; }
-  std::string path = marketlab::default_market_config, source, shard_name;
+  std::string path = marketlab::default_market_config, source, shard_name, multicast_interface;
   bool is_static = false;
   std::size_t count = 0;
   std::uint16_t symbol = 1;
@@ -42,6 +43,7 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
       const std::string value = argv[++i];
       if (flag == "--config") path = value;
       else if (flag == "--source") source = value;
+      else if (flag == "--interface") multicast_interface = value;
       else if (flag == "--shard") shard_name = value;
       else if (flag == "--count") count = std::stoull(value);
       else if (flag == "--symbol") {
@@ -50,7 +52,13 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
         symbol = static_cast<std::uint16_t>(n);
       } else throw std::runtime_error("Unknown option: " + flag);
     }
-    const auto config = load_config(path, source);
+    auto config = load_config(path, source);
+    if (!multicast_interface.empty()) {
+      if (!config.multicast || (command != "publish" && command != "observe"))
+        throw std::runtime_error("--interface requires multicast configuration and publish/observe");
+      config.multicast->interface = multicast_interface;
+      validate_multicast(*config.multicast);
+    }
     std::atomic_bool stop{false};
     StopThread signals([&](const std::atomic_bool& cancelled) {
       while (!cancelled.load() && !interrupted) std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -61,7 +69,10 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
       publisher.run(stop);
     } else if (command == "mock") {
       run_demo_sources(config, shard_name, is_static, stop);
-    } else if (command == "observe") observe_udp(config.receivers.front(), count, stop);
+    } else if (command == "observe") {
+      if (config.multicast) observe_multicast(*config.multicast, count, stop);
+      else observe_udp(config.receivers.front(), count, stop);
+    }
     else if (command == "query") print_message(query_snapshot(config.query, symbol, config.query_timeout_ms));
     else { usage(); throw std::runtime_error("Unknown command: " + command); }
     return 0;

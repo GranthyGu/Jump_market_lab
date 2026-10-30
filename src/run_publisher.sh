@@ -6,6 +6,7 @@ config="$launcher_root/src/config/publisher.conf"
 build_dir="$launcher_root/build/bin"
 log_root=
 source_override=
+multicast_interface=
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'HELP'
@@ -14,6 +15,7 @@ Usage: run_publisher.sh [options]
   --build-dir PATH   Folder containing market_broadcast (default: build/bin/)
   --log-dir PATH     Parent log folder (default: build/logs/publisher/)
   --source tcp|shm   Override all source transports
+  --interface IPv4  Local multicast sending interface (default from config)
   --help             Show this help
 Keep this terminal open. Ctrl-C stops only this publisher.
 HELP
@@ -21,13 +23,14 @@ HELP
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --help) usage; exit 0 ;;
-    --config|--build-dir|--log-dir|--source)
+    --config|--build-dir|--log-dir|--source|--interface)
       [ "$#" -ge 2 ] || fail "Missing value for $1"
       case "$1" in
         --config) config=$2 ;;
         --build-dir) build_dir=$2 ;;
         --log-dir) log_root=$2 ;;
         --source) source_override=$2 ;;
+        --interface) multicast_interface=$2 ;;
       esac
       shift 2 ;;
     *) fail "Unknown option: $1 (see --help)" ;;
@@ -55,6 +58,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 set -- "$build_dir/market_broadcast" publish --config "$config"
 if [ -n "$source_override" ]; then set -- "$@" --source "$source_override"; fi
+if [ -n "$multicast_interface" ]; then set -- "$@" --interface "$multicast_interface"; fi
 "$@" > "$run_dir/service.log" 2>&1 &
 child_pid=$!
 printf '%s\n' "$child_pid" > "$run_dir/service.pid"
