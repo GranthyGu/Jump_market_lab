@@ -4,7 +4,7 @@ set -eu
 launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 config="$launcher_root/src/config/exchange.conf"
 market_config="$launcher_root/src/config/publisher.conf"
-build_dir="$launcher_root/build"
+build_dir="$launcher_root/build/bin"
 log_root=
 selected_shard=
 trace=false
@@ -15,7 +15,7 @@ Usage: run_matching_engine.sh [options]
   --config PATH         Exchange configuration (default: src/config/exchange.conf)
   --market-config PATH  Matching publisher config (default: src/config/publisher.conf)
   --shard ID            Run only this shard (default: all configured shards)
-  --build-dir PATH      Folder containing market_matching_engine (default: build/)
+  --build-dir PATH      Folder containing market_matching_engine (default: build/bin/)
   --log-dir PATH        Parent log folder (default: build/logs/matching_engine/)
   --trace               Enable internal message tracing
   --help                Show this help
@@ -42,12 +42,12 @@ while [ "$#" -gt 0 ]; do
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
 [ -r "$market_config" ] || fail "Cannot read configuration: $market_config"
-[ -x "$build_dir/market_matching_engine" ] || fail "Build first: cmake -S \"$launcher_root/src\" -B \"$build_dir\" && cmake --build \"$build_dir\" --target market_matching_engine"
+[ -x "$build_dir/market_matching_engine" ] || fail "Missing market_matching_engine; run $launcher_root/src/build.sh or select --build-dir"
 if [ -n "$selected_shard" ]; then
   awk -v s="$selected_shard" 'BEGIN { exit !(s ~ /^[0-9]+$/ && s >= 1 && s <= 65535) }' || fail "Shard must be in 1..65535"
 fi
 umask 077
-[ -n "$log_root" ] || log_root="$build_dir/logs/matching_engine"
+[ -n "$log_root" ] || log_root="$launcher_root/build/logs/matching_engine"
 mkdir -p "$log_root"
 run_dir=$(mktemp -d "$log_root/run.XXXXXX")
 # Join the global symbol order to publisher symbol IDs to find each shard source.
@@ -107,10 +107,12 @@ awk -v selected="$selected_shard" '
   }
 ' "$config" "$market_config" > "$run_dir/launch-plan.txt" || fail "Cannot create shard launch plan"
 shard_pids=
+follower_pid=
 cleanup() {
   trap '' INT TERM
   for shard_pid in $shard_pids; do kill "$shard_pid" 2>/dev/null || true; done
   for shard_pid in $shard_pids; do wait "$shard_pid" 2>/dev/null || true; done
+  if [ -n "$follower_pid" ]; then kill "$follower_pid" 2>/dev/null || true; wait "$follower_pid" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -129,6 +131,8 @@ while IFS='|' read -r shard_id host order_port market_port transport shared_path
   printf '%s\t%s\t%s:%s\t%s:%s\n' "$shard_id" "$shard_pid" "$host" "$order_port" "$host" "$market_port" >> "$run_dir/processes.tsv"
   count=$((count + 1))
 done < "$run_dir/launch-plan.txt"
+tail -n +1 -f "$run_dir"/shard-*.log &
+follower_pid=$!
 sleep 0.2
 while :; do
   for shard_pid in $shard_pids; do

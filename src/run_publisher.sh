@@ -3,7 +3,7 @@
 set -eu
 launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 config="$launcher_root/src/config/publisher.conf"
-build_dir="$launcher_root/build"
+build_dir="$launcher_root/build/bin"
 log_root=
 source_override=
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -11,7 +11,7 @@ usage() {
   cat <<'HELP'
 Usage: run_publisher.sh [options]
   --config PATH      Publisher configuration (default: src/config/publisher.conf)
-  --build-dir PATH   Folder containing market_broadcast (default: build/)
+  --build-dir PATH   Folder containing market_broadcast (default: build/bin/)
   --log-dir PATH     Parent log folder (default: build/logs/publisher/)
   --source tcp|shm   Override all source transports
   --help             Show this help
@@ -34,19 +34,21 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
-[ -x "$build_dir/market_broadcast" ] || fail "Build first: cmake -S \"$launcher_root/src\" -B \"$build_dir\" && cmake --build \"$build_dir\" --target market_broadcast"
+[ -x "$build_dir/market_broadcast" ] || fail "Missing market_broadcast; run $launcher_root/src/build.sh or select --build-dir"
 case "$source_override" in ''|tcp|shm) ;; *) fail "Source must be tcp or shm" ;; esac
 umask 077
-[ -n "$log_root" ] || log_root="$build_dir/logs/publisher"
+[ -n "$log_root" ] || log_root="$launcher_root/build/logs/publisher"
 mkdir -p "$log_root"
 run_dir=$(mktemp -d "$log_root/run.XXXXXX")
 child_pid=
+follower_pid=
 cleanup() {
   trap '' INT TERM
   if [ -n "$child_pid" ]; then
     kill "$child_pid" 2>/dev/null || true
     wait "$child_pid" 2>/dev/null || true
   fi
+  if [ -n "$follower_pid" ]; then kill "$follower_pid" 2>/dev/null || true; wait "$follower_pid" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -65,6 +67,8 @@ if ! kill -0 "$child_pid" 2>/dev/null; then
 fi
 printf 'PROCESS_RUNNING component=publisher pid=%s\nCONFIG=%s\nLOG_DIR=%s\n' "$child_pid" "$config" "$run_dir"
 printf '%s\n' 'Published index=... in service.log confirms a complete market-data batch. Ctrl-C stops this publisher.'
+tail -n +1 -f "$run_dir/service.log" &
+follower_pid=$!
 set +e
 wait "$child_pid"
 result=$?

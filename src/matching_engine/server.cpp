@@ -47,6 +47,8 @@ void serve_order_engine(EngineBackend& book,const OrderConfig& c,std::uint16_t s
       } catch (const std::exception& e) { std::cerr << "Shared market adapter failed: " << e.what() << '\n'; market_failed.store(true); }
     });
   }
+  std::cout << "ENGINE_LISTENING shard=" << shard << " order=" << found->address.host << ':' << found->address.port
+      << " market_port=" << market_port << " loggedAtNs=" << unix_ns() << std::endl;
   auto tick = Clock::now();
   while (!stop.load() && !market_failed.load()) {
     io.step(10);

@@ -59,7 +59,7 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
       previous_sources = std::move(epochs);
       for (const auto& message : outgoing) sender_.send(message);
       Log(std::cout) << "Published index=" << batch->index << " epoch=" << epoch_text(batch->epoch)
-          << " symbols=" << batch->books.size() << " packets=" << outgoing.size()
+          << " symbols=" << batch->books.size() << " packets=" << outgoing.size() << " timestamp_ns=" << batch->timestamp
           << " sample_us=" << std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - round_started).count() << '\n';
     } catch (const std::exception& e) {
       set_latest(nullptr);

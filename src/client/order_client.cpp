@@ -97,7 +97,7 @@ class Console {
     waiting_ = value.header.requestId;
     deadline_ = md::Clock::now() + std::chrono::seconds(10);
     md::send_all(fd_.get(),record_bytes(value),deadline_);
-    std::cout << "SENT requestId=" << waiting_ << '\n';
+    std::cout << "SENT requestId=" << waiting_ << " sentAtNs=" << unix_ns() << '\n';
   }
   void login() {
     LoginRequest value{};
@@ -155,18 +155,25 @@ class Console {
   }
   void message(const Header& h,std::span<const std::uint8_t> bytes) {
     bool complete = false;
+    Timestamp exchange_time = 0;
+    std::memcpy(&exchange_time, bytes.data() + sizeof(Header), sizeof(exchange_time));
+    const auto received_at = unix_ns();
     switch (h.messageType) {
       case MessageType::LoginAccepted:
-        std::cout << "LOGIN_ACCEPTED requestId=" << h.requestId << '\n'; break;
+        std::cout << "LOGIN_ACCEPTED requestId=" << h.requestId << " exchangeTimeNs=" << exchange_time
+            << " receivedAtNs=" << received_at << '\n'; break;
       case MessageType::ActiveOrderSnapshot: {
         const auto value = copy_record<ActiveOrderSnapshot>(bytes);
-        if (value.isEnd) { std::cout << "SNAPSHOT_END requestId=" << h.requestId << '\n'; complete = true; }
-        else { std::cout << "SNAPSHOT requestId=" << h.requestId; print_order(value.order); std::cout << '\n'; }
+        if (value.isEnd) { std::cout << "SNAPSHOT_END requestId=" << h.requestId << " exchangeTimeNs=" << exchange_time
+            << " receivedAtNs=" << received_at << '\n'; complete = true; }
+        else { std::cout << "SNAPSHOT requestId=" << h.requestId; print_order(value.order);
+          std::cout << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n'; }
         break;
       }
       case MessageType::OrderUpdate: {
         const auto value = copy_record<OrderUpdate>(bytes);
-        std::cout << "ORDER_UPDATE requestId=" << h.requestId; print_order(value.order); std::cout << '\n';
+        std::cout << "ORDER_UPDATE requestId=" << h.requestId; print_order(value.order);
+        std::cout << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n';
         if (value.order.status == OrderStatus::Accepted) last_order_ = value.order.orderId;
         complete = h.requestId != 0; break;
       }
@@ -175,11 +182,13 @@ class Console {
         std::cout << "TRADE requestId=" << h.requestId << " tradeId=" << value.tradeId
             << " orderId=" << value.orderId << " symbol=" << fixed_string(value.symbol)
             << " side=" << (value.side == Side::Buy ? "BUY" : "SELL")
-            << " price=" << value.price << " quantity=" << value.quantity << '\n'; break;
+            << " price=" << value.price << " quantity=" << value.quantity << " exchangeTimeNs=" << exchange_time
+            << " receivedAtNs=" << received_at << '\n'; break;
       }
       case MessageType::RequestRejected: {
         const auto reason = copy_record<RequestRejected>(bytes).reason;
-        std::cout << "REJECTED requestId=" << h.requestId << " reason=" << static_cast<unsigned>(reason) << '\n';
+        std::cout << "REJECTED requestId=" << h.requestId << " reason=" << static_cast<unsigned>(reason)
+            << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n';
         if (snapshot_) throw std::runtime_error("Login rejected");
         complete = true; break;
       }

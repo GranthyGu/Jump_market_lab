@@ -28,7 +28,16 @@ class Gateway {
       if (backend.contains(id)) links.receive(id,bytes); else request(id,bytes);
     };
     links.on_message = [&](auto id, const auto& h, auto bytes) { event(id, h, bytes); };
+    links.on_ready = [&](auto) {
+      std::size_t connected = 0;
+      for (const auto& engine : engines) if (links.ready(engine.connection)) ++connected;
+      std::cout << "GATEWAY_BACKENDS_READY " << connected << '/' << engines.size()
+          << " loggedAtNs=" << unix_ns() << std::endl;
+      if (ready()) std::cout << "GATEWAY_READY loggedAtNs=" << unix_ns() << std::endl;
+    };
     io.listen(c.gateway_listen, Framing::Client, c.max_connections + engines.size());
+    std::cout << "GATEWAY_LISTENING " << c.gateway_listen.host << ':' << c.gateway_listen.port
+        << " loggedAtNs=" << unix_ns() << std::endl;
   }
   void run(const std::atomic_bool& stop) {
     auto last_tick = Clock::now();

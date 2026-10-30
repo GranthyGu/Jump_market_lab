@@ -3,7 +3,7 @@
 set -eu
 launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 config="$launcher_root/src/config/exchange.conf"
-build_dir="$launcher_root/build"
+build_dir="$launcher_root/build/bin"
 log_root=
 port_override=
 trace=false
@@ -13,7 +13,7 @@ usage() {
 Usage: run_gateway.sh [options]
   --config PATH      Exchange configuration (default: src/config/exchange.conf)
   --port PORT        Override only the client TCP port in a runtime config copy
-  --build-dir PATH   Folder containing market_gateway (default: build/)
+  --build-dir PATH   Folder containing market_gateway (default: build/bin/)
   --log-dir PATH     Parent log folder (default: build/logs/gateway/)
   --trace            Enable internal message tracing
   --help             Show this help
@@ -37,12 +37,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
-[ -x "$build_dir/market_gateway" ] || fail "Build first: cmake -S \"$launcher_root/src\" -B \"$build_dir\" && cmake --build \"$build_dir\" --target market_gateway"
+[ -x "$build_dir/market_gateway" ] || fail "Missing market_gateway; run $launcher_root/src/build.sh or select --build-dir"
 if [ -n "$port_override" ]; then
   awk -v p="$port_override" 'BEGIN { exit !(p ~ /^[0-9]+$/ && p >= 1 && p <= 65535) }' || fail "Port must be in 1..65535"
 fi
 umask 077
-[ -n "$log_root" ] || log_root="$build_dir/logs/gateway"
+[ -n "$log_root" ] || log_root="$launcher_root/build/logs/gateway"
 mkdir -p "$log_root"
 run_dir=$(mktemp -d "$log_root/run.XXXXXX")
 if [ -n "$port_override" ]; then
@@ -63,12 +63,14 @@ endpoint=$(awk '
   END { print value }
 ' "$config")
 child_pid=
+follower_pid=
 cleanup() {
   trap '' INT TERM
   if [ -n "$child_pid" ]; then
     kill "$child_pid" 2>/dev/null || true
     wait "$child_pid" 2>/dev/null || true
   fi
+  if [ -n "$follower_pid" ]; then kill "$follower_pid" 2>/dev/null || true; wait "$follower_pid" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -88,6 +90,8 @@ fi
 printf 'PROCESS_RUNNING component=gateway pid=%s configured_endpoint=%s\n' "$child_pid" "$endpoint"
 printf 'CONFIG=%s\nLOG_DIR=%s\n' "$config" "$run_dir"
 printf '%s\n' 'Successful client login confirms all backend links are ready. Ctrl-C stops this gateway.'
+tail -n +1 -f "$run_dir/service.log" &
+follower_pid=$!
 set +e
 wait "$child_pid"
 result=$?
