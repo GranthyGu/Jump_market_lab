@@ -4,13 +4,14 @@
 #include <vector>
 
 namespace marketlab::orders {
+inline constexpr std::uint16_t default_gateway_port = 7001;
 struct Address { std::string host; std::uint16_t port; };
 struct Account { std::string name, password; };
 struct EngineShard { std::uint16_t id; Address address; };
 struct Product { std::string symbol; std::int32_t previous_close; std::uint16_t shard; };
 struct OrderConfig {
   bool direct = true;
-  Address gateway_listen{"127.0.0.1", 7000};
+  Address gateway_listen{"127.0.0.1", default_gateway_port};
   Address router_listen{"127.0.0.1", 7100};
   Address engine_endpoint{"127.0.0.1", 7100};
   std::vector<Account> accounts;

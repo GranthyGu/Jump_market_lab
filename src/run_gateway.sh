@@ -12,7 +12,7 @@ usage() {
   cat <<'HELP'
 Usage: run_gateway.sh [options]
   --config PATH      Exchange configuration (default: src/config/exchange.conf)
-  --port PORT        Override only the client TCP port in a runtime config copy
+  --port PORT        Optional override in a runtime config copy (default: 7001)
   --build-dir PATH   Folder containing market_gateway (default: build/bin/)
   --log-dir PATH     Parent log folder (default: build/logs/gateway/)
   --trace            Enable internal message tracing
@@ -57,7 +57,7 @@ if [ -n "$port_override" ]; then
   config="$run_dir/exchange.conf"
 fi
 endpoint=$(awk '
-  BEGIN { value="127.0.0.1,7000" }
+  BEGIN { value="127.0.0.1,7001" }
   { sub(/#.*/, "") }
   /^[ \t]*gateway_listen[ \t]*=/ { sub(/^[^=]*=/, ""); gsub(/[ \t\r]/, ""); value=$0 }
   END { print value }

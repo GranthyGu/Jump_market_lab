@@ -1,4 +1,5 @@
 #include "shared_data/orders/engine_link.hpp"
+#include "shared_data/orders/config.hpp"
 #include "shared_data/market_data/transport.hpp"
 
 #include <arpa/inet.h>
@@ -45,7 +46,7 @@ void help() {
 }
 struct Options {
   std::string host = "127.0.0.1", user, password;
-  std::uint16_t port = 7000;
+  std::uint16_t port = default_gateway_port;
 };
 class Console {
  public:
@@ -212,7 +213,8 @@ int main(int argc,char** argv) {
     for (int i = 1; i < argc; ++i) {
       const std::string flag = argv[i];
       if (flag == "--help") {
-        std::cout << "gateway_client --user NAME --password PASSWORD [--host 127.0.0.1] [--port 7000]\n";
+        std::cout << "gateway_client --user NAME --password PASSWORD [--host 127.0.0.1] [--port "
+            << default_gateway_port << "]\n";
         help(); return 0;
       }
       if (++i == argc) throw std::runtime_error("Missing option value");
