@@ -1,7 +1,7 @@
 #!/bin/sh
 # Launch the configured shards as separate processes and own their lifetimes.
 set -eu
-launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 config="$launcher_root/src/config/exchange.conf"
 market_config="$launcher_root/src/config/publisher.conf"
 build_dir="$launcher_root/build/bin"
@@ -42,7 +42,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
 [ -r "$market_config" ] || fail "Cannot read configuration: $market_config"
-[ -x "$build_dir/market_matching_engine" ] || fail "Missing market_matching_engine; run $launcher_root/src/build.sh or select --build-dir"
+[ -x "$build_dir/market_matching_engine" ] || fail "Missing market_matching_engine; run $launcher_root/src/scripts/build.sh or select --build-dir"
 if [ -n "$selected_shard" ]; then
   awk -v s="$selected_shard" 'BEGIN { exit !(s ~ /^[0-9]+$/ && s >= 1 && s <= 65535) }' || fail "Shard must be in 1..65535"
 fi

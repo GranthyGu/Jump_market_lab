@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(marketlab_matching_engine LANGUAGES CXX)
 endif()
-include(../cmake/MarketLab.cmake)
+include(../CMakeLists.txt)
 
 add_library(marketlab_matching_core STATIC engine.cpp)
 target_link_libraries(marketlab_matching_core PUBLIC marketlab_order_link marketlab_market_data_link)

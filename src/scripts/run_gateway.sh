@@ -1,7 +1,7 @@
 #!/bin/sh
 # Foreground owner of one gateway process. Configuration overrides stay in build/.
 set -eu
-launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 config="$launcher_root/src/config/exchange.conf"
 build_dir="$launcher_root/build/bin"
 log_root=
@@ -37,7 +37,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
-[ -x "$build_dir/market_gateway" ] || fail "Missing market_gateway; run $launcher_root/src/build.sh or select --build-dir"
+[ -x "$build_dir/market_gateway" ] || fail "Missing market_gateway; run $launcher_root/src/scripts/build.sh or select --build-dir"
 if [ -n "$port_override" ]; then
   awk -v p="$port_override" 'BEGIN { exit !(p ~ /^[0-9]+$/ && p >= 1 && p <= 65535) }' || fail "Port must be in 1..65535"
 fi

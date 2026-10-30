@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <unistd.h>
 #include <cerrno>
 #include <charconv>
@@ -203,6 +204,55 @@ class Console {
 };
 volatile std::sig_atomic_t Console::interrupted_ = 0;
 void interrupted(int) { Console::interrupted_ = 1; }
+
+std::string login_input(const char* prompt,bool hidden) {
+  struct EchoGuard {
+    termios saved{};
+    bool changed = false;
+    explicit EchoGuard(bool hide) {
+      if (!hide) return;
+      if (tcgetattr(STDIN_FILENO,&saved) < 0) throw std::runtime_error("Cannot read terminal settings");
+      auto quiet = saved;
+      quiet.c_lflag &= static_cast<tcflag_t>(~(ECHO | ECHONL));
+      if (tcsetattr(STDIN_FILENO,TCSANOW,&quiet) < 0) throw std::runtime_error("Cannot hide password input");
+      changed = true;
+    }
+    ~EchoGuard() {
+      if (changed) { (void)tcsetattr(STDIN_FILENO,TCSANOW,&saved); std::cout << '\n'; }
+    }
+  } echo(hidden);
+  std::cout << prompt;
+  std::string value;
+  for (;;) {
+    if (Console::interrupted_) throw std::runtime_error("Login interrupted");
+    pollfd input{STDIN_FILENO,POLLIN,0};
+    const auto ready = poll(&input,1,100);
+    if (ready < 0 && errno == EINTR) continue;
+    if (ready < 0) throw std::runtime_error("Login terminal poll failed");
+    if (!ready) continue;
+    char byte{};
+    const auto n = read(STDIN_FILENO,&byte,1);
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) throw std::runtime_error("Login input closed");
+    if (byte == '\n') break;
+    // Keep memory bounded while draining an overlong terminal line.
+    if (value.size() < 32) value.push_back(byte);
+  }
+  if (value.empty() || value.size() > 31)
+    throw std::runtime_error("Username and password must contain 1..31 bytes");
+  return value;
+}
+void login_screen(Options& options) {
+  if (!options.user.empty() && !options.password.empty()) return;
+  if (!isatty(STDIN_FILENO))
+    throw std::runtime_error("Interactive login requires a terminal; automation can supply --user and --password");
+  std::cout << "\n========== MarketLab Trading Login ==========\n"
+      << "Gateway: " << options.host << ':' << options.port << '\n';
+  if (options.user.empty()) options.user = login_input("Username: ",false);
+  else std::cout << "Username: " << options.user << '\n';
+  if (options.password.empty()) options.password = login_input("Password: ",true);
+  std::cout << "Connecting and logging in...\n";
+}
 }  // namespace
 
 int main(int argc,char** argv) {
@@ -213,8 +263,9 @@ int main(int argc,char** argv) {
     for (int i = 1; i < argc; ++i) {
       const std::string flag = argv[i];
       if (flag == "--help") {
-        std::cout << "gateway_client --user NAME --password PASSWORD [--host 127.0.0.1] [--port "
+        std::cout << "gateway_client [--user NAME] [--password PASSWORD] [--host 127.0.0.1] [--port "
             << default_gateway_port << "]\n";
+        std::cout << "Missing credentials are prompted in a terminal; password input is hidden.\n";
         help(); return 0;
       }
       if (++i == argc) throw std::runtime_error("Missing option value");
@@ -225,8 +276,8 @@ int main(int argc,char** argv) {
       else if (flag == "--password") options.password = value;
       else throw std::runtime_error("Unknown option: " + flag);
     }
-    if (options.user.empty() || options.password.empty() || !options.port)
-      throw std::runtime_error("Supply --user and --password; use --help for commands");
+    if (!options.port) throw std::runtime_error("Port must be in 1..65535");
+    login_screen(options);
     Console client(std::move(options)); return client.run();
   } catch (const std::exception& e) { std::cerr << "ERROR " << e.what() << '\n'; return 1; }
 }

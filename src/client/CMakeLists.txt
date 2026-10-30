@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(marketlab_client LANGUAGES CXX)
 endif()
-include(../cmake/MarketLab.cmake)
+include(../CMakeLists.txt)
 
 # One home for both client transports; session unification is a separate change.
 add_library(marketlab_client STATIC market_data.cpp)

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runtime-only build. Keep CMake internals away from binaries and session logs.
 set -euo pipefail
-repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 build_root="$repo_root/build"
 clean=false
 jobs=4
@@ -12,7 +12,7 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { echo 'Missing --jobs value' >&2; exit 1; }
       jobs=$2; shift 2 ;;
     --help)
-      echo 'Usage: src/build.sh [--clean] [--jobs N]'
+      echo 'Usage: src/scripts/build.sh [--clean] [--jobs N]'
       echo '--clean removes build/, including old logs; stop all project services first.'
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;

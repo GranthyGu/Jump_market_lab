@@ -1,7 +1,7 @@
 #!/bin/sh
 # Foreground owner of one publisher; matching engines and gateway are independent.
 set -eu
-launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+launcher_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 config="$launcher_root/src/config/publisher.conf"
 build_dir="$launcher_root/build/bin"
 log_root=
@@ -37,7 +37,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
-[ -x "$build_dir/market_broadcast" ] || fail "Missing market_broadcast; run $launcher_root/src/build.sh or select --build-dir"
+[ -x "$build_dir/market_broadcast" ] || fail "Missing market_broadcast; run $launcher_root/src/scripts/build.sh or select --build-dir"
 case "$source_override" in ''|tcp|shm) ;; *) fail "Source must be tcp or shm" ;; esac
 umask 077
 [ -n "$log_root" ] || log_root="$launcher_root/build/logs/publisher"

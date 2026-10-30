@@ -6,6 +6,36 @@ Implementation layout, file migration records, and independent component builds:
 
 [Build and run guide](docs/EXCHANGE_RUN.md), [network interfaces and port ownership](docs/NETWORK_INTERFACES.md).
 
+Current C++ deployment publishes public market data once per message to UDP multicast
+`239.10.10.1:9001`. Every subscriber joins the same group; there is no per-client
+UDP destination list. The default interface is loopback for local demonstrations;
+use `--interface LOCAL_IPV4` on the publisher and each observer for LAN deployment.
+The TCP snapshot query service remains on port 9100.
+
+All shell entry points are in `src/scripts/`:
+
+- `build.sh`: build runtime programs.
+- `run_matching_engine.sh`, `run_gateway.sh`, `run_publisher.sh`: start services.
+- `run_market_client.sh`: subscribe and display public market data.
+- `run_snapshot_client.sh`: query one full snapshot over publisher TCP (default port 9100).
+- `run_client.sh`: terminal login with hidden password input, followed by trading.
+
+Run each service in its own terminal. Start a market client with
+`./src/scripts/run_market_client.sh` and a trading client with
+`./src/scripts/run_client.sh`. Both support `--help` and `--build-dir`;
+use `--interface LOCAL_IPV4` for the market client or `--host GATEWAY_IPV4`
+for the trading client when running across machines.
+
+Query a full snapshot with `./src/scripts/run_snapshot_client.sh --symbol 1`;
+add `--host PUBLISHER_IPV4 --port 9100` for a remote publisher.
+
+`src/CMakeLists.txt` is the full-exchange build entry point and supplies shared
+C++20, thread, dependency and output-directory settings. Component CMakeLists
+files own their targets and can be configured independently. Optional tests are
+disabled by the normal `./src/scripts/build.sh` build. Shared settings formerly
+in `src/cmake/MarketLab.cmake` are now integrated into `src/CMakeLists.txt`.
+Runtime prompts and log messages use English.
+
 ## Project objective
 
 Implement an exchange with a TCP order gateway, matching engines sharded by symbol, and a UDP market-data publisher. Students work individually and may implement all core components in C++20 or Python. The required runtime platform is Linux.

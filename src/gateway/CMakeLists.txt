@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(marketlab_gateway LANGUAGES CXX)
 endif()
-include(../cmake/MarketLab.cmake)
+include(../CMakeLists.txt)
 
 add_library(marketlab_gateway STATIC gateway.cpp net/order_router.cpp)
 target_link_libraries(marketlab_gateway PUBLIC marketlab_order_link)
