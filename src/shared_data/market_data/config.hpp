@@ -24,13 +24,26 @@ struct MulticastConfig {
   bool loopback = true;
 };
 void validate_multicast(const MulticastConfig& config);
+struct RecoveryConfig {
+  int reorder_wait_ms = 200;
+  int late_after_ms = 1500;
+  int stale_after_ms = 3000;
+  int timeout_ms = 1000;
+  std::size_t max_pending_batches = 64;
+  std::size_t max_buffer_bytes = 16 * 1024 * 1024;
+  std::size_t max_queries = 8;
+  int retry_initial_ms = 200;
+  int retry_max_ms = 5000;
+};
+void validate_recovery(const RecoveryConfig& config);
 struct Config {
   std::map<std::uint16_t, std::string> symbols;
   std::vector<ShardConfig> shards;
   std::vector<Endpoint> receivers;
   std::optional<MulticastConfig> multicast;
   Endpoint query{"127.0.0.1", 9100};
-  std::uint64_t snapshot_every = 5;
+  std::uint64_t snapshot_every = 15;
+  RecoveryConfig recovery;
   int source_timeout_ms = 800;
   int query_timeout_ms = 3000;
   int shm_max_age_ms = 1000;

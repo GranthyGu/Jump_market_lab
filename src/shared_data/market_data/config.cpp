@@ -100,6 +100,22 @@ Config load_config(const std::string& path, const std::string& source_override) 
     } else if (key == "query_host") cfg.query.host = value;
     else if (key == "query_port") cfg.query.port = identifier(value);
     else if (key == "snapshot_every") cfg.snapshot_every = number(value);
+    else if (key.starts_with("client_")) {
+      const auto v = number(value);
+      if (!v || v > 256ULL * 1024 * 1024) throw std::runtime_error("Client setting outside safe range");
+      auto& r = cfg.recovery;
+      if (key == "client_max_buffer_bytes") r.max_buffer_bytes = v;
+      else if (v > 1'000'000) throw std::runtime_error("Client setting outside safe range");
+      else if (key == "client_reorder_wait_ms") r.reorder_wait_ms = static_cast<int>(v);
+      else if (key == "client_late_after_ms") r.late_after_ms = static_cast<int>(v);
+      else if (key == "client_stale_after_ms") r.stale_after_ms = static_cast<int>(v);
+      else if (key == "client_recovery_timeout_ms") r.timeout_ms = static_cast<int>(v);
+      else if (key == "client_max_pending_batches") r.max_pending_batches = v;
+      else if (key == "client_max_queries") r.max_queries = v;
+      else if (key == "client_retry_initial_ms") r.retry_initial_ms = static_cast<int>(v);
+      else if (key == "client_retry_max_ms") r.retry_max_ms = static_cast<int>(v);
+      else throw std::runtime_error("Unknown setting: " + key);
+    }
     else {
       const auto v = number(value);
       if (!v || v > 1'000'000) throw std::runtime_error("Setting outside safe range: " + key);
@@ -140,6 +156,16 @@ Config load_config(const std::string& path, const std::string& source_override) 
       throw std::runtime_error("Use multicast_group for multicast destinations");
   }
   (void)address(cfg.query.host, cfg.query.port);
+  validate_recovery(cfg.recovery);
   return cfg;
+}
+void validate_recovery(const RecoveryConfig& r) {
+  if (r.reorder_wait_ms <= 0 || r.late_after_ms <= r.reorder_wait_ms ||
+      r.stale_after_ms <= r.late_after_ms || r.timeout_ms <= 0 ||
+      !r.max_pending_batches || r.max_pending_batches > 64 ||
+      r.max_buffer_bytes < 1024 || r.max_buffer_bytes > 256ULL * 1024 * 1024 ||
+      !r.max_queries || r.max_queries > 64 || r.retry_initial_ms <= 0 ||
+      r.retry_max_ms < r.retry_initial_ms)
+    throw std::runtime_error("Invalid client recovery limits or timer ordering");
 }
 }  // namespace marketlab::md

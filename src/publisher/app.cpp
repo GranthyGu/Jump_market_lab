@@ -20,9 +20,10 @@ void usage() {
       << "  --shard NAME         Mock one shard (default: run all configured shards)\n"
       << "  --static             Mock unchanged books\n"
       << "  --count N            Observe N datagrams, then exit (default unlimited)\n"
+      << "  --raw                Observe raw packets without book reconstruction\n"
       << "  --symbol ID          Query one symbol (default 1)\n"
-      << "  --host IPv4          Query publisher address (query only; default from config)\n"
-      << "  --port PORT          Query publisher TCP port (query only; default from config)\n";
+      << "  --host IPv4          Snapshot endpoint for query/observe (default from config)\n"
+      << "  --port PORT          Snapshot TCP port for query/observe (default from config)\n";
 }
 }
 int marketlab::md::run_publisher_cli(int argc, char** argv) {
@@ -35,13 +36,14 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
   if (command == "--help" || command == "help") { usage(); return 0; }
   std::string path = marketlab::default_market_config, source, shard_name, multicast_interface, query_host;
   std::uint16_t query_port = 0;
-  bool is_static = false;
+  bool is_static = false, raw = false;
   std::size_t count = 0;
   std::uint16_t symbol = 1;
   try {
     for (int i = 2; i < argc; ++i) {
       const std::string flag = argv[i];
       if (flag == "--static") { is_static = true; continue; }
+      if (flag == "--raw") { raw = true; continue; }
       if (i + 1 >= argc) throw std::runtime_error("Missing option value: " + flag);
       const std::string value = argv[++i];
       if (flag == "--config") path = value;
@@ -66,7 +68,7 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
     }
     auto config = load_config(path, source);
     if (!query_host.empty() || query_port) {
-      if (command != "query") throw std::runtime_error("--host and --port are only valid for query");
+      if (command != "query" && command != "observe") throw std::runtime_error("--host and --port require query/observe");
       if (!query_host.empty()) config.query.host = query_host;
       if (query_port) config.query.port = query_port;
     }
@@ -87,7 +89,8 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
     } else if (command == "mock") {
       run_demo_sources(config, shard_name, is_static, stop);
     } else if (command == "observe") {
-      if (config.multicast) observe_multicast(*config.multicast, count, stop);
+      if (!raw) observe_market(config,count,stop);
+      else if (config.multicast) observe_multicast(*config.multicast, count, stop);
       else observe_udp(config.receivers.front(), count, stop);
     }
     else if (command == "query") print_message(query_snapshot(config.query, symbol, config.query_timeout_ms));

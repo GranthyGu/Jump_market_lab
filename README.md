@@ -16,7 +16,7 @@ All shell entry points are in `src/scripts/`:
 
 - `build.sh`: build runtime programs.
 - `run_matching_engine.sh`, `run_gateway.sh`, `run_publisher.sh`: start services.
-- `run_market_client.sh`: subscribe and display public market data.
+- `run_market_client.sh`: maintain public books with UDP reorder buffering and automatic TCP recovery.
 - `run_snapshot_client.sh`: interactive snapshot queries over publisher TCP (default port 9100).
 - `run_client.sh`: terminal login with hidden password input, followed by trading.
 
@@ -233,3 +233,10 @@ Trade uses requestId=0. Each participant receives the trade details for its own 
 The starter package contains only this specification and the C++20/Python gateway protocol definitions, including basic types. No example clients, build files, or component implementations are supplied.
 
 Students will share repositories forked from the instructor's repository. No separate submission checklist is specified here.
+
+The market client now confirms epochs through TCP, buffers out-of-order deltas,
+and recovers missing or silent feeds automatically. Recovery settings live in
+`src/config/publisher.conf` (`client_*`); default reorder wait is 200 ms, LATE
+is 1500 ms, STALE is 3000 ms, and pending data is limited to 64 batches per
+symbol and a 16 MiB global budget. UDP full snapshots default to every 15
+batches (15 seconds). `run_market_client.sh --raw` retains packet diagnostics.
