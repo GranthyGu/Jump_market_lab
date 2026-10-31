@@ -303,6 +303,10 @@ struct UdpSender::Target { sockaddr_in addr; std::string label; };
 UdpSender::UdpSender(const std::vector<Endpoint>& destinations) : socket_(socket(AF_INET, SOCK_DGRAM, 0)) {
   if (!socket_) throw system_error("UDP socket");
   nonblocking(socket_.get());
+  // Allow a publication burst without relying on the small OS default buffer.
+  const int send_buffer = 1024 * 1024;
+  if (setsockopt(socket_.get(), SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer)) < 0)
+    throw system_error("UDP SO_SNDBUF");
   for (const auto& d : destinations)
     targets_.push_back(std::make_shared<Target>(Target{address(d.host, d.port), d.host + ":" + std::to_string(d.port)}));
 }
@@ -323,10 +327,19 @@ UdpSender::UdpSender(const Config& config)
   if (config.multicast && !config.receivers.empty())
     throw std::runtime_error("Do not mix multicast and unicast destinations");
 }
-void UdpSender::send(std::span<const std::uint8_t> bytes) const {
+void UdpSender::send(std::span<const std::uint8_t> bytes, Deadline submission_deadline) const {
   for (const auto& target : targets_) {
-    const auto n = sendto(socket_.get(), bytes.data(), bytes.size(), 0,
+    auto submit = [&] { return sendto(socket_.get(), bytes.data(), bytes.size(), 0,
                         reinterpret_cast<const sockaddr*>(&target->addr), sizeof(target->addr));
+    };
+    auto n = submit();
+    while (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) && Clock::now() < submission_deadline) {
+      // Retry only a datagram the kernel has not accepted; never resend a
+      // successful submission or wait for any receiver acknowledgment.
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      ++submission_retries_;
+      n = submit();
+    }
     if (n != static_cast<ssize_t>(bytes.size())) std::cerr << "UDP send failed to " << target->label << ": " << std::strerror(errno) << '\n';
   }
 }

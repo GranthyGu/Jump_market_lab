@@ -42,7 +42,7 @@ struct Config {
   std::vector<Endpoint> receivers;
   std::optional<MulticastConfig> multicast;
   Endpoint query{"127.0.0.1", 9100};
-  std::uint64_t snapshot_every = 15;
+  std::uint64_t snapshot_every = 10;
   RecoveryConfig recovery;
   int source_timeout_ms = 800;
   int query_timeout_ms = 3000;

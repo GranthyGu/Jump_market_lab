@@ -106,9 +106,13 @@ class UdpSender {
   explicit UdpSender(const std::vector<Endpoint>& destinations);
   explicit UdpSender(const MulticastConfig& config);
   explicit UdpSender(const Config& config);
-  void send(std::span<const std::uint8_t> bytes) const;
+  void send(std::span<const std::uint8_t> bytes,
+            Deadline submission_deadline = Clock::now() + std::chrono::milliseconds(100)) const;
+  // The publication thread owns sends and this local-submission counter.
+  std::uint64_t submission_retries() const { return submission_retries_; }
  private:
   Fd socket_;
+  mutable std::uint64_t submission_retries_ = 0;
   struct Target;
   std::vector<std::shared_ptr<Target>> targets_;
 };

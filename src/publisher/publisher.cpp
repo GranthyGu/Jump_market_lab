@@ -1,5 +1,6 @@
 #include "publisher/publisher.hpp"
 
+#include <algorithm>
 #include <future>
 #include <iostream>
 #include <limits>
@@ -57,10 +58,14 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
       // Commit the complete batch before exposing its UDP records to receivers.
       set_latest(batch);
       previous_sources = std::move(epochs);
-      for (const auto& message : outgoing) sender_.send(message);
+      const auto retries_before = sender_.submission_retries();
+      const auto submission_deadline = std::min(round_started + publication_period,
+          Clock::now() + std::chrono::milliseconds(200));
+      for (const auto& message : outgoing) sender_.send(message, submission_deadline);
       Log(std::cout) << "Published index=" << batch->index << " epoch=" << epoch_text(batch->epoch)
           << " symbols=" << batch->books.size() << " packets=" << outgoing.size() << " timestamp_ns=" << batch->timestamp
-          << " sample_us=" << std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - round_started).count() << '\n';
+          << " sample_us=" << std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - round_started).count()
+          << " udp_submission_retries=" << sender_.submission_retries() - retries_before << '\n';
     } catch (const std::exception& e) {
       set_latest(nullptr);
       previous_sources.clear();

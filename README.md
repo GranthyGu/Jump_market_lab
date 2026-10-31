@@ -238,5 +238,5 @@ The market client now confirms epochs through TCP, buffers out-of-order deltas,
 and recovers missing or silent feeds automatically. Recovery settings live in
 `src/config/publisher.conf` (`client_*`); default reorder wait is 200 ms, LATE
 is 1500 ms, STALE is 3000 ms, and pending data is limited to 64 batches per
-symbol and a 16 MiB global budget. UDP full snapshots default to every 15
-batches (15 seconds). `run_market_client.sh --raw` retains packet diagnostics.
+symbol and a 16 MiB global budget. UDP full snapshots default to every 10
+batches (10 seconds). `run_market_client.sh --raw` retains packet diagnostics.
