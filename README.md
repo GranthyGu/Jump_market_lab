@@ -37,6 +37,11 @@ disabled by the normal `./src/scripts/build.sh` build. Shared settings formerly
 in `src/cmake/MarketLab.cmake` are now integrated into `src/CMakeLists.txt`.
 Runtime prompts and log messages use English.
 
+The four presentation test suites (gateway, publisher, engine, and integration)
+are described in [tests/README.md](tests/README.md). Build them once with
+`./tests/build.sh`, then run `./tests/run_all.sh` or a component's `run.sh`.
+Each run saves correctness results, raw latency samples, metrics and logs.
+
 ## Project objective
 
 Implement an exchange with a TCP order gateway, matching engines sharded by symbol, and a UDP market-data publisher. Students work individually and may implement all core components in C++20 or Python. The required runtime platform is Linux.

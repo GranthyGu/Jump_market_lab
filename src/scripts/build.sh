@@ -38,6 +38,6 @@ cmake --build "$build_root/cmake" --parallel "$jobs" \
   --target market_gateway market_matching_engine market_broadcast gateway_client \
   2>&1 | tee "$build_root/logs/build/compile.log"
 ln -sfn cmake/compile_commands.json "$build_root/compile_commands.json"
-echo 'BUILD_COMPLETE: runtime binaries only (legacy tests OFF)'
+echo 'BUILD_COMPLETE: runtime binaries only (tests OFF; build demo suites with tests/build.sh)'
 printf '%s\n' "$build_root/bin/market_gateway" "$build_root/bin/market_matching_engine" \
   "$build_root/bin/market_broadcast" "$build_root/bin/gateway_client"
