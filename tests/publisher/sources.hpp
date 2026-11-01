@@ -4,11 +4,14 @@ namespace demo {
 // Deterministic synthetic input; the Publisher executable remains unmodified.
 inline md::Book source_book(std::uint16_t id,std::uint64_t version) {
   md::Book book{id,{}};
-  if(id%4==0) return book;
-  const bool moving=id%4>=2; auto step=moving?version:0;
+  const auto shape=id%6;
+  // Empty, static, replaced prices, all quantities, one quantity, empty/full.
+  if(shape==0 || (shape==5 && version%2==1)) return book;
+  const int shift=shape==2?10*int(version%2):0;
   for(auto side:{md::Side::Buy,md::Side::Sell}) for(unsigned level=0;level<5;++level) {
-    int price=(side==md::Side::Buy?100-int(level):110+int(level))+int(step%2);
-    book.levels.push_back({side,price,1000+10ULL*id+step,1+step%3});
+    int price=(side==md::Side::Buy?100-int(level):110+int(level))+shift;
+    const auto change=(shape==3 || (shape==4 && side==md::Side::Buy && level==0))?version:0;
+    book.levels.push_back({side,price,1000+10ULL*id+change,shape==3?1+version%3:1});
   }
   return book;
 }

@@ -148,6 +148,36 @@ void recovery_boundaries() {
   for(unsigned i=4;i<=69;++i) state.udp(message(md::Kind::Delta,i),now+204ms);
   require(state.buffered_bytes()==0 && state.view(1).highest_seen==69 && state.view(1).status!=md::SyncStatus::Synced,"Overflow lost high watermark or falsely synchronized");
 }
+void snapshot_recovery() {
+  md::RecoveryConfig config; auto now=Clock::now(); md::MarketRecovery state({{1,"one"}},config,now);
+  md::Epoch epoch{}; epoch[0]=1;
+  auto message=[&](md::Kind kind,unsigned index) {
+    return md::Message{kind,epoch,1,index,1000+index,{{md::Side::Buy,100,10+index,1}}};
+  };
+  auto request=state.next_request(now); require(request.has_value(),"No initial snapshot query");
+  state.complete(*request,message(md::Kind::Snapshot,0),now);
+  state.udp(message(md::Kind::Delta,2),now+1ms); // Missing batch 1.
+  auto obsolete=state.next_request(now+201ms); require(obsolete.has_value(),"Gap did not trigger recovery");
+  state.udp(message(md::Kind::Snapshot,3),now+202ms); // An adaptive snapshot bridges the gap.
+  require(state.view(1).snapshot->index==3 && state.view(1).status==md::SyncStatus::Synced &&
+      state.buffered_bytes()==0 && !state.valid(*obsolete),"Adaptive snapshot failed to replace recovery baseline");
+  state.complete(*obsolete,message(md::Kind::Snapshot,99),now+203ms);
+  require(state.view(1).snapshot->index==3,"Obsolete TCP response replaced adaptive snapshot");
+  state.udp(message(md::Kind::Delta,4),now+204ms);
+  state.udp(message(md::Kind::Delta,6),now+205ms); // Buffer a delta after the next snapshot.
+  state.udp(message(md::Kind::Snapshot,5),now+206ms);
+  require(state.view(1).snapshot->index==6 && state.view(1).snapshot->levels==message(md::Kind::Snapshot,6).levels &&
+      state.view(1).status==md::SyncStatus::Synced && state.buffered_bytes()==0,"Snapshot did not drain following delta");
+  state.udp(message(md::Kind::Snapshot,10),now+207ms); // No same-batch delta accompanies the periodic snapshot.
+  require(state.view(1).snapshot->index==10 && state.view(1).snapshot->levels==message(md::Kind::Snapshot,10).levels,
+      "Periodic snapshot without a delta failed");
+  state.udp(message(md::Kind::Delta,11),now+208ms);
+  auto unchanged=message(md::Kind::Delta,12); unchanged.levels.clear();
+  state.udp(unchanged,now+209ms);
+  require(state.view(1).snapshot->index==12 && state.view(1).snapshot->timestamp==unchanged.timestamp &&
+      state.view(1).snapshot->levels==message(md::Kind::Snapshot,11).levels && state.view(1).status==md::SyncStatus::Synced,
+      "Delta/empty heartbeat after a snapshot failed");
+}
 }
 int main(int argc,char** argv) {
   std::signal(SIGPIPE,SIG_IGN);
@@ -157,6 +187,7 @@ int main(int argc,char** argv) {
     suite.test("I02_real_exchange_64products_2shards",[&]{fill_roundtrip(suite,bin,64,2,scale);});
     suite.test("I03_real_exchange_1000products_32shards",[&]{fill_roundtrip(suite,bin,1000,32,scale);});
     suite.test("I04_real_UDP_loss_TCP_recovery_silence_and_restart",[&]{recovery(bin,suite.output/"recovery");});
+    suite.test("I05_adaptive_and_periodic_snapshot_recovery",snapshot_recovery);
     return suite.finish();
   } catch(const std::exception& e) { std::cerr << "FATAL " << e.what() << '\n'; return 2; }
 }

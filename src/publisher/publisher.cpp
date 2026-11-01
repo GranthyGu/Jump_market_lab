@@ -51,9 +51,14 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
       for (const auto& [id, book] : batch->books) {
         auto snapshot = encode({Kind::Snapshot, batch->epoch, id, batch->index, batch->timestamp, book.levels});
         batch->snapshots.emplace(id, snapshot);
-        if (!reset) outgoing.push_back(encode({Kind::Delta, batch->epoch, id, batch->index,
-            batch->timestamp, difference(before->books.at(id), book)}));
-        if (reset || batch->index % config_.snapshot_every == 0) outgoing.push_back(std::move(snapshot));
+        if (reset || batch->index % config_.snapshot_every == 0) {
+          outgoing.push_back(std::move(snapshot));
+        } else {
+          auto delta = encode({Kind::Delta, batch->epoch, id, batch->index,
+              batch->timestamp, difference(before->books.at(id), book)});
+          // Send exactly one record per symbol. Keep equal-size and empty deltas.
+          outgoing.push_back(delta.size() > snapshot.size() ? std::move(snapshot) : std::move(delta));
+        }
       }
       // Commit the complete batch before exposing its UDP records to receivers.
       set_latest(batch);

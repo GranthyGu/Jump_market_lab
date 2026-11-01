@@ -19,7 +19,7 @@ void protocol_and_difference() {
   }
 }
 struct Observation {
-  std::map<std::tuple<std::uint64_t,std::uint16_t,unsigned>,md::Bytes> packets;
+  std::map<std::pair<std::uint64_t,std::uint16_t>,md::Bytes> packets;
   std::map<std::uint16_t,md::Book> books; std::map<std::uint16_t,std::uint64_t> applied;
   std::map<std::uint64_t,std::uint64_t> timestamps;
   std::vector<double> ages; md::Epoch epoch{}; bool initialized=false;
@@ -43,19 +43,27 @@ void publication(Suite& suite,const fs::path& bin,unsigned products,unsigned sha
       require(m.epoch==obs.epoch && m.symbol_id>=1 && m.symbol_id<=products,"UDP source identity/epoch changed");
       auto [stamp,inserted]=obs.timestamps.emplace(m.index,m.timestamp);
       require(inserted || stamp->second==m.timestamp,"Batch timestamps differ between symbols");
-      auto key=std::tuple{m.index,m.symbol_id,unsigned(m.kind)};
-      require(obs.packets.emplace(key,md::encode(m)).second,"Duplicate UDP message");
-      if(m.kind==md::Kind::Snapshot) {
-        require(m.index==0 || m.index%10==0,"Unexpected periodic snapshot");
-        require(m.levels==source_book(m.symbol_id,m.index).levels,"Wrong full snapshot content");
-        if(!obs.books.contains(m.symbol_id)) { require(m.index==0,"Initial UDP snapshot missing"); obs.books[m.symbol_id]={m.symbol_id,m.levels}; obs.applied[m.symbol_id]=0; }
-        else require(obs.applied.at(m.symbol_id)==m.index && obs.books.at(m.symbol_id).levels==m.levels,"Periodic snapshot disagrees with applied delta");
+      auto key=std::pair{m.index,m.symbol_id};
+      const auto wire=md::encode(m);
+      require(obs.packets.emplace(key,wire).second,"Multiple UDP records for one symbol/batch");
+      const auto expected_book=source_book(m.symbol_id,m.index);
+      const auto shape=m.symbol_id%6;
+      const bool forced=m.index==0 || m.index%c.snapshot_every==0;
+      // Derive expected types/counts from fixture scenarios, not production difference().
+      const bool use_snapshot=forced || shape==2 || (shape==5 && m.index%2==1);
+      require(m.kind==(use_snapshot?md::Kind::Snapshot:md::Kind::Delta),"Wrong adaptive/periodic message type");
+      const auto entries=use_snapshot?expected_book.levels.size():
+          (shape==0 || shape==1?0U:shape==4?1U:10U);
+      require(wire.size()==35+21*entries,"Wrong adaptive message size");
+      if(!obs.books.contains(m.symbol_id)) {
+        require(m.index==0 && m.kind==md::Kind::Snapshot,"Initial UDP snapshot missing");
+        obs.books[m.symbol_id]={m.symbol_id,m.levels};
       } else {
-        require(obs.books.contains(m.symbol_id) && obs.applied.at(m.symbol_id)+1==m.index,"Missing/reordered UDP batch in local fanout test");
-        obs.books[m.symbol_id]=apply(obs.books.at(m.symbol_id),m); obs.applied[m.symbol_id]=m.index;
-        require(obs.books.at(m.symbol_id)==source_book(m.symbol_id,m.index),"UDP delta reconstructed wrong book");
-        if(m.symbol_id%4<2) require(m.levels.empty(),"Static/empty symbol should send empty delta");
+        require(obs.applied.at(m.symbol_id)+1==m.index,"Missing/reordered UDP batch in local fanout test");
+        obs.books[m.symbol_id]=apply(obs.books.at(m.symbol_id),m);
       }
+      obs.applied[m.symbol_id]=m.index;
+      require(obs.books.at(m.symbol_id)==expected_book,"UDP update reconstructed wrong book");
       const auto now=md::unix_ns(); require(now>=m.timestamp,"Wall clock moved backwards"); obs.ages.push_back(double(now-m.timestamp)/1000);
     }} catch(...) { std::lock_guard lock(error_mutex); if(!error) error=std::current_exception(); }
   }));
@@ -79,7 +87,7 @@ void publication(Suite& suite,const fs::path& bin,unsigned products,unsigned sha
   eventually([&] { return read_text(dir/"publisher.log").find("Published index="+std::to_string(last)+" ")!=std::string::npos; },"Missing publication round",15000);
   publisher.stop(); std::this_thread::sleep_for(100ms); collectors.clear();
   if(error) std::rethrow_exception(error);
-  std::uint64_t expected=std::uint64_t(products)*(1+last+last/10);
+  std::uint64_t expected=std::uint64_t(products)*(1+last);
   for(unsigned r=0;r<receivers;++r) {
     require(observations[r].packets.size()==expected,"UDP missing packet count: receiver="+std::to_string(r)+" expected="+std::to_string(expected)+" actual="+std::to_string(observations[r].packets.size()));
     require(observations[r].packets==observations[0].packets,"Subscribers received different wire bytes");

@@ -244,4 +244,8 @@ and recovers missing or silent feeds automatically. Recovery settings live in
 `src/config/publisher.conf` (`client_*`); default reorder wait is 200 ms, LATE
 is 1500 ms, STALE is 3000 ms, and pending data is limited to 64 batches per
 symbol and a 16 MiB global budget. UDP full snapshots default to every 10
-batches (10 seconds). `run_market_client.sh --raw` retains packet diagnostics.
+batches (10 seconds), with only a snapshot sent in those batches. In other
+batches, the publisher compares encoded sizes and sends a snapshot only when
+the delta is larger; equal-size and empty deltas are still sent. Each symbol
+gets exactly one UDP message per batch. `run_market_client.sh --raw` retains
+packet diagnostics.
