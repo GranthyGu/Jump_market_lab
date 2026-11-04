@@ -6,6 +6,14 @@ Implementation layout, file migration records, and independent component builds:
 
 [Build and run guide](docs/EXCHANGE_RUN.md), [network interfaces and port ownership](docs/NETWORK_INTERFACES.md).
 
+The default C++ deployment runs four independent matching-engine processes for
+1,000 symbols, with 250 symbols per shard. Symbol ID `n` belongs to shard
+`1 + (n - 1) % 4`. The gateway serves concurrent clients over one persistent
+order connection per shard (TCP 7201–7204); each shard processes orders in
+sequence to preserve price-time priority. The publisher samples all four shards
+in parallel over TCP 9201–9204. Start all four with
+`./src/scripts/run_matching_engine.sh`.
+
 Current C++ deployment publishes public market data once per message to UDP multicast
 `239.10.10.1:9001`. Every subscriber joins the same group; there is no per-client
 UDP destination list. The default interface is loopback for local demonstrations;

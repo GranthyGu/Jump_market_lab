@@ -185,7 +185,7 @@ int main(int argc,char** argv) {
     require(argc==4,"Expected binary directory, result directory, scale"); fs::path bin=argv[1]; Suite suite(argv[2]); unsigned scale=std::stoul(argv[3]);
     suite.test("I01_recovery_races_and_bounded_buffer",recovery_boundaries);
     suite.test("I02_real_exchange_64products_2shards",[&]{fill_roundtrip(suite,bin,64,2,scale);});
-    suite.test("I03_real_exchange_1000products_32shards",[&]{fill_roundtrip(suite,bin,1000,32,scale);});
+    suite.test("I03_real_exchange_1000products_4shards",[&]{fill_roundtrip(suite,bin,1000,4,scale);});
     suite.test("I04_real_UDP_loss_TCP_recovery_silence_and_restart",[&]{recovery(bin,suite.output/"recovery");});
     suite.test("I05_adaptive_and_periodic_snapshot_recovery",snapshot_recovery);
     return suite.finish();
