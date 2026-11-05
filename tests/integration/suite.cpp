@@ -178,6 +178,30 @@ void snapshot_recovery() {
       state.view(1).snapshot->levels==message(md::Kind::Snapshot,11).levels && state.view(1).status==md::SyncStatus::Synced,
       "Delta/empty heartbeat after a snapshot failed");
 }
+void simultaneous_market_transports(const fs::path& bin,const fs::path& dir) {
+  Exchange ex(bin,dir,16,2);
+  ex.engines[0]->stop();
+  const auto shared_path=dir/"market-view.mmap";
+  ex.engines[0]->launch(bin/"market_matching_engine",{"--config",(dir/"exchange.conf").string(),
+      "--shard","1","--market-port",std::to_string(ex.markets[0].port),"--market-shm",shared_path.string()},dir/"engine-1-both.log");
+  eventually([&] { try { Trader t(ex.gateway); t.login("user39"); return true; } catch(...) { return false; } },"Restarted shard did not become ready",12000);
+  auto config=ex.market_config(); auto shared=config.shards[0]; shared.transport="shm"; shared.mmap_path=shared_path.string();
+  Trader trader(ex.gateway); trader.login("user0"); const auto accepted=trader.add(10,symbol(0),ml::Side::Buy,100,7);
+  eventually([&] { try { auto source=md::make_source(shared,1000); auto view=source->read(until());
+      return view.books.at(1).levels.size()==1 && view.books.at(1).levels[0].quantity==7;
+    } catch(...) { return false; } },"Shared snapshot failed to catch up");
+  parallel(2,[&](unsigned reader) {
+    auto source=md::make_source(reader?shared:config.shards[0],1000);
+    for(unsigned i=0;i<30;++i) {
+      auto view=source->read(until());
+      require(view.books.size()==8 && view.books.at(1).levels.size()==1 && view.books.at(1).levels[0].quantity==7,
+          "TCP/shared mailbox snapshot mismatch while owner idle");
+    }
+  });
+  trader.cancel(11,accepted.order.orderId);
+  const auto stopping=Clock::now(); ex.engines[0]->stop();
+  require(us(stopping)<2000000,"Shutdown waited for mailbox request deadline");
+}
 }
 int main(int argc,char** argv) {
   std::signal(SIGPIPE,SIG_IGN);
@@ -188,6 +212,7 @@ int main(int argc,char** argv) {
     suite.test("I03_real_exchange_1000products_4shards",[&]{fill_roundtrip(suite,bin,1000,4,scale);});
     suite.test("I04_real_UDP_loss_TCP_recovery_silence_and_restart",[&]{recovery(bin,suite.output/"recovery");});
     suite.test("I05_adaptive_and_periodic_snapshot_recovery",snapshot_recovery);
+    suite.test("I06_concurrent_TCP_shared_snapshots_and_shutdown",[&]{simultaneous_market_transports(bin,suite.output/"both-transports");});
     return suite.finish();
   } catch(const std::exception& e) { std::cerr << "FATAL " << e.what() << '\n'; return 2; }
 }

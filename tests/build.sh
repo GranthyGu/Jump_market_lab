@@ -3,7 +3,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build="$root/build/demo-tests"
 if [ "${1:-}" = --help ]; then
-  echo 'Usage: tests/build.sh [BUILD_DIRECTORY] (one-time Release build of services and four test executables)'
+  echo 'Usage: tests/build.sh [BUILD_DIRECTORY] (Release build of services, four presentation suites and mailbox tests)'
   exit 0
 fi
 [ "$#" -le 1 ] || { echo 'Expected at most one build directory' >&2; exit 2; }

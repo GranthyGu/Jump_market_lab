@@ -4,7 +4,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 include(../CMakeLists.txt)
 
-add_library(marketlab_matching_core STATIC engine.cpp)
+add_library(marketlab_matching_core STATIC engine.cpp snapshot_mailbox.cpp)
 target_link_libraries(marketlab_matching_core PUBLIC marketlab_order_link marketlab_market_data_link)
 add_library(marketlab_matching_runtime STATIC server.cpp)
 target_link_libraries(marketlab_matching_runtime PUBLIC marketlab_matching_core)

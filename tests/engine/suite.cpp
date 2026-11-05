@@ -1,6 +1,7 @@
 #include "harness.hpp"
 #include "network.hpp"
 #include "matching_engine/engine.hpp"
+#include "matching_engine/snapshot_mailbox.hpp"
 #include <random>
 #include <limits>
 
@@ -167,18 +168,25 @@ void sweeps(Suite& suite,unsigned scale) {
 }
 void concurrent(unsigned scale) {
   Core c(64); std::atomic_bool done{false}; std::atomic<unsigned> reads{0}; std::exception_ptr error; std::mutex mutex;
+  od::SnapshotMailbox mailbox(c.engine.symbol_count());
+  std::atomic<unsigned> finished{0};
   std::vector<std::unique_ptr<md::StopThread>> readers;
   for(unsigned r=0;r<4;++r) readers.push_back(std::make_unique<md::StopThread>([&](const auto& stop) {
     try { while(!done.load() && !stop.load()) {
-      for(const auto& [id,b]:c.engine.market_view().books) { (void)id; md::validate_book(b); for(const auto& l:b.levels) require(l.quantity==5*l.num_orders,"Torn concurrent market aggregate"); }
+      for(const auto& [id,b]:mailbox.read(until()).books) { (void)id; md::validate_book(b); for(const auto& l:b.levels) require(l.quantity==5*l.num_orders,"Torn concurrent market aggregate"); }
       ++reads; std::this_thread::yield();
     }} catch(...) { std::lock_guard lock(mutex); error=std::current_exception(); }
+    ++finished;
   }));
   for(unsigned i=0;i<5000*scale;++i) {
     auto out=c.call(1,od::LinkKind::NewOrder,order_record(1,symbol(i%64),ml::Side::Buy,90,5));
+    mailbox.service(c.engine);
     c.call(1,od::LinkKind::Cancel,cancel_record(2,od::copy_record<ml::OrderUpdate>(out[0]).order.orderId));
+    mailbox.service(c.engine);
   }
-  done=true; readers.clear(); if(error) std::rethrow_exception(error); require(reads>0 && c.active(1).empty(),"Concurrent test made no progress");
+  done=true;
+  while(finished.load()!=4) { mailbox.service(c.engine); std::this_thread::yield(); }
+  readers.clear(); if(error) std::rethrow_exception(error); require(reads>0 && c.active(1).empty(),"Concurrent test made no progress");
   std::cout << "CHECK coherent_views=" << reads << " writers=1 readers=4\n";
 }
 void pool_growth() {

@@ -10,7 +10,7 @@
 ./tests/build.sh
 ```
 
-生成服务程序及四个测试程序到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、POSIX 网络接口和 Python 3；Python 只使用标准库。普通 `src/scripts/build.sh` 继续只编译日常程序，演示测试使用上面的独立构建目录。
+生成服务程序、四个展示套件及 `snapshot_mailbox_tests` 到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、POSIX 网络接口和 Python 3；Python 只使用标准库。普通 `src/scripts/build.sh` 继续只编译日常程序，演示测试使用上面的独立构建目录。
 
 现场运行全部：
 
@@ -70,10 +70,12 @@ build/demo-results/日期时间-随机后缀/
 
 ## CTest 与旧报告
 
-新 CMake 只注册 `demo_gateway`、`demo_publisher`、`demo_engine`、`demo_integration` 四项：
+CMake 注册四套演示测试 `demo_gateway`、`demo_publisher`、`demo_engine`、`demo_integration`，以及六个邮箱生命周期用例组成的 `snapshot_mailbox`。`run_all.sh` 运行四套演示，下面的 CTest 命令运行全部五项：
 
 ```sh
 ctest --test-dir build/demo-tests --output-on-failure
 ```
+
+另有按需构建的 C++ 压力程序 `snapshot_contention_benchmark`，用于比较原 mutex 与快照邮箱。它不加入日常演示计时；构建、工作负载与结果见 [撮合快照邮箱与延迟对比](../docs/matching_engine/SNAPSHOT_MAILBOX_DESIGN_AND_RESULTS.md)。
 
 旧测试源码、旧辅助代码和旧 benchmark 已被本套件替换。`docs/` 中此前的性能与验证文档属于历史记录，不能作为新测试已执行的证明；本次结果只以新的 `report.md` 和 `summary.json` 为准。测试按 Linux POSIX API 编写，本机执行结果会记录实际平台，macOS 结果不等于 Linux 或跨机器验收。

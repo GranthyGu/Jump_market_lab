@@ -37,6 +37,9 @@ class TcpReactor {
   void close(ConnectionId id);
   bool contains(ConnectionId id) const { return peers_.contains(id); }
   void step(int timeout_ms = 10);
+  // Borrow a nonblocking wakeup descriptor; callback drains it on this owner.
+  // The descriptor and callback captures must outlive all calls to step().
+  void watch_wakeup(int fd, std::function<void()> handler);
   void expire();
   std::shared_ptr<Peer> peer(ConnectionId id) const;
   std::size_t size() const { return peers_.size(); }
@@ -50,6 +53,8 @@ class TcpReactor {
   std::size_t max_buffer_;
   int partial_timeout_ms_;
   int listener_ = -1, poller_ = -1;
+  int wakeup_fd_ = -1;
+  std::function<void()> on_wakeup_;
   Framing listen_framing_ = Framing::Client;
   std::size_t connection_limit_ = 4096;
   ConnectionId next_id_ = 1;

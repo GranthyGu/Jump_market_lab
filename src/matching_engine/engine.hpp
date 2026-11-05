@@ -5,7 +5,6 @@
 #include <map>
 #include <memory>
 #include <memory_resource>
-#include <mutex>
 #include <string_view>
 #include <unordered_map>
 
@@ -14,7 +13,8 @@ class MatchingEngine final : public EngineBackend {
  public:
   MatchingEngine(const OrderConfig&,std::uint16_t shard);
   void command(const LinkHeader&,std::span<const std::uint8_t>,const Emit&) override;
-  md::ShardView market_view() override;
+  std::size_t symbol_count() const noexcept override { return books_.size(); }
+  void copy_market(MarketSnapshot&) noexcept override;
  private:
   struct Order;
   struct Level {
@@ -59,7 +59,6 @@ class MatchingEngine final : public EngineBackend {
   std::uint16_t shard_;
   std::uint64_t next_order_ = 1, next_trade_ = 1;
   md::Epoch epoch_;
-  std::mutex state_mutex_;
   std::pmr::unsynchronized_pool_resource price_memory_;
   std::vector<Book> books_;
   std::unordered_map<std::string_view,std::size_t> symbols_;

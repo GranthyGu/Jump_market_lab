@@ -1,5 +1,6 @@
 #include "matching_engine/engine.hpp"
 #include <algorithm>
+#include <cassert>
 #include <limits>
 
 namespace marketlab::orders {
@@ -47,16 +48,13 @@ template <typename T> void MatchingEngine::queue(LinkKind kind,const LinkHeader&
   std::memcpy(event.payload.data(),&record,sizeof(T));
 }
 void MatchingEngine::command(const LinkHeader& h,std::span<const std::uint8_t> bytes,const Emit& emit) {
-  // The reactor is the sole command owner. No network writes under state_mutex_.
+  // The reactor exclusively owns all live state; readers use copied snapshots.
   outgoing_.clear();
-  {
-    std::lock_guard lock(state_mutex_);
-    if (!h.user || h.user >= users_.size()) throw std::runtime_error("Unknown engine user");
-    if (h.kind == LinkKind::NewOrder) new_order(h,copy_record<NewOrderRequest>(bytes));
-    else if (h.kind == LinkKind::Cancel) cancel(h,copy_record<CancelRequest>(bytes));
-    else if (h.kind == LinkKind::Snapshot) snapshot(h,copy_record<Header>(bytes));
-    else throw std::runtime_error("Unexpected engine command");
-  }
+  if (!h.user || h.user >= users_.size()) throw std::runtime_error("Unknown engine user");
+  if (h.kind == LinkKind::NewOrder) new_order(h,copy_record<NewOrderRequest>(bytes));
+  else if (h.kind == LinkKind::Cancel) cancel(h,copy_record<CancelRequest>(bytes));
+  else if (h.kind == LinkKind::Snapshot) snapshot(h,copy_record<Header>(bytes));
+  else throw std::runtime_error("Unexpected engine command");
   for (const auto& event : outgoing_) emit(event.kind,event.context,{event.payload.data(),event.size});
 }
 void MatchingEngine::update(const Order& order,RequestId request,const LinkHeader& context,Timestamp time) {
@@ -167,19 +165,19 @@ void MatchingEngine::snapshot(const LinkHeader& h,const Header& request) {
   auto end = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot,request.requestId);
   end.isEnd = 1; queue(LinkKind::SnapshotEnd,h,end);
 }
-md::ShardView MatchingEngine::market_view() {
-  std::lock_guard lock(state_mutex_);
-  md::ShardView view{epoch_,{}};
+void MatchingEngine::copy_market(MarketSnapshot& view) noexcept {
+  assert(view.books.size() == books_.size());
+  view.epoch = epoch_;
+  std::size_t index = 0;
   for (const auto& book : books_) {
-    md::Book top{book.symbol_id,{}}; top.levels.reserve(2 * md::depth);
+    auto& top = view.books[index++];
+    top.symbol_id = book.symbol_id; top.count = 0;
     auto copy = [&](auto begin,auto end,md::Side side) {
       for (unsigned count = 0; begin != end && count < md::depth; ++begin,++count)
-        top.levels.push_back({side,begin->first,begin->second.quantity,begin->second.count});
+        top.levels[top.count++] = {side,begin->first,begin->second.quantity,begin->second.count};
     };
     copy(book.bids.rbegin(),book.bids.rend(),md::Side::Buy);
     copy(book.asks.begin(),book.asks.end(),md::Side::Sell);
-    view.books.emplace(top.symbol_id,std::move(top));
   }
-  return view;
 }
 }  // namespace marketlab::orders

@@ -14,6 +14,11 @@ sequence to preserve price-time priority. The publisher samples all four shards
 in parallel over TCP 9201–9204. Start all four with
 `./src/scripts/run_matching_engine.sh`.
 
+Each matching thread exclusively owns its live books. Market-data adapter threads
+request coherent snapshots through a bounded atomic mailbox; the matching thread
+copies top-five levels into preallocated buffers between commands. See the
+[snapshot mailbox design and latency comparison](docs/matching_engine/SNAPSHOT_MAILBOX_DESIGN_AND_RESULTS.md).
+
 Current C++ deployment publishes public market data once per message to UDP multicast
 `239.10.10.1:9001`. Every subscriber joins the same group; there is no per-client
 UDP destination list. The default interface is loopback for local demonstrations;
