@@ -48,3 +48,5 @@ add_dependencies(recovery_process_test market_matching_engine market_gateway mar
 add_dependencies(demo_tests recovery_process_test)
 add_test(NAME recovery_process COMMAND recovery_process_test "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/recovery-results")
 set_tests_properties(recovery_process PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE LABELS "engine;recovery;integration;correctness")
+
+add_subdirectory(recovery/bench)
