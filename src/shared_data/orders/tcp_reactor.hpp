@@ -53,8 +53,7 @@ class TcpReactor {
   std::size_t max_buffer_;
   int partial_timeout_ms_;
   int listener_ = -1, poller_ = -1;
-  int wakeup_fd_ = -1;
-  std::function<void()> on_wakeup_;
+  std::vector<std::pair<int,std::function<void()>>> wakeups_;
   Framing listen_framing_ = Framing::Client;
   std::size_t connection_limit_ = 4096;
   ConnectionId next_id_ = 1;

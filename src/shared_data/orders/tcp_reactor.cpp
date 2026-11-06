@@ -79,12 +79,12 @@ void TcpReactor::watch(const Peer& p, bool add) {
 #endif
 }
 void TcpReactor::watch_wakeup(int fd, std::function<void()> handler) {
-  if (fd < 0 || wakeup_fd_ >= 0 || !handler) throw std::runtime_error("Invalid reactor wakeup");
+  if (fd < 0 || wakeups_.size() >= 16 || !handler) throw std::runtime_error("Invalid reactor wakeup");
 #ifdef __linux__
-  epoll_event event{}; event.events = EPOLLIN; event.data.u64 = wakeup_event;
+  epoll_event event{}; event.events = EPOLLIN; event.data.u64 = wakeup_event - wakeups_.size();
   if (epoll_ctl(poller_,EPOLL_CTL_ADD,fd,&event) < 0) throw std::runtime_error("epoll wakeup");
 #endif
-  wakeup_fd_ = fd; on_wakeup_ = std::move(handler);
+  wakeups_.emplace_back(fd,std::move(handler));
 }
 std::shared_ptr<TcpReactor::Peer> TcpReactor::peer(ConnectionId id) const {
   const auto it = peers_.find(id);
@@ -201,9 +201,9 @@ void TcpReactor::step(int timeout_ms) {
 #else
   auto& fds = poll_fds_; fds.clear();
   auto& ids = poll_ids_; ids.clear();
-  fds.reserve(peers_.size() + 2); ids.reserve(peers_.size() + 2);
+  fds.reserve(peers_.size() + 1 + wakeups_.size()); ids.reserve(peers_.size() + 1 + wakeups_.size());
   if (listener_ >= 0) { fds.push_back({listener_, POLLIN, 0}); ids.push_back(0); }
-  if (wakeup_fd_ >= 0) { fds.push_back({wakeup_fd_,POLLIN,0}); ids.push_back(wakeup_event); }
+  for(std::size_t i=0;i<wakeups_.size();++i) { fds.push_back({wakeups_[i].first,POLLIN,0}); ids.push_back(wakeup_event-i); }
   for (const auto& [id,p] : peers_) {
     fds.push_back({p->fd, static_cast<short>(POLLIN | (p->connecting || p->sent < p->output.size() ? POLLOUT : 0)), 0});
     ids.push_back(id);
@@ -212,8 +212,8 @@ void TcpReactor::step(int timeout_ms) {
   for (std::size_t i = 0; i < fds.size(); ++i) if (fds[i].revents) events.emplace_back(ids[i], fds[i].revents);
 #endif
   for (const auto& [id,flags] : events) {
-    if (id == wakeup_event) {
-      if (flags & POLLIN) on_wakeup_();
+    if (id > wakeup_event - wakeups_.size()) {
+      if (flags & POLLIN) wakeups_[wakeup_event-id].second();
       continue;
     }
     if (!id) {

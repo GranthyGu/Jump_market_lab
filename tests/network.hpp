@@ -47,6 +47,10 @@ class Child {
     posix_spawn_file_actions_destroy(&actions);
     if (error) { pid_=0; throw std::runtime_error("Cannot start "+executable.string()+": "+std::strerror(error)); }
   }
+  void crash() {
+    if(!pid_) return;
+    kill(pid_,SIGKILL); int status=0; while(waitpid(pid_,&status,0)<0 && errno==EINTR) {} pid_=0;
+  }
   void stop() {
     if (!pid_) return;
     kill(pid_,SIGTERM); int status=0; auto end=until(3000);

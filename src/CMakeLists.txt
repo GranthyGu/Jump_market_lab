@@ -32,8 +32,8 @@ add_subdirectory(gateway)
 add_subdirectory(matching_engine)
 add_subdirectory(publisher)
 
-# Normal builds contain runtime code only; four demonstration suites are opt-in.
-option(MARKETLAB_BUILD_TESTS "Build the four demonstration test suites" OFF)
+# Normal builds contain runtime code only; demonstration and recovery tests are opt-in.
+option(MARKETLAB_BUILD_TESTS "Build demonstration, mailbox and recovery tests" OFF)
 if(MARKETLAB_BUILD_TESTS)
   enable_testing()
   add_subdirectory("${MARKETLAB_SOURCE_DIR}/../tests" "${CMAKE_BINARY_DIR}/tests")

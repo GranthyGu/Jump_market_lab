@@ -32,3 +32,19 @@ add_test(NAME snapshot_mailbox COMMAND snapshot_mailbox_tests "${CMAKE_BINARY_DI
 set_tests_properties(snapshot_mailbox PROPERTIES TIMEOUT 30 LABELS "engine;concurrency;correctness")
 file(GENERATE OUTPUT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/demo-build.json"
   CONTENT "{\"compiler\":\"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\",\"build_type\":\"${CMAKE_BUILD_TYPE}\",\"cxx_standard\":20}\n")
+
+add_executable(persistence_tests recovery/suite.cpp)
+target_link_libraries(persistence_tests PRIVATE marketlab_matching_core)
+target_compile_options(persistence_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME persistence_correctness COMMAND persistence_tests "${CMAKE_BINARY_DIR}/recovery-results")
+set_tests_properties(persistence_correctness PROPERTIES TIMEOUT 60 LABELS "engine;recovery;correctness")
+add_dependencies(demo_tests persistence_tests)
+
+add_executable(recovery_process_test recovery/process.cpp)
+target_include_directories(recovery_process_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(recovery_process_test PRIVATE marketlab_order_link marketlab_market_data_link)
+target_compile_options(recovery_process_test PRIVATE -Wall -Wextra -Wpedantic)
+add_dependencies(recovery_process_test market_matching_engine market_gateway market_broadcast)
+add_dependencies(demo_tests recovery_process_test)
+add_test(NAME recovery_process COMMAND recovery_process_test "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/recovery-results")
+set_tests_properties(recovery_process PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE LABELS "engine;recovery;integration;correctness")

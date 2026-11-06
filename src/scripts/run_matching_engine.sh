@@ -8,6 +8,9 @@ build_dir="$launcher_root/build/bin"
 log_root=
 selected_shard=
 trace=false
+data_dir=
+checkpoint_ms=600000
+pending_mib=64
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'HELP'
@@ -17,6 +20,9 @@ Usage: run_matching_engine.sh [options]
   --shard ID            Run only this shard (default: all configured shards)
   --build-dir PATH      Folder containing market_matching_engine (default: build/bin/)
   --log-dir PATH        Parent log folder (default: build/logs/matching_engine/)
+  --data-dir PATH       Persistent data root; default beside exchange config
+  --checkpoint-ms N     Snapshot interval (default: 600000)
+  --pending-mib N       Per-shard pending result budget (default: 64)
   --trace               Enable internal message tracing
   --help                Show this help
 Ports and symbol ownership come from the two configs, not a fixed shard formula.
@@ -27,7 +33,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --help) usage; exit 0 ;;
     --trace) trace=true; shift ;;
-    --config|--market-config|--shard|--build-dir|--log-dir)
+    --config|--market-config|--shard|--build-dir|--log-dir|--data-dir|--checkpoint-ms|--pending-mib)
       [ "$#" -ge 2 ] || fail "Missing value for $1"
       case "$1" in
         --config) config=$2 ;;
@@ -35,6 +41,9 @@ while [ "$#" -gt 0 ]; do
         --shard) selected_shard=$2 ;;
         --build-dir) build_dir=$2 ;;
         --log-dir) log_root=$2 ;;
+        --data-dir) data_dir=$2 ;;
+        --checkpoint-ms) checkpoint_ms=$2 ;;
+        --pending-mib) pending_mib=$2 ;;
       esac
       shift 2 ;;
     *) fail "Unknown option: $1 (see --help)" ;;
@@ -122,7 +131,9 @@ printf 'shard\tpid\torder_endpoint\tmarket_endpoint\n' > "$run_dir/processes.tsv
 count=0
 while IFS='|' read -r shard_id host order_port market_port transport shared_path; do
   set -- "$build_dir/market_matching_engine" --config "$config" --shard "$shard_id" \
-    --market-port "$market_port" --stats "$run_dir/shard-${shard_id}.json"
+    --market-port "$market_port" --stats "$run_dir/shard-${shard_id}.json" \
+    --checkpoint-ms "$checkpoint_ms" --pending-mib "$pending_mib"
+  if [ -n "$data_dir" ]; then set -- "$@" --data-dir "$data_dir"; fi
   if [ "$transport" = shm ]; then set -- "$@" --market-shm "$shared_path"; fi
   if [ "$trace" = true ]; then set -- "$@" --trace; fi
   "$@" > "$run_dir/shard-${shard_id}.log" 2>&1 &

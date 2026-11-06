@@ -10,7 +10,7 @@
 ./tests/build.sh
 ```
 
-生成服务程序、四个展示套件及 `snapshot_mailbox_tests` 到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、POSIX 网络接口和 Python 3；Python 只使用标准库。普通 `src/scripts/build.sh` 继续只编译日常程序，演示测试使用上面的独立构建目录。
+生成服务程序、四个展示套件、`snapshot_mailbox_tests` 及两个持久化恢复测试程序到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、POSIX 网络接口和 Python 3；Python 只使用标准库。普通 `src/scripts/build.sh` 继续只编译日常程序，演示测试使用上面的独立构建目录。
 
 现场运行全部：
 
@@ -45,6 +45,7 @@
 | [publisher](publisher/README.md) | 全品种每秒发布、净增量、空增量、三接收端一致性、周期快照、来源故障 | 同样五组规模；并发 TCP 查询与组播接收同时进行 |
 | [engine](engine/README.md) | 独立参考模型核对撮合、撤单、用户快照、五档；并发读取 | 16/1000/2000 商品、新单撤单、64 单扫单和自成交 |
 | [integration](integration/README.md) | 真实交易与公开行情一致、双方成交、跨片快照、丢包恢复和重启 | 64 商品/2 分片与默认规模 1000 商品/4 分片，交易、采样、组播和查询同时运行 |
+| [recovery](recovery/README.md) | 双日志通知屏障、FIFO 恢复、快照发布/清理、容量等待、单边写入崩溃、kill -9 与 publisher | 正确性验证，不设置吞吐指标 |
 
 网络测试启动真实组件子进程，并使用新生成的隔离配置及动态 loopback 端口，不依赖手工启动服务，不占用默认 7001/9100。服务日志和本次配置保留在结果目录；正常结束、用例异常及脚本超时都有清理路径。动态端口在启动前释放，存在常见的端口被外部进程抢占窗口；发生时结果会明确失败，重新运行即可。
 
@@ -70,7 +71,7 @@ build/demo-results/日期时间-随机后缀/
 
 ## CTest 与旧报告
 
-CMake 注册四套演示测试 `demo_gateway`、`demo_publisher`、`demo_engine`、`demo_integration`，以及六个邮箱生命周期用例组成的 `snapshot_mailbox`。`run_all.sh` 运行四套演示，下面的 CTest 命令运行全部五项：
+CMake 注册四套演示测试 `demo_gateway`、`demo_publisher`、`demo_engine`、`demo_integration`，六个邮箱生命周期用例组成的 `snapshot_mailbox`，以及 `persistence_correctness` 和 `recovery_process`。`run_all.sh` 运行四套演示，下面的 CTest 命令运行全部七项：
 
 ```sh
 ctest --test-dir build/demo-tests --output-on-failure

@@ -1,2 +1,6 @@
 /build/
 /docs/
+
+# Local persistent exchange data (not source or fixtures).
+**/.marketlab-data/
+/data/
