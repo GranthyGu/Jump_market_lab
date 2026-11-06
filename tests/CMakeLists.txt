@@ -50,3 +50,10 @@ add_test(NAME recovery_process COMMAND recovery_process_test "$<TARGET_FILE_DIR:
 set_tests_properties(recovery_process PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE LABELS "engine;recovery;integration;correctness")
 
 add_subdirectory(recovery/bench)
+
+# Explicit audit for loss/corruption after an acknowledged commit. It reports
+# known protection gaps with a nonzero exit code, rather than hiding them in a
+# passing test. This is separate from the process-crash regression suite.
+add_executable(persistence_recovery_audit EXCLUDE_FROM_ALL recovery/recovery_audit.cpp)
+target_link_libraries(persistence_recovery_audit PRIVATE marketlab_matching_core)
+target_compile_options(persistence_recovery_audit PRIVATE -Wall -Wextra -Wpedantic)

@@ -381,6 +381,109 @@ void crash_one_sided(const std::filesystem::path& root, bool only_trade) {
   e.drain();
   ask_quantity(e, 2, 1);
 }
+void zero_trade_order_only_crash(const std::filesystem::path& root) {
+  auto opt = options(root, "zero-trade-order-only-crash");
+  const auto child = fork();
+  require(child >= 0, "fork failed");
+  if (!child) {
+    try {
+      Gate gate;
+      opt.hook = [&](auto stage, auto seq) {
+        if (seq != 1) {
+          return;
+        }
+        if (stage == p::Stage::BeforeTradeWrite) {
+          gate.enter();
+        }
+        if (stage == p::Stage::OrderSynced) {
+          eventually([&] { return gate.reached(); });
+          _exit(70);
+        }
+      };
+      p::DurableEngine engine(config(), 1, opt);
+      Events events;
+      add(engine, events, 2, 1, m::Side::Sell, 10);
+      engine.drain();
+    } catch (...) {
+      _exit(71);
+    }
+    _exit(72);
+  }
+
+  int status = 0;
+  while (waitpid(child, &status, 0) < 0) {
+    require(errno == EINTR, "waitpid failed");
+  }
+  require(WIFEXITED(status) && WEXITSTATUS(status) == 70,
+          "Zero-trade order sync crash hook was not reached");
+  require(std::filesystem::file_size(opt.directory / "trades/trades.log") == 0,
+          "Zero-trade batch unexpectedly wrote a trade frame");
+
+  p::File delta(opt.directory / "orders/delta-1.log", false);
+  std::uint64_t offset = 0;
+  const auto frame = p::next_frame(delta, offset);
+  require(frame && frame->boundary.seq == 1 && frame->trades == 0,
+          "Order frame did not explicitly record zero expected trades");
+  require(!p::next_frame(delta, offset), "Unexpected extra order frame");
+
+  p::DurableEngine recovered(config(), 1, opt);
+  require(recovered.boundary().seq == 1 && recovered.boundary().trade_count == 0 &&
+              recovered.boundary().next_trade == 1,
+          "Zero-trade batch was incorrectly treated as an unpaired tail");
+  ask_quantity(recovered, 10, 1);
+  Events events;
+  add(recovered, events, 1, 2, m::Side::Buy, 4);
+  recovered.drain();
+  require(recovered.boundary().trade_count == 1, "Recovered active order did not match");
+  ask_quantity(recovered, 6, 1);
+}
+
+void zero_trade_gaps_after_checkpoint(const std::filesystem::path& root) {
+  const auto opt = options(root, "zero-trade-gaps");
+  {
+    p::DurableEngine engine(config(), 1, opt);
+    Events events;
+    add(engine, events, 2, 1, m::Side::Sell, 10);
+    add(engine, events, 1, 2, m::Side::Buy, 4);
+    engine.drain();
+    engine.request_checkpoint();
+    engine.wait_checkpoint();
+
+    events.values.clear();
+    add(engine, events, 3, 3, m::Side::Sell, 5);
+    engine.drain();
+    const auto canceled_order = events.accepted().order.orderId;
+    cancel(engine, events, 3, 4, canceled_order);
+    add(engine, events, 1, 5, m::Side::Buy, 1);
+    engine.drain();
+    ask_quantity(engine, 5, 1);
+  }
+
+  p::File trades(opt.directory / "trades/trades.log", false);
+  std::uint64_t offset = 0;
+  for (const auto sequence : {2U, 5U}) {
+    const auto frame = p::next_frame(trades, offset);
+    require(frame && frame->boundary.seq == sequence && frame->trades == 1,
+            "Unexpected physical trade frame sequence");
+  }
+  require(!p::next_frame(trades, offset), "Zero-trade command created a trade frame");
+
+  p::File delta(opt.directory / "orders/delta-3.log", false);
+  offset = 0;
+  for (const auto sequence : {3U, 4U, 5U}) {
+    const auto frame = p::next_frame(delta, offset);
+    const auto expected_trades = sequence == 5 ? 1U : 0U;
+    require(frame && frame->boundary.seq == sequence && frame->trades == expected_trades,
+            "Order log did not preserve zero-trade commands in sequence");
+  }
+
+  p::DurableEngine recovered(config(), 1, opt);
+  require(recovered.checkpoint_sequence() == 2 && recovered.boundary().seq == 5 &&
+              recovered.boundary().trade_count == 2 && recovered.boundary().next_trade == 3,
+          "Recovery confused zero-trade gaps with missing trade frames");
+  ask_quantity(recovered, 5, 1);
+}
+
 void crash_before_prune(const std::filesystem::path& root) {
   auto opt = options(root, "published-before-prune");
   const auto child = fork();
@@ -434,6 +537,8 @@ int main(int argc, char** argv) {
         {"incomplete_tail_and_corruption", [&] { tails_and_corruption(root); }},
         {"trade_only_crash_discards_unpaired_tail", [&] { crash_one_sided(root, true); }},
         {"order_only_crash_discards_unpaired_tail", [&] { crash_one_sided(root, false); }},
+        {"zero_trade_order_only_crash_recovers", [&] { zero_trade_order_only_crash(root); }},
+        {"zero_trade_gaps_after_checkpoint", [&] { zero_trade_gaps_after_checkpoint(root); }},
         {"published_snapshot_crash_before_prune", [&] { crash_before_prune(root); }}};
     for (const auto& [name, run] : cases) {
       run();
