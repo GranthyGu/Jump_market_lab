@@ -18,6 +18,8 @@ class MatchingEngine final : public EngineBackend {
   void restore(std::span<const persistence::StoredOrder>, std::uint64_t next_order, std::uint64_t next_trade);
   std::uint64_t next_order() const { return next_order_; }
   std::uint64_t next_trade() const { return next_trade_; }
+  std::size_t active_order_count(std::uint32_t user) const;
+  void copy_active_orders(std::uint32_t user, std::span<OrderState> destination) const;
   void command(const LinkHeader&, std::span<const std::uint8_t>, const Emit&) override;
   std::size_t symbol_count() const noexcept override { return books_.size(); }
   void copy_market(MarketSnapshot&) noexcept override;
@@ -69,6 +71,7 @@ class MatchingEngine final : public EngineBackend {
   std::vector<Book> books_;
   std::unordered_map<std::string_view, std::size_t> symbols_;
   std::vector<Order*> users_;
+  std::vector<std::size_t> user_order_counts_;
   ActiveIndex<Order> active_;
   Pool pool_;
   std::vector<Event> outgoing_;  // Reused by the single command thread.

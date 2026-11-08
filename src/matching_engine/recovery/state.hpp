@@ -11,7 +11,7 @@
 namespace marketlab::orders::persistence {
 struct Page {
   static constexpr std::size_t slots = 128;
-  std::array<std::optional<StoredOrder>, slots> orders;
+  std::array<std::optional<CompactOrder>, slots> orders;
 };
 using FrozenPages = std::vector<std::shared_ptr<const Page>>;
 class CommittedState {
@@ -22,8 +22,6 @@ class CommittedState {
   bool needs_copy(const Change&) const;
   std::size_t copied_bytes() const { return copied_bytes_; }
   void reset_copy_count() { copied_bytes_ = 0; }
-  std::vector<StoredOrder> orders() const;
-  void snapshot(const LinkHeader&, const Header&, const EngineBackend::Emit&) const;
   void market(MarketSnapshot&) const noexcept;
   std::size_t symbol_count() const { return books_.size(); }
 
@@ -38,12 +36,13 @@ class CommittedState {
   std::vector<std::shared_ptr<Page>> pages_;
   std::vector<std::size_t> free_;
   std::unordered_map<OrderId, std::size_t> positions_;
-  std::unordered_map<std::string, std::size_t> symbols_;
-  std::vector<Name> users_;
+  std::vector<std::size_t> symbol_books_;
   std::vector<Book> books_;
   md::Epoch epoch_;
   std::size_t copied_bytes_ = 0;
   Page& writable(std::size_t);
-  void aggregate(const StoredOrder&, bool add);
+  std::map<Price, Level>& levels(const CompactOrder&);
+  void aggregate(const CompactOrder&, bool add);
+  void replace(const CompactOrder& previous, const CompactOrder& next);
 };
 }  // namespace marketlab::orders::persistence

@@ -36,7 +36,8 @@ void check_id(std::uint64_t id, std::uint16_t shard, std::uint64_t next) {
 }
 }  // namespace
 Storage::Storage(const Options& o, const OrderConfig& c, std::uint16_t shard)
-    : root_(o.directory), lock_(root_), options_(o), shard_(shard), fingerprint_(fingerprint(c, shard)) {
+    : root_(o.directory), lock_(root_), options_(o), shard_(shard),
+      fingerprint_(fingerprint(c, shard)), dictionary_(c) {
   make_directory(root_ / "trades");
   make_directory(root_ / "orders");
   make_directory(root_ / "checkpoints");
@@ -70,7 +71,7 @@ void Storage::checkpoint(const Boundary& b, const FrozenPages& pages, bool prune
     if (!count) continue;
     start_frame(scratch, Kind::SnapshotPage, b, 0, count);
     for (const auto& o : page->orders)
-      if (o) encode_order(scratch, *o);
+      if (o) encode_order(scratch, dictionary_.expand(*o));
     append();
     total += count;
     ++page_count;

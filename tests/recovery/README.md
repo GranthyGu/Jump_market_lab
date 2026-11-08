@@ -16,7 +16,7 @@ ctest --test-dir build/persistence-check -R 'persistence_correctness|recovery_pr
 
 每次测试在 `recovery-results/` 下创建新的隔离目录，保留日志和持久化文件供检查，不使用日常数据目录。真实进程测试使用动态 loopback 端口，需允许本机 TCP/UDP。用例失败返回非零。
 
-## suite.cpp：11 个内部场景
+## suite.cpp：13 个内部场景
 
 | 场景 | 核对的业务和文件顺序 |
 | --- | --- |
@@ -30,9 +30,22 @@ ctest --test-dir build/persistence-check -R 'persistence_correctness|recovery_pr
 | incomplete_tail_and_corruption | 不完整尾帧可以截断；完整帧 CRC 损坏必须报错 |
 | trade_only_crash_discards_unpaired_tail | 子进程只完成成交侧后直接退出，不执行析构；恢复不应用孤立成交 |
 | order_only_crash_discards_unpaired_tail | 子进程只完成订单侧后退出；恢复不应用孤立订单变化 |
+| zero_trade_order_only_crash_recovers | 新增未成交订单仅完成订单日志时崩溃；expected_trade_count=0 不要求存在成交帧 |
+| zero_trade_gaps_after_checkpoint | 检查点之后混合新增、撤单和成交，成交帧序号有间隔时仍正确恢复 |
 | published_snapshot_crash_before_prune | 新快照已经安全发布、旧代尚未删除时退出；恢复选择新快照，不重复应用旧增量 |
 
 阻塞由可选内存钩子精确控制在 write/fsync/快照发布附近；时序不依赖猜测磁盘耗时。唯一短时间等待断言用于确认“容量确实阻塞”，释放条件仍由钩子决定。两个单边崩溃和快照崩溃用 fork 子进程内 `_exit`，不运行引擎正常关闭流程。
+
+## optimizations.cpp：9 个优化正确性场景
+
+注册为 `persistence_optimizations`，覆盖部分成交价格档位更新、紧凑订单记录的磁盘兼容、分页写时复制、异步用户查询、零成交查询、撤单与节点复用、查询数量/字节预算等待、写盘失败和旧文件恢复。
+
+异步查询测试分别阻塞成交和订单同步，验证查询及后续撮合调用能先返回；只等查询对应的批次提交，固定结果不被后续撮合改变，`SnapshotEnd` 先于下一批业务通知。完整设计和场景表见 [文档07第10节](../../docs/task2_recovery/07_recovery_notifications_wal_and_queue_benchmarks.md#10-三项订单状态优化已实现)。
+
+```sh
+ctest --test-dir build/persistence-check \
+  -R '^persistence_(correctness|optimizations)$' --output-on-failure
+```
 
 ## process.cpp：真实 kill -9 与 publisher
 
@@ -48,6 +61,16 @@ ctest --test-dir build/persistence-check -R 'persistence_correctness|recovery_pr
 这个测试核对 publisher 实际输出，不只检查引擎内部的内存状态。它不包含未实现的成交历史查询接口。
 
 ## 本次验证记录
+
+2026-11-08，三项优化后：
+
+- 完整 CTest：8/8 通过，63.79 秒，包含真实进程崩溃恢复。
+- 原持久化套件 13 场景、新优化套件 9 场景通过。
+- LLVM 22 ASan+UBSan：两套持久化测试通过，2.20 秒。
+- LLVM 22 TSan：两套持久化测试通过，7.28 秒。
+- 首次网络回归因沙箱禁止本机端口绑定失败；获准后完整重跑通过。
+
+以下是优化前保留的历史记录。
 
 2026-11-06，macOS arm64：
 

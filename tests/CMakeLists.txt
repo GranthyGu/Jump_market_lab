@@ -40,6 +40,14 @@ add_test(NAME persistence_correctness COMMAND persistence_tests "${CMAKE_BINARY_
 set_tests_properties(persistence_correctness PROPERTIES TIMEOUT 60 LABELS "engine;recovery;correctness")
 add_dependencies(demo_tests persistence_tests)
 
+add_executable(persistence_optimization_tests recovery/optimizations.cpp)
+target_link_libraries(persistence_optimization_tests PRIVATE marketlab_matching_core)
+target_compile_options(persistence_optimization_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME persistence_optimizations
+  COMMAND persistence_optimization_tests "${CMAKE_BINARY_DIR}/optimization-results")
+set_tests_properties(persistence_optimizations PROPERTIES TIMEOUT 60 LABELS "engine;recovery;correctness")
+add_dependencies(demo_tests persistence_optimization_tests)
+
 add_executable(recovery_process_test recovery/process.cpp)
 target_include_directories(recovery_process_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(recovery_process_test PRIVATE marketlab_order_link marketlab_market_data_link)

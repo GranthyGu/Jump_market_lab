@@ -1,5 +1,6 @@
 #pragma once
 #include "matching_engine/persistence/files.hpp"
+#include "matching_engine/persistence/order_dictionary.hpp"
 #include "matching_engine/recovery/state.hpp"
 
 namespace marketlab::orders::persistence {
@@ -18,6 +19,7 @@ class Storage {
     return root_ / "orders" / ("delta-" + std::to_string(first) + ".log");
   }
   const std::filesystem::path& root() const { return root_; }
+  const OrderDictionary& dictionary() const { return dictionary_; }
 
  private:
   std::filesystem::path root_;
@@ -25,6 +27,7 @@ class Storage {
   Options options_;
   std::uint16_t shard_;
   std::uint64_t fingerprint_;
+  const OrderDictionary dictionary_;
   Recovered read_snapshot(const std::filesystem::path&) const;
 };
 }  // namespace marketlab::orders::persistence

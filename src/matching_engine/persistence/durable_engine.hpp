@@ -45,6 +45,14 @@ class DurableEngine final : public EngineBackend {
     FrozenPages pages;
     std::atomic_bool done{false};
   };
+  struct Query {
+    std::uint64_t target = 0;
+    LinkHeader context{};
+    Header request{};
+    std::unique_ptr<OrderState[]> orders;
+    std::size_t count = 0;
+    Emit emit;
+  };
   Options options_;
   Storage storage_;
   MatchingEngine working_;
@@ -56,6 +64,8 @@ class DurableEngine final : public EngineBackend {
   std::size_t pending_bytes_ = 0;
   std::deque<std::unique_ptr<Batch>> pending_;
   std::vector<std::unique_ptr<Batch>> free_;
+  std::deque<Query> queries_;
+  std::size_t query_bytes_ = 0;
   Queue<Job> trade_queue_, order_queue_;
   Queue<Snapshot*> snapshot_queue_{1};
   std::unique_ptr<Cut> cut_;
@@ -71,6 +81,8 @@ class DurableEngine final : public EngineBackend {
   void writer(bool trades);
   void snapshot_worker();
   void service_checkpoint();
+  void capture_query(const LinkHeader&, const Header&, const Emit&);
+  void emit_queries();
   void fail(std::exception_ptr);
   void check_error();
   void wait_progress();

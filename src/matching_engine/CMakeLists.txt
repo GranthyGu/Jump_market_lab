@@ -6,6 +6,7 @@ include(../CMakeLists.txt)
 
 add_library(marketlab_matching_core STATIC engine.cpp snapshot_mailbox.cpp
   persistence/codec.cpp persistence/files.cpp persistence/durable_engine.cpp
+  persistence/order_dictionary.cpp
   recovery/state.cpp recovery/storage.cpp)
 target_link_libraries(marketlab_matching_core PUBLIC marketlab_order_link marketlab_market_data_link)
 add_library(marketlab_matching_runtime STATIC server.cpp)

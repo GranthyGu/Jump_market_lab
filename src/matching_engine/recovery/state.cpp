@@ -5,14 +5,13 @@
 
 namespace marketlab::orders::persistence {
 CommittedState::CommittedState(const OrderConfig& c, std::uint16_t shard) : epoch_(md::new_epoch()) {
-  users_.resize(c.accounts.size() + 1);
-  for (std::size_t i = 0; i < c.accounts.size(); ++i)
-    std::copy(c.accounts[i].name.begin(), c.accounts[i].name.end(), users_[i + 1].begin());
-  for (std::size_t i = 0; i < c.products.size(); ++i)
+  symbol_books_.resize(c.products.size() + 1, std::numeric_limits<std::size_t>::max());
+  for (std::size_t i = 0; i < c.products.size(); ++i) {
     if (c.products[i].shard == shard) {
-      symbols_.emplace(c.products[i].symbol, books_.size());
+      symbol_books_[i + 1] = books_.size();
       books_.push_back({static_cast<std::uint16_t>(i + 1), {}, {}});
     }
+  }
 }
 Page& CommittedState::writable(std::size_t p) {
   if (pages_[p].use_count() != 1) {
@@ -22,40 +21,66 @@ Page& CommittedState::writable(std::size_t p) {
   return *pages_[p];
 }
 bool CommittedState::needs_copy(const Change& c) const {
-  const auto id = OrderId(c.order.state.orderId);
+  const auto id = c.order.id;
   auto it = positions_.find(id);
   if (it != positions_.end()) return pages_[it->second / Page::slots].use_count() != 1;
   return !c.erase && !free_.empty() && pages_[free_.back() / Page::slots].use_count() != 1;
 }
-void CommittedState::aggregate(const StoredOrder& o, bool add) {
-  auto& book = books_.at(symbols_.at(fixed_string(o.state.symbol)));
-  const auto price = Price(o.state.price);
-  auto& levels = o.state.side == Side::Buy ? book.bids : book.asks;
+std::map<Price, CommittedState::Level>& CommittedState::levels(const CompactOrder& order) {
+  auto& book = books_.at(symbol_books_.at(order.symbol));
+  return order.side == Side::Buy ? book.bids : book.asks;
+}
+
+void CommittedState::aggregate(const CompactOrder& order, bool add) {
+  auto& prices = levels(order);
   if (add) {
-    auto& l = levels[price];
-    l.quantity += o.state.remainingQuantity;
-    ++l.count;
+    auto& level = prices[order.price];
+    level.quantity += order.remaining;
+    ++level.count;
   } else {
-    auto it = levels.find(price);
-    if (it == levels.end()) throw std::logic_error("Missing committed level");
-    it->second.quantity -= o.state.remainingQuantity;
-    if (!--it->second.count) levels.erase(it);
+    auto it = prices.find(order.price);
+    if (it == prices.end()) {
+      throw std::logic_error("Missing committed level");
+    }
+    it->second.quantity -= order.remaining;
+    if (!--it->second.count) {
+      prices.erase(it);
+    }
   }
 }
+
+void CommittedState::replace(const CompactOrder& previous, const CompactOrder& next) {
+  if (previous.symbol == next.symbol && previous.side == next.side &&
+      previous.price == next.price) {
+    auto& prices = levels(previous);
+    auto it = prices.find(previous.price);
+    if (it == prices.end()) {
+      throw std::logic_error("Missing committed level during update");
+    }
+    // A partial fill changes quantity, not the order count or the map node.
+    // Separate unsigned operations avoid underflow in (next - previous).
+    it->second.quantity -= previous.remaining;
+    it->second.quantity += next.remaining;
+    return;
+  }
+  aggregate(previous, false);
+  aggregate(next, true);
+}
+
 void CommittedState::apply(const Change& c) {
-  const auto id = OrderId(c.order.state.orderId);
+  const auto id = c.order.id;
   auto it = positions_.find(id);
   if (it != positions_.end()) {
     const auto slot = it->second;
     auto& entry = writable(slot / Page::slots).orders[slot % Page::slots];
-    aggregate(*entry, false);
     if (c.erase) {
+      aggregate(*entry, false);
       entry.reset();
       positions_.erase(it);
       free_.push_back(slot);
     } else {
+      replace(*entry, c.order);
       entry = c.order;
-      aggregate(c.order, true);
     }
     return;
   }
@@ -71,28 +96,8 @@ void CommittedState::apply(const Change& c) {
   positions_.emplace(id, slot);
   aggregate(c.order, true);
 }
-FrozenPages CommittedState::freeze() const { return {pages_.begin(), pages_.end()}; }
-std::vector<StoredOrder> CommittedState::orders() const {
-  std::vector<StoredOrder> out;
-  out.reserve(positions_.size());
-  for (const auto& p : pages_)
-    for (const auto& o : p->orders)
-      if (o) out.push_back(*o);
-  return out;
-}
-void CommittedState::snapshot(const LinkHeader& h, const Header& request,
-                              const EngineBackend::Emit& emit) const {
-  if (!h.user || h.user >= users_.size()) throw std::runtime_error("Invalid snapshot user");
-  for (const auto& p : pages_)
-    for (const auto& o : p->orders)
-      if (o && o->username == users_[h.user]) {
-        auto r = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot, request.requestId);
-        r.order = o->state;
-        emit(LinkKind::Event, h, record_bytes(r));
-      }
-  auto end = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot, request.requestId);
-  end.isEnd = 1;
-  emit(LinkKind::SnapshotEnd, h, record_bytes(end));
+FrozenPages CommittedState::freeze() const {
+  return {pages_.begin(), pages_.end()};
 }
 void CommittedState::market(MarketSnapshot& view) const noexcept {
   assert(view.books.size() == books_.size());

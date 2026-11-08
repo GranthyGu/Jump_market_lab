@@ -8,7 +8,9 @@ namespace {
 Options validate(Options o) {
   if (o.directory.empty() || !o.pending_slots || o.pending_slots > 65536 || !o.sync_group ||
       o.sync_group > o.pending_slots || o.command_bytes < 4096 || o.command_bytes > maximum_payload ||
-      o.pending_bytes < o.command_bytes || o.cow_bytes < sizeof(Page) || o.checkpoint_interval.count() <= 0)
+      o.pending_bytes < o.command_bytes || o.cow_bytes < sizeof(Page) ||
+      !o.query_slots || o.query_slots > 65536 || o.query_bytes < sizeof(OrderState) ||
+      o.checkpoint_interval.count() <= 0)
     throw std::invalid_argument("Invalid persistence buffer/checkpoint options");
   return o;
 }
@@ -26,7 +28,9 @@ DurableEngine::DurableEngine(const OrderConfig& c, std::uint16_t shard, Options 
   executed_ = boundary_.seq;
   checkpoint_seq_ = recovered.checkpoint;
   working_.restore(recovered.orders, boundary_.next_order, boundary_.next_trade);
-  for (const auto& order : recovered.orders) committed_.apply({false, order});
+  for (const auto& order : recovered.orders) {
+    committed_.apply({false, storage_.dictionary().compact(order)});
+  }
   File initial(storage_.delta_path(executed_ + 1), true, true);
   initial.sync();
   sync_directory(storage_.root() / "orders");
@@ -139,9 +143,9 @@ void DurableEngine::writer(bool trades) {
           for (const auto& change : r.changes) {
             integer(scratch, change.erase ? 0 : 1, 1);
             if (change.erase)
-              integer(scratch, change.order.state.orderId, 8);
+              integer(scratch, change.order.id, 8);
             else
-              encode_order(scratch, change.order);
+              encode_order(scratch, storage_.dictionary().expand(change.order));
           }
           finish_frame(scratch);
           file.append(scratch);
@@ -205,6 +209,7 @@ void DurableEngine::poll() {
   wakeup_.drain();
   check_error();
   service_checkpoint();
+  emit_queries();
   while (!pending_.empty() && pending_.front()->done.load(std::memory_order_acquire) == 3) {
     auto& batch = *pending_.front();
     for (const auto& change : batch.result.changes) {
@@ -224,6 +229,8 @@ void DurableEngine::poll() {
     hook(Stage::Emitting, boundary_.seq);
     for (const auto& event : batch.result.events)
       batch.emit(event.kind, event.context, {event.payload.data(), event.size});
+    // SnapshotEnd for C must enter the output stream before any event from C+1.
+    emit_queries();
     pending_bytes_ -= batch.result.bytes();
     auto recycled = std::move(pending_.front());
     pending_.pop_front();
@@ -240,8 +247,7 @@ void DurableEngine::command(const LinkHeader& h, std::span<const std::uint8_t> b
   try {
     poll();
     if (h.kind == LinkKind::Snapshot) {
-      drain();
-      committed_.snapshot(h, copy_record<Header>(bytes), emit);
+      capture_query(h, copy_record<Header>(bytes), emit);
       return;
     }
     while (pending_.size() >= options_.pending_slots ||
@@ -272,6 +278,55 @@ void DurableEngine::command(const LinkHeader& h, std::span<const std::uint8_t> b
     throw;
   }
 }
+void DurableEngine::capture_query(const LinkHeader& context, const Header& request,
+                                  const Emit& emit) {
+  const auto count = working_.active_order_count(context.user);
+  if (count > options_.query_bytes / sizeof(OrderState)) {
+    // A single result cannot become smaller by waiting. Fail explicitly rather
+    // than deadlocking, allocating without a bound, or sending a partial success.
+    throw std::runtime_error("Single order query exceeds query buffer budget");
+  }
+  const auto bytes = count * sizeof(OrderState);
+  while (queries_.size() >= options_.query_slots || bytes > options_.query_bytes - query_bytes_) {
+    wait_progress();
+    poll();
+  }
+
+  Query query;
+  query.target = executed_;
+  query.context = context;
+  query.request = request;
+  query.count = count;
+  query.emit = emit;
+  if (count) {
+    query.orders = std::make_unique_for_overwrite<OrderState[]>(count);
+    working_.copy_active_orders(context.user, {query.orders.get(), count});
+  }
+  // Own values, never pointers into mutable working orders. No disk wait on
+  // the normal path: command() returns while the target is still uncommitted.
+  queries_.push_back(std::move(query));
+  query_bytes_ += bytes;
+  emit_queries();
+}
+
+void DurableEngine::emit_queries() {
+  while (!queries_.empty() && queries_.front().target <= boundary_.seq) {
+    const auto& query = queries_.front();
+    for (std::size_t i = 0; i < query.count; ++i) {
+      auto record = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot,
+                                                       query.request.requestId);
+      record.order = query.orders[i];
+      query.emit(LinkKind::Event, query.context, record_bytes(record));
+    }
+    auto end = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot,
+                                                 query.request.requestId);
+    end.isEnd = 1;
+    query.emit(LinkKind::SnapshotEnd, query.context, record_bytes(end));
+    query_bytes_ -= query.count * sizeof(OrderState);
+    queries_.pop_front();
+  }
+}
+
 void DurableEngine::drain() {
   while (!pending_.empty()) {
     poll();

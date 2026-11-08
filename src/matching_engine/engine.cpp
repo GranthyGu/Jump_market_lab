@@ -13,7 +13,8 @@ std::uint64_t allocate(std::uint16_t shard, std::uint64_t& sequence) {
 }
 }  // namespace
 MatchingEngine::MatchingEngine(const OrderConfig& config, std::uint16_t shard)
-    : shard_(shard), epoch_(md::new_epoch()), users_(config.accounts.size() + 1, nullptr) {
+    : shard_(shard), epoch_(md::new_epoch()), users_(config.accounts.size() + 1, nullptr),
+      user_order_counts_(config.accounts.size() + 1, 0) {
   if (!shard || config.products.size() > 65535) throw std::runtime_error("Invalid shard/products");
   const auto count = std::count_if(config.products.begin(), config.products.end(),
                                    [&](const auto& p) { return p.shard == shard; });
@@ -96,9 +97,7 @@ void MatchingEngine::change(const Order& o, bool erase) {
   if (!capture_) return;
   persistence::Change c;
   c.erase = erase;
-  c.order.state = o.state;
-  c.order.username = usernames_.at(o.user);
-  c.order.arrival = o.state.orderId;
+  c.order = persistence::compact_order(o.state, o.user, o.book->symbol_id, o.state.orderId);
   capture_->add(capture_->changes, c);
 }
 void MatchingEngine::restore(std::span<const persistence::StoredOrder> orders, std::uint64_t next_order,
@@ -244,6 +243,7 @@ void MatchingEngine::rest(const Order& incoming) {
   order->user_next = users_[order->user];
   if (order->user_next) order->user_next->user_prev = order;
   users_[order->user] = order;
+  ++user_order_counts_[order->user];
 }
 void MatchingEngine::unlink(Order& order) {
   auto& level = order.position->second;
@@ -261,6 +261,7 @@ void MatchingEngine::unlink(Order& order) {
   else
     users_[order.user] = order.user_next;
   if (order.user_next) order.user_next->user_prev = order.user_prev;
+  --user_order_counts_[order.user];
 }
 void MatchingEngine::cancel(const LinkHeader& h, const CancelRequest& request) {
   auto* order = active_.find(request.orderId);
@@ -280,6 +281,25 @@ void MatchingEngine::cancel(const LinkHeader& h, const CancelRequest& request) {
   active_.erase(request.orderId);
   pool_.release(order);
 }
+std::size_t MatchingEngine::active_order_count(std::uint32_t user) const {
+  if (!user || user >= users_.size()) {
+    throw std::runtime_error("Unknown snapshot user");
+  }
+  return user_order_counts_[user];
+}
+
+void MatchingEngine::copy_active_orders(std::uint32_t user,
+                                       std::span<OrderState> destination) const {
+  if (destination.size() != active_order_count(user)) {
+    throw std::logic_error("Snapshot buffer does not match user order count");
+  }
+  std::size_t index = 0;
+  for (const auto* order = users_[user]; order; order = order->user_next) {
+    destination[index++] = order->state;
+  }
+  assert(index == destination.size());
+}
+
 void MatchingEngine::snapshot(const LinkHeader& h, const Header& request) {
   for (auto* order = users_[h.user]; order; order = order->user_next) {
     auto record = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot, request.requestId);

@@ -14,6 +14,28 @@ struct StoredOrder {
   Name username{};
   std::uint64_t arrival = 0;
 };
+// Process-local identities keep change buffers and COW pages compact. The
+// persistent format still contains names, expanded by the immutable dictionary.
+struct CompactOrder {
+  OrderId id = 0;
+  std::uint64_t arrival = 0;
+  Price price = 0;
+  Quantity original = 0;
+  Quantity filled = 0;
+  Quantity remaining = 0;
+  std::uint32_t user = 0;
+  std::uint16_t symbol = 0;
+  Side side{};
+  OrderStatus status{};
+};
+
+inline CompactOrder compact_order(const OrderState& state, std::uint32_t user,
+                                  std::uint16_t symbol, std::uint64_t arrival) {
+  return {state.orderId, arrival, state.price, state.originalQuantity,
+          state.filledQuantity, state.remainingQuantity, user, symbol,
+          state.side, state.status};
+}
+
 struct TradeRecord {
   std::uint64_t id = 0, timestamp = 0;
   Name symbol{};
@@ -25,7 +47,7 @@ struct TradeRecord {
 };
 struct Change {
   bool erase = false;
-  StoredOrder order{};
+  CompactOrder order{};
 };
 struct Event {
   LinkKind kind{};
@@ -81,6 +103,8 @@ struct Options {
   std::size_t sync_group = 64;
   std::size_t checkpoint_bytes = 256 * 1024 * 1024;
   std::size_t cow_bytes = 32 * 1024 * 1024;
+  std::size_t query_slots = 64;
+  std::size_t query_bytes = 64 * 1024 * 1024;
   std::chrono::milliseconds checkpoint_interval{600000};
   std::function<void(Stage, std::uint64_t)> hook;
 };
