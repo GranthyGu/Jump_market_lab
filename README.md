@@ -180,7 +180,7 @@ OrderUpdate is shared by acceptance, partial fill, full fill, and successful can
 
 ### wire conventions
 
-The C++20 and Python definitions in protocol.h and protocol.py use these conventions:
+The C++20 and Python definitions in [src/shared_data/orders/protocol.h](src/shared_data/orders/protocol.h) and protocol.py use these conventions:
 
 - Serialize all fields in the exact order shown, without alignment padding. All multi-byte integers are little-endian.
 - side, status, and isEnd occupy one byte each. isEnd is encoded as 0 or 1.

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../protocol.h"
+#include "shared_data/orders/protocol.h"
 #include <array>
 #include <cstdint>
 #include <cstring>
