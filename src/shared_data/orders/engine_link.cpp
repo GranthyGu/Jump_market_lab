@@ -27,6 +27,9 @@ std::size_t message_size(MessageType type) {
     case MessageType::Trade: return sizeof(Trade);
     case MessageType::ActiveOrderSnapshot: return sizeof(ActiveOrderSnapshot);
     case MessageType::RequestRejected: return sizeof(RequestRejected);
+    case MessageType::TradeHistoryRequest: return sizeof(TradeHistoryRequest);
+    case MessageType::TradeHistoryRecord: return sizeof(TradeHistoryRecord);
+    case MessageType::TradeHistoryEnd: return sizeof(TradeHistoryEnd);
   }
   return 0;
 }
@@ -48,7 +51,8 @@ bool valid_client_record(std::span<const std::uint8_t> bytes, bool request) {
   std::memcpy(&h, bytes.data(), sizeof(h));
   if (h.messageLength != bytes.size() || message_size(h.messageType) != bytes.size()) return false;
   const bool is_request = h.messageType == MessageType::LoginRequest ||
-      h.messageType == MessageType::NewOrderRequest || h.messageType == MessageType::CancelRequest;
+      h.messageType == MessageType::NewOrderRequest || h.messageType == MessageType::CancelRequest ||
+      h.messageType == MessageType::TradeHistoryRequest;
   return is_request == request && (!request || h.requestId != 0);
 }
 bool valid_link_record(std::span<const std::uint8_t> bytes) {
@@ -70,7 +74,10 @@ bool valid_link_record(std::span<const std::uint8_t> bytes) {
       return h.user && h.token && h.session && payload.size() == sizeof(Header) &&
           copy_record<Header>(payload).messageType == MessageType::ActiveOrderSnapshot &&
           copy_record<Header>(payload).messageLength == sizeof(Header) && copy_record<Header>(payload).requestId;
-    case LinkKind::Event: case LinkKind::SnapshotEnd:
+    case LinkKind::History:
+      return h.user && h.token && h.session && payload.size() == sizeof(TradeHistoryRequest) &&
+          valid_client_record(payload, true) && copy_record<TradeHistoryRequest>(payload).header.messageType == MessageType::TradeHistoryRequest;
+    case LinkKind::Event: case LinkKind::SnapshotEnd: case LinkKind::HistoryEnd:
       return h.user && valid_client_record(payload, false);
   }
   return false;

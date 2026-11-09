@@ -56,7 +56,7 @@ void MatchingEngine::Pool::release(Order* order) noexcept {
 }
 template <typename T>
 void MatchingEngine::queue(LinkKind kind, const LinkHeader& context, const T& record) {
-  static_assert(sizeof(T) <= max_client_frame);
+  static_assert(sizeof(T) <= sizeof(Event::payload));
   Event event{};
   event.kind = kind;
   event.context = context;
@@ -77,6 +77,8 @@ void MatchingEngine::command(const LinkHeader& h, std::span<const std::uint8_t> 
     cancel(h, copy_record<CancelRequest>(bytes));
   else if (h.kind == LinkKind::Snapshot)
     snapshot(h, copy_record<Header>(bytes));
+  else if (h.kind == LinkKind::History)
+    queue(LinkKind::Event, h, rejected(copy_record<TradeHistoryRequest>(bytes).header.requestId, RejectReason::HistoryUnavailable));
   else
     throw std::runtime_error("Unexpected engine command");
   for (const auto& event : outgoing_) emit(event.kind, event.context, {event.payload.data(), event.size});

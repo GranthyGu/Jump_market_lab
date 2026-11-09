@@ -10,9 +10,12 @@
 #include <cerrno>
 #include <charconv>
 #include <csignal>
+#include <deque>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <sstream>
+#include <utility>
 
 namespace {
 using namespace marketlab;
@@ -42,8 +45,18 @@ void print_order(const OrderState& order) {
       << " remaining=" << order.remainingQuantity << " status=" << status(order.status);
 }
 void help() {
-  std::cout << "Commands: buy SYMBOL PRICE QUANTITY | sell SYMBOL PRICE QUANTITY\n"
-      << "          cancel ORDER_ID | cancel-last | relogin | help | quit\n";
+  std::cout << "\nCommands (one command per line):\n"
+      << "  buy SYMBOL PRICE QUANTITY  : place a buy limit order, e.g. buy AAPL 100 10\n"
+      << "  sell SYMBOL PRICE QUANTITY : place a sell limit order; prices/quantities are integers\n"
+      << "  cancel ORDER_ID            : cancel your remaining open quantity using an ORDER_UPDATE/SNAPSHOT ID\n"
+      << "  cancel-last                : cancel the last order accepted during this client session\n"
+      << "  trades                     : read ALL your committed trades across all shards; pages are fetched automatically\n"
+      << "                               HISTORY_TRADE prints original IDs/times, symbol, price, quantity and both parties\n"
+      << "                               HISTORY_COMPLETE confirms the full result; live TRADE notifications remain separate\n"
+      << "  relogin                    : authenticate again and refresh your open-order snapshot\n"
+      << "  help                       : display these instructions\n"
+      << "  quit                       : disconnect; open orders remain on the exchange\n"
+      << "History is fixed at each shard's committed boundary when the query starts. Run trades again for newer fills.\n\n";
 }
 struct Options {
   std::string host = "127.0.0.1", user, password;
@@ -64,6 +77,19 @@ class Console {
   }
   int run() {
     while (!interrupted_) {
+      if (!waiting_) {
+        const auto newline = stdin_buffer_.find('\n');
+        if (newline != std::string::npos) {
+          const auto line = stdin_buffer_.substr(0,newline); stdin_buffer_.erase(0,newline + 1);
+          if (!command(line)) return 0;
+          continue;
+        }
+        if (stdin_closed_) {
+          if (!stdin_buffer_.empty()) { auto line = std::exchange(stdin_buffer_,{}); if (!command(line)) return 0; }
+          else return 0;
+          continue;
+        }
+      }
       if (waiting_ && md::Clock::now() > deadline_) throw std::runtime_error("Response timeout");
       pollfd ready[]{{fd_.get(),POLLIN,0},{STDIN_FILENO,static_cast<short>(waiting_ ? 0 : POLLIN),0}};
       // Disable stdin entirely while waiting; a closed pipe otherwise reports
@@ -73,12 +99,18 @@ class Console {
       if (count < 0 && errno == EINTR) continue;
       if (count < 0) throw std::runtime_error("poll failed");
       if (ready[0].revents & (POLLIN | POLLHUP | POLLERR)) {
-        if (!receive()) { std::cout << "DISCONNECTED: gateway closed TCP (another login may have replaced this session).\n"; return 0; }
+        if (!receive()) {
+          std::cout << "DISCONNECTED: gateway closed TCP (another login may have replaced this session).\n";
+          if (history_) { std::cout << "HISTORY_FAILED partial_count=" << history_total_ << " (query incomplete)\n"; return 1; }
+          return 0;
+        }
       }
       if (!waiting_ && ready[1].revents & (POLLIN | POLLHUP)) {
-        std::string line;
-        if (!std::getline(std::cin,line)) return 0;
-        if (!command(line)) return 0;
+        char buffer[4096]; const auto n = ::read(STDIN_FILENO,buffer,sizeof(buffer));
+        if (n > 0) stdin_buffer_.append(buffer,static_cast<std::size_t>(n));
+        else if (n == 0) stdin_closed_ = true;
+        else if (errno != EINTR && errno != EAGAIN) throw std::runtime_error("stdin read failed");
+        if (stdin_buffer_.size() > 64 * 1024) throw std::runtime_error("Command input exceeds 64 KiB");
       }
     }
     return 0;
@@ -91,6 +123,12 @@ class Console {
   RequestId next_ = 1, waiting_ = 0;
   OrderId last_order_ = 0;
   bool snapshot_ = false;
+  bool history_ = false, history_fanout_ = false, stdin_closed_ = false;
+  std::string stdin_buffer_;
+  std::uint64_t history_total_ = 0;
+  std::deque<TradeHistoryEnd> history_pages_;
+  std::map<std::uint16_t,std::uint32_t> history_page_counts_;
+  std::map<std::uint16_t,TradeId> history_last_ids_;
   md::Clock::time_point deadline_;
 
   template <typename T> void send(T value,MessageType type) {
@@ -116,6 +154,13 @@ class Console {
       if (op == "quit" && args.empty()) return false;
       if (op == "help" && args.empty()) { help(); return true; }
       if (op == "relogin" && args.empty()) { login(); return true; }
+      if (op == "trades" && args.empty()) {
+        history_ = history_fanout_ = true; history_total_ = 0;
+        history_pages_.clear(); history_page_counts_.clear(); history_last_ids_.clear();
+        TradeHistoryRequest query{}; query.limit = trade_history_page_limit;
+        std::cout << "HISTORY_BEGIN user=" << options_.user << " page_limit=" << query.limit << '\n';
+        send(query,MessageType::TradeHistoryRequest); return true;
+      }
       if ((op == "buy" || op == "sell") && args.size() == 3) {
         NewOrderRequest value{}; put_string(value.symbol,args[0]);
         value.side = op == "buy" ? Side::Buy : Side::Sell;
@@ -192,13 +237,60 @@ class Console {
         std::cout << "REJECTED requestId=" << h.requestId << " reason=" << static_cast<unsigned>(reason)
             << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n';
         if (snapshot_) throw std::runtime_error("Login rejected");
+        if (history_ && h.requestId == waiting_) {
+          std::cout << "HISTORY_FAILED partial_count=" << history_total_ << " (query incomplete; reason 4=invalid cursor, 5=unavailable, 6=busy)\n";
+          history_ = false; history_pages_.clear();
+        }
         complete = true; break;
+      }
+      case MessageType::TradeHistoryRecord: {
+        if (!history_ || h.requestId != waiting_) throw std::runtime_error("Unexpected history record");
+        const auto value = copy_record<TradeHistoryRecord>(bytes);
+        const auto shard = static_cast<std::uint16_t>(value.tradeId >> 48);
+        if (value.tradeId <= history_last_ids_[shard]) throw std::runtime_error("History trade IDs repeated or out of order within a shard");
+        history_last_ids_[shard] = value.tradeId; ++history_page_counts_[shard]; ++history_total_;
+        std::cout << "HISTORY_TRADE requestId=" << h.requestId << " shard=" << shard << " tradeId=" << value.tradeId
+            << " symbol=" << fixed_string(value.symbol) << " price=" << value.price << " quantity=" << value.quantity
+            << " buyOrderId=" << value.buyOrderId << " sellOrderId=" << value.sellOrderId
+            << " buyer=" << fixed_string(value.buyer) << " seller=" << fixed_string(value.seller)
+            << " exchangeTimeNs=" << value.timestamp << " receivedAtNs=" << received_at << '\n';
+        break;
+      }
+      case MessageType::TradeHistoryEnd: {
+        if (!history_ || h.requestId != waiting_) throw std::runtime_error("Unexpected history marker");
+        const auto end = copy_record<TradeHistoryEnd>(bytes);
+        const std::uint16_t shard_id = end.shard;
+        if (end.shard == 0) {
+          if (!history_fanout_ || end.flags != history_all_shards) throw std::runtime_error("Invalid history all-shards marker");
+          complete = true;
+        } else {
+          if (end.count != history_page_counts_[shard_id] || end.flags & ~history_more) throw std::runtime_error("History page count/flags mismatch");
+          history_page_counts_[shard_id] = 0;
+          if (end.flags & history_more) history_pages_.push_back(end);
+          std::cout << "HISTORY_PAGE_END shard=" << end.shard << " count=" << end.count
+              << " more=" << ((end.flags & history_more) != 0) << " nextOffset=" << end.nextOffset
+              << " throughOffset=" << end.throughOffset << '\n';
+          complete = !history_fanout_;
+        }
+        break;
       }
       default: throw std::runtime_error("Unexpected server message");
     }
     if (complete && h.requestId == waiting_) {
       waiting_ = 0;
-      if (snapshot_) { snapshot_ = false; std::cout << "READY (type help for commands)\n"; }
+      if (snapshot_) { snapshot_ = false; std::cout << "READY (type help for commands)\n"; help(); }
+      if (history_) {
+        history_fanout_ = false;
+        if (history_pages_.empty()) {
+          history_ = false;
+          std::cout << "HISTORY_COMPLETE total=" << history_total_ << " user=" << options_.user << '\n';
+        } else {
+          const auto page = history_pages_.front(); history_pages_.pop_front();
+          TradeHistoryRequest query{}; query.shard = page.shard; query.limit = trade_history_page_limit;
+          query.afterOffset = page.nextOffset; query.throughOffset = page.throughOffset;
+          send(query,MessageType::TradeHistoryRequest);
+        }
+      }
     }
   }
 };

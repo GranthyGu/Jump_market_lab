@@ -3,6 +3,7 @@
 #include <thread>
 
 #include "matching_engine/engine.hpp"
+#include "matching_engine/bpt/history_store.hpp"
 #include "matching_engine/persistence/queue.hpp"
 #include "matching_engine/persistence/wakeup.hpp"
 #include "matching_engine/recovery/storage.hpp"
@@ -60,6 +61,7 @@ class DurableEngine final : public EngineBackend {
   Boundary boundary_;
   Boundary initial_;
   Wakeup wakeup_;
+  std::unique_ptr<bpt::HistoryStore> history_;
   std::uint64_t executed_ = 0, checkpoint_seq_ = 0;
   std::size_t pending_bytes_ = 0;
   std::deque<std::unique_ptr<Batch>> pending_;

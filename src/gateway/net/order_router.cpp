@@ -94,11 +94,22 @@ class Router {
     links.send(front,LinkKind::Event,h,record_bytes(rejected(request,reason)));
   }
   void command(const LinkHeader& h, std::span<const std::uint8_t> bytes) {
-    if (h.kind != LinkKind::NewOrder && h.kind != LinkKind::Cancel && h.kind != LinkKind::Snapshot) { io.close(front); return; }
+    if (h.kind != LinkKind::NewOrder && h.kind != LinkKind::Cancel && h.kind != LinkKind::Snapshot && h.kind != LinkKind::History) { io.close(front); return; }
     if (h.user > c.accounts.size() || pending.contains(h.token) || pending.size() >= c.max_pending) { io.close(front); return; }
     Header wire{}; std::memcpy(&wire,bytes.data(),sizeof(wire));
     ++commands;
     std::size_t target = 0;
+    bool fanout = h.kind == LinkKind::Snapshot;
+    if (h.kind == LinkKind::History) {
+      const auto q = copy_record<TradeHistoryRequest>(bytes);
+      fanout = q.shard == 0;
+      if (!fanout) {
+        const std::uint16_t shard_id = q.shard;
+        const auto shard = shard_index.find(shard_id);
+        if (shard == shard_index.end()) { reject(h,wire.requestId,RejectReason::InvalidHistoryQuery); return; }
+        target = shard->second;
+      }
+    }
     if (h.kind == LinkKind::NewOrder) {
       const auto order = copy_record<NewOrderRequest>(bytes);
       const auto product = products.find(fixed_string(order.symbol));
@@ -111,16 +122,16 @@ class Router {
       target = shard->second;
     }
     Pending p{h,wire.requestId,front,target,{},Clock::now() + std::chrono::milliseconds(c.request_timeout_ms)};
-    if (h.kind == LinkKind::Snapshot) p.completed.resize(shards.size(),false);
+    if (fanout) p.completed.resize(shards.size(),false);
     pending.emplace(h.token,std::move(p));
-    if (h.kind == LinkKind::Snapshot) {
+    if (fanout) {
       for (const auto& shard : shards) {
         if (!links.send(shard.connection,h.kind,h,bytes)) { io.close(front); return; }
       }
     } else if (!links.send(shards[target].connection,h.kind,h,bytes)) io.close(front);
   }
   void result(ConnectionId id, const LinkHeader& h, std::span<const std::uint8_t> bytes) {
-    if ((h.kind != LinkKind::Event && h.kind != LinkKind::SnapshotEnd) || h.user > c.accounts.size()) { io.close(id); return; }
+    if ((h.kind != LinkKind::Event && h.kind != LinkKind::SnapshotEnd && h.kind != LinkKind::HistoryEnd) || h.user > c.accounts.size()) { io.close(id); return; }
     Header wire{}; std::memcpy(&wire,bytes.data(),sizeof(wire));
     if (!h.token) {
       if (h.kind != LinkKind::Event || h.session || wire.requestId ||
@@ -132,6 +143,7 @@ class Router {
     if (it == pending.end()) return;
     auto& p = it->second;
     if (h.user != p.context.user || h.session != p.context.session || wire.requestId != p.request) { io.close(id); return; }
+    if (p.context.kind == LinkKind::History) { history_result(id,h,wire,bytes,p); return; }
     if (p.context.kind == LinkKind::Snapshot) {
       const auto index = backend.at(id);
       if (wire.messageType != MessageType::ActiveOrderSnapshot || p.completed[index]) { io.close(id); return; }
@@ -158,6 +170,32 @@ class Router {
       pending.erase(it);
       links.send(destination,h.kind,h,bytes); ++events;
     }
+  }
+  void history_result(ConnectionId id, const LinkHeader& h, const Header& wire,
+                      std::span<const std::uint8_t> bytes, Pending& p) {
+    const auto index = backend.at(id);
+    const auto destination = p.front;
+    const bool fanout = !p.completed.empty();
+    if ((!fanout && index != p.target) || (fanout && p.completed[index])) { io.close(id); return; }
+    if (wire.messageType == MessageType::RequestRejected && h.kind == LinkKind::Event) {
+      pending.erase(h.token); links.send(destination,h.kind,h,bytes); ++events; return;
+    }
+    if (wire.messageType == MessageType::TradeHistoryRecord && h.kind == LinkKind::Event) {
+      links.send(destination,h.kind,h,bytes); ++events; return;
+    }
+    if (wire.messageType != MessageType::TradeHistoryEnd || h.kind != LinkKind::HistoryEnd) { io.close(id); return; }
+    const auto end = copy_record<TradeHistoryEnd>(bytes);
+    if (end.shard != c.shards[index].id || (end.flags & ~history_more)) { io.close(id); return; }
+    bool complete = !fanout;
+    auto marker = server_record<TradeHistoryEnd>(MessageType::TradeHistoryEnd,p.request);
+    marker.flags = history_all_shards;
+    if (fanout) {
+      p.completed[index] = true;
+      complete = std::all_of(p.completed.begin(),p.completed.end(),[](bool done) { return done; });
+    }
+    if (complete) pending.erase(h.token);
+    links.send(destination,h.kind,h,bytes); ++events;
+    if (complete && fanout) { links.send(destination,LinkKind::HistoryEnd,h,record_bytes(marker)); ++events; }
   }
 };
 }

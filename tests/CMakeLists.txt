@@ -58,6 +58,21 @@ add_test(NAME recovery_process COMMAND recovery_process_test "$<TARGET_FILE_DIR:
 set_tests_properties(recovery_process PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE LABELS "engine;recovery;integration;correctness")
 
 add_subdirectory(recovery/bench)
+add_executable(bpt_tests bpt/suite.cpp)
+target_link_libraries(bpt_tests PRIVATE marketlab_bpt marketlab_order_link)
+target_compile_options(bpt_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME bpt_correctness_concurrency_stress COMMAND bpt_tests "${CMAKE_BINARY_DIR}/bpt-results" 300000)
+set_tests_properties(bpt_correctness_concurrency_stress PROPERTIES TIMEOUT 180 LABELS "bpt;concurrency;correctness;performance")
+add_executable(trade_history_tests bpt/history.cpp)
+target_link_libraries(trade_history_tests PRIVATE marketlab_matching_core)
+add_test(NAME trade_history_correctness COMMAND trade_history_tests "${CMAKE_BINARY_DIR}/history-results")
+set_tests_properties(trade_history_correctness PROPERTIES TIMEOUT 90 LABELS "bpt;recovery;correctness")
+add_test(NAME trade_history_process
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/bpt/process.py"
+    "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/history-process-results")
+set_tests_properties(trade_history_process PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS "bpt;recovery;integration")
+add_executable(trade_history_benchmark EXCLUDE_FROM_ALL bpt/history_benchmark.cpp)
+target_link_libraries(trade_history_benchmark PRIVATE marketlab_matching_core)
 
 # Explicit audit for loss/corruption after an acknowledged commit. It reports
 # known protection gaps with a nonzero exit code, rather than hiding them in a

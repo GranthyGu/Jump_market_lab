@@ -16,8 +16,8 @@ using ConnectionId = std::uint64_t;
 // remain exactly those in protocol.h. Passwords never enter the engine link.
 enum class LinkKind : std::uint16_t {
   Hello = 1, Ready = 2, Ping = 3, Pong = 4,
-  NewOrder = 10, Cancel = 11, Snapshot = 12,
-  Event = 20, SnapshotEnd = 21
+  NewOrder = 10, Cancel = 11, Snapshot = 12, History = 13,
+  Event = 20, SnapshotEnd = 21, HistoryEnd = 22
 };
 #pragma pack(push, 1)
 struct WireLinkHeader {
@@ -40,8 +40,8 @@ struct LinkHeader {
   std::uint64_t session;
 };
 LinkHeader decode_link_header(std::span<const std::uint8_t> bytes);
-inline constexpr std::array<std::uint8_t, 8> link_version{'M','L','G','W',1,0,0,0};
-inline constexpr std::size_t max_client_frame = 81;
+inline constexpr std::array<std::uint8_t, 8> link_version{'M','L','G','W',2,0,0,0};
+inline constexpr std::size_t max_client_frame = sizeof(TradeHistoryRecord);
 inline constexpr std::size_t max_link_frame = link_header_size + max_client_frame;
 
 std::uint64_t unix_ns();

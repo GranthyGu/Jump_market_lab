@@ -34,6 +34,8 @@ DurableEngine::DurableEngine(const OrderConfig& c, std::uint16_t shard, Options 
   File initial(storage_.delta_path(executed_ + 1), true, true);
   initial.sync();
   sync_directory(storage_.root() / "orders");
+  history_ = std::make_unique<bpt::HistoryStore>(storage_.root(), c, shard, boundary_.trade_end,
+      options_.history_cache_pages, options_.query_slots, [this] { wakeup_.notify(); }, options_.history_checkpoint_bytes);
   std::cout << "RECOVERY_READY shard=" << shard << " batch=" << boundary_.seq
             << " checkpoint=" << checkpoint_seq_ << " active_orders=" << recovered.orders.size()
             << " trades=" << boundary_.trade_count << " data=" << storage_.root() << std::endl;
@@ -54,6 +56,7 @@ void DurableEngine::stop() noexcept {
   if (trade_thread_.joinable()) trade_thread_.join();
   if (order_thread_.joinable()) order_thread_.join();
   if (snapshot_thread_.joinable()) snapshot_thread_.join();
+  if (history_) history_->close();
 }
 void DurableEngine::hook(Stage s, std::uint64_t seq) {
   if (options_.hook) options_.hook(s, seq);
@@ -210,6 +213,7 @@ void DurableEngine::poll() {
   check_error();
   service_checkpoint();
   emit_queries();
+  history_->poll();
   while (!pending_.empty() && pending_.front()->done.load(std::memory_order_acquire) == 3) {
     auto& batch = *pending_.front();
     for (const auto& change : batch.result.changes) {
@@ -225,6 +229,7 @@ void DurableEngine::poll() {
     boundary_ = batch.b;
     boundary_.trade_end = batch.trade_end;
     boundary_.trade_count = batch.trade_count;
+    history_->publish(boundary_.trade_end);
     service_checkpoint();
     hook(Stage::Emitting, boundary_.seq);
     for (const auto& event : batch.result.events)
@@ -246,6 +251,10 @@ void DurableEngine::poll() {
 void DurableEngine::command(const LinkHeader& h, std::span<const std::uint8_t> bytes, const Emit& emit) {
   try {
     poll();
+    if (h.kind == LinkKind::History) {
+      history_->request(h, copy_record<TradeHistoryRequest>(bytes), boundary_.trade_end, emit);
+      return;
+    }
     if (h.kind == LinkKind::Snapshot) {
       capture_query(h, copy_record<Header>(bytes), emit);
       return;
@@ -328,9 +337,9 @@ void DurableEngine::emit_queries() {
 }
 
 void DurableEngine::drain() {
-  while (!pending_.empty()) {
+  while (!pending_.empty() || history_->pending()) {
     poll();
-    if (!pending_.empty()) wait_progress();
+    if (!pending_.empty() || history_->pending()) wait_progress();
   }
   check_error();
   service_checkpoint();

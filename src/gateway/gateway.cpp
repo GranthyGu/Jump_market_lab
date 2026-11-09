@@ -150,6 +150,7 @@ class Gateway {
       (void)fixed_string(order.symbol);
       submit(id,LinkKind::NewOrder,bytes,h.requestId);
     } else if (h.messageType == MessageType::CancelRequest) submit(id,LinkKind::Cancel,bytes,h.requestId);
+    else if (h.messageType == MessageType::TradeHistoryRequest) submit(id,LinkKind::History,bytes,h.requestId);
     else io.close(id);
   }
   void submit(ConnectionId id, LinkKind kind, std::span<const std::uint8_t> bytes, RequestId request) {
@@ -158,6 +159,21 @@ class Gateway {
     if (pending.size() >= c.max_pending || it->second.tokens.size() >= c.max_pending_per_client ||
         sequence == std::numeric_limits<std::uint64_t>::max()) { io.close(id); return; }
     std::size_t target = 0;
+    bool fanout = kind == LinkKind::Snapshot;
+    if (kind == LinkKind::History) {
+      const auto q = copy_record<TradeHistoryRequest>(bytes);
+      if (!q.limit || q.limit > trade_history_page_limit || q.afterOffset > q.throughOffset ||
+          (!q.shard && (q.afterOffset || q.throughOffset))) {
+        reply(id,rejected(request,RejectReason::InvalidHistoryQuery)); return;
+      }
+      fanout = q.shard == 0;
+      if (q.shard && c.direct) {
+        const std::uint16_t shard_id = q.shard;
+        const auto shard = shard_index.find(shard_id);
+        if (shard == shard_index.end()) { reply(id,rejected(request,RejectReason::InvalidHistoryQuery)); return; }
+        target = shard->second;
+      }
+    }
     if (c.direct && kind == LinkKind::NewOrder) {
       const auto order = copy_record<NewOrderRequest>(bytes);
       const auto route = routes.find(fixed_string(order.symbol));
@@ -172,7 +188,7 @@ class Gateway {
     const auto token = sequence++;
     const auto user = it->second.user;
     Pending p{id,user,request,kind,Clock::now() + std::chrono::milliseconds(c.request_timeout_ms),engines[target].connection,{}};
-    if (kind == LinkKind::Snapshot) p.done.resize(engines.size(),false);
+    if (fanout) p.done.resize(engines.size(),false);
     pending.emplace(token,std::move(p));
     it->second.tokens.insert(token);
     peak_pending = std::max(peak_pending,pending.size());
@@ -180,13 +196,13 @@ class Gateway {
       if (!links.send(engine,kind,{0,kind,token,user,id},bytes)) { io.close(engine); io.close(id); return false; }
       ++engine_frames; return true;
     };
-    if (kind == LinkKind::Snapshot) {
+    if (fanout) {
       for (const auto& engine : engines) if (!send_to(engine.connection)) return;
     } else if (!send_to(engines[target].connection)) return;
     ++commands;
   }
   void event(ConnectionId engine, const LinkHeader& h, std::span<const std::uint8_t> bytes) {
-    if ((h.kind != LinkKind::Event && h.kind != LinkKind::SnapshotEnd) || h.user >= online.size()) { io.close(engine); return; }
+    if ((h.kind != LinkKind::Event && h.kind != LinkKind::SnapshotEnd && h.kind != LinkKind::HistoryEnd) || h.user >= online.size()) { io.close(engine); return; }
     Header wire{}; std::memcpy(&wire,bytes.data(),sizeof(wire));
     ConnectionId destination = online[h.user];
     bool completed = false;
@@ -195,6 +211,7 @@ class Gateway {
       if (it == pending.end()) return;
       auto& p = it->second;
       if (p.user != h.user || p.session != h.session || wire.requestId != p.request || destination != p.session) { io.close(engine); return; }
+      if (p.kind == LinkKind::History) { history_event(engine,h,wire,bytes,p); return; }
       if (p.kind == LinkKind::Snapshot) {
         if (wire.messageType != MessageType::ActiveOrderSnapshot) { io.close(engine); return; }
         const auto snapshot = copy_record<ActiveOrderSnapshot>(bytes);
@@ -228,6 +245,41 @@ class Gateway {
     }
     ++events;
     if (destination) io.send(destination,bytes);
+  }
+  void history_event(ConnectionId engine, const LinkHeader& h, const Header& wire,
+                     std::span<const std::uint8_t> bytes, Pending& p) {
+    const auto destination = p.session;
+    const auto index = backend.at(engine);
+    const bool fanout = !p.done.empty();
+    if ((!fanout && engine != p.target) || (fanout && p.done[index])) { io.close(engine); return; }
+    if (wire.messageType == MessageType::RequestRejected && h.kind == LinkKind::Event) {
+      clients.at(destination).tokens.erase(h.token); pending.erase(h.token);
+      ++events; io.send(destination,bytes); return;
+    }
+    if (wire.messageType == MessageType::TradeHistoryRecord && h.kind == LinkKind::Event) {
+      ++events; io.send(destination,bytes); return;
+    }
+    if (wire.messageType != MessageType::TradeHistoryEnd || h.kind != LinkKind::HistoryEnd) { io.close(engine); return; }
+    const auto end = copy_record<TradeHistoryEnd>(bytes);
+    if (end.flags & ~(history_more | history_all_shards)) { io.close(engine); return; }
+    bool complete = !fanout;
+    if (c.direct) {
+      if (end.shard != c.shards[index].id || (end.flags & history_all_shards)) { io.close(engine); return; }
+      if (fanout) {
+        p.done[index] = true;
+        complete = std::all_of(p.done.begin(),p.done.end(),[](bool done) { return done; });
+      }
+    } else if (fanout) {
+      complete = end.shard == 0 && end.flags == history_all_shards;
+      if ((end.shard == 0) != complete) { io.close(engine); return; }
+    } else if (end.shard == 0 || (end.flags & history_all_shards)) { io.close(engine); return; }
+    auto marker = server_record<TradeHistoryEnd>(MessageType::TradeHistoryEnd,p.request);
+    marker.flags = history_all_shards;
+    if (complete) {
+      clients.at(destination).tokens.erase(h.token); pending.erase(h.token);
+    }
+    ++events; io.send(destination,bytes);
+    if (complete && fanout && c.direct) { reply(destination,marker); ++events; }
   }
 };
 }

@@ -33,6 +33,8 @@ int main(int argc, char** argv) {
                 << "  --data-dir PATH     Persistent data root (each shard has its own subdirectory)\n"
                 << "  --checkpoint-ms N   Checkpoint interval; default 600000\n"
                 << "  --pending-mib N     In-flight result budget; default 64 MiB\n"
+                << "  --history-cache-mib N       B+ tree page cache per shard; default 8 MiB\n"
+                << "  --history-checkpoint-mib N  New trade-log bytes between index checkpoints; default 64 MiB\n"
                 << "  --volatile          Disable persistence for isolated baseline tests\n"
                 << "  --trace             Log internal message metadata\n";
       return argc == 1 ? 1 : 0;
@@ -64,13 +66,21 @@ int main(int argc, char** argv) {
         mmap_path = value;
       else if (flag == "--data-dir")
         data_dir = value;
-      else if (flag == "--checkpoint-ms" || flag == "--pending-mib") {
+      else if (flag == "--checkpoint-ms" || flag == "--pending-mib" ||
+               flag == "--history-cache-mib" || flag == "--history-checkpoint-mib") {
         if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos)
           throw std::runtime_error("Expected positive integer");
         const auto n = std::stoull(value);
         if (!n || n > 86400000) throw std::runtime_error("Persistence option outside allowed range");
         if (flag == "--checkpoint-ms")
           persistence_options.checkpoint_interval = std::chrono::milliseconds(n);
+        else if (flag == "--history-cache-mib") {
+          if (n > 4096) throw std::runtime_error("History cache limited to 4096 MiB");
+          persistence_options.history_cache_pages = n * 128;
+        } else if (flag == "--history-checkpoint-mib") {
+          if (n > 4096) throw std::runtime_error("History checkpoint threshold limited to 4096 MiB");
+          persistence_options.history_checkpoint_bytes = n * 1024 * 1024;
+        }
         else {
           if (n > 4096) throw std::runtime_error("Pending buffer limited to 4096 MiB");
           persistence_options.pending_bytes = n * 1024 * 1024;

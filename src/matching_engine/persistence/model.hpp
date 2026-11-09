@@ -52,7 +52,9 @@ struct Change {
 struct Event {
   LinkKind kind{};
   LinkHeader context{};
-  std::array<std::uint8_t, max_client_frame> payload{};
+  // History responses bypass matching batches. Keep the hot matching event
+  // slots at their original size even though history adds a larger wire record.
+  std::array<std::uint8_t, sizeof(ActiveOrderSnapshot)> payload{};
   std::size_t size = 0;
 };
 struct Result {
@@ -105,6 +107,8 @@ struct Options {
   std::size_t cow_bytes = 32 * 1024 * 1024;
   std::size_t query_slots = 64;
   std::size_t query_bytes = 64 * 1024 * 1024;
+  std::size_t history_cache_pages = 1024;  // 8 MiB of B+ tree pages per shard.
+  std::uint64_t history_checkpoint_bytes = 64 * 1024 * 1024;
   std::chrono::milliseconds checkpoint_interval{600000};
   std::function<void(Stage, std::uint64_t)> hook;
 };
