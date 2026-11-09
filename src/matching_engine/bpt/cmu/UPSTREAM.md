@@ -12,3 +12,9 @@ key mode retains the upstream test API, including tombstones and removal.
 
 This directory is the source of truth. Official tests live in a temporary upstream
 checkout under build/, and compile these source files. Do not edit that checkout.
+
+The MarketLab CMake target defines `MARKETLAB_BPT_STANDALONE=1`: trade types are
+instantiated from the template headers, without BusTub's database dependencies.
+The four explicit-instantiation `.cpp` files also belong to that target so editor
+tools receive its configuration. Their `GenericKey`/`RID` instantiations are only
+enabled in the full upstream build, where those types and debug helpers exist.

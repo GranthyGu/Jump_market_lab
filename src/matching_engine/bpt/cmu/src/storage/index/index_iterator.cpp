@@ -11,6 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "storage/index/index_iterator.h"
+
+// GenericKey/RID instantiations are only needed by the full BusTub build.
+#ifndef MARKETLAB_BPT_STANDALONE
 #include "storage/index/generic_key.h"
 #include "common/rid.h"
 namespace bustub {
@@ -29,3 +32,4 @@ template class IndexIterator<GenericKey<32>, RID, GenericComparator<32>>;
 template class IndexIterator<GenericKey<64>, RID, GenericComparator<64>>;
 
 }  // namespace bustub
+#endif  // MARKETLAB_BPT_STANDALONE
