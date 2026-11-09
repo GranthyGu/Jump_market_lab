@@ -15,7 +15,12 @@ struct ShardConfig {
   std::string mmap_path;
   std::vector<std::uint16_t> symbols;
 };
-struct Endpoint { std::string host; std::uint16_t port; };
+
+struct Endpoint {
+  std::string host;
+  std::uint16_t port;
+};
+
 struct MulticastConfig {
   Endpoint group{"239.10.10.1", 9001};
   // Local interface IPv4, or 0.0.0.0 to use the system routing decision.
@@ -23,7 +28,9 @@ struct MulticastConfig {
   int ttl = 1;
   bool loopback = true;
 };
+
 void validate_multicast(const MulticastConfig& config);
+
 struct RecoveryConfig {
   int reorder_wait_ms = 200;
   int late_after_ms = 1500;
@@ -35,7 +42,9 @@ struct RecoveryConfig {
   int retry_initial_ms = 200;
   int retry_max_ms = 5000;
 };
+
 void validate_recovery(const RecoveryConfig& config);
+
 struct Config {
   std::map<std::uint16_t, std::string> symbols;
   std::vector<ShardConfig> shards;
@@ -51,5 +60,6 @@ struct Config {
   int mock_step_ms = 1000;
   std::size_t max_query_connections = 128;
 };
+
 Config load_config(const std::string& path, const std::string& source_override = "");
 }  // namespace marketlab::md

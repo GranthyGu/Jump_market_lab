@@ -35,13 +35,14 @@ static constexpr int INVALID_PAGE_ID = -1;   // invalid page id
 static constexpr int INVALID_TXN_ID = -1;    // invalid transaction id
 static constexpr int INVALID_LSN = -1;       // invalid log sequence number
 
-static constexpr int BUSTUB_PAGE_SIZE = 8192;                                        // size of a data page in byte
-static constexpr int BUFFER_POOL_SIZE = 128;                                         // size of buffer pool
-static constexpr int DEFAULT_DB_IO_SIZE = 16;                                        // starting size of file on disk
-static constexpr int LOG_BUFFER_SIZE = ((BUFFER_POOL_SIZE + 1) * BUSTUB_PAGE_SIZE);  // size of a log buffer in byte
-static constexpr int BUCKET_SIZE = 50;                                               // size of extendible hash bucket
-static constexpr int LRUK_REPLACER_K = 10;                                           // backward k-distance for lru-k
-static constexpr int BUSTUB_BATCH_SIZE = 20;  // number of tuples processed in a batch
+static constexpr int BUSTUB_PAGE_SIZE = 8192;  // size of a data page in byte
+static constexpr int BUFFER_POOL_SIZE = 128;   // size of buffer pool
+static constexpr int DEFAULT_DB_IO_SIZE = 16;  // starting size of file on disk
+static constexpr int LOG_BUFFER_SIZE =
+    ((BUFFER_POOL_SIZE + 1) * BUSTUB_PAGE_SIZE);  // size of a log buffer in byte
+static constexpr int BUCKET_SIZE = 50;            // size of extendible hash bucket
+static constexpr int LRUK_REPLACER_K = 10;        // backward k-distance for lru-k
+static constexpr int BUSTUB_BATCH_SIZE = 20;      // number of tuples processed in a batch
 
 using frame_id_t = int32_t;    // frame id type
 using page_id_t = int32_t;     // page id type
@@ -52,6 +53,7 @@ using oid_t = uint16_t;
 
 const txn_id_t TXN_START_ID = 1LL << 62;  // first txn id
 
-static constexpr int VARCHAR_DEFAULT_LENGTH = 128;  // default length for varchar when constructing the column
+static constexpr int VARCHAR_DEFAULT_LENGTH =
+    128;  // default length for varchar when constructing the column
 
 }  // namespace bustub

@@ -7,19 +7,39 @@ clean=false
 jobs=4
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --clean) clean=true; shift ;;
+    --clean)
+      clean=true
+      shift
+      ;;
     --jobs)
-      [ "$#" -ge 2 ] || { echo 'Missing --jobs value' >&2; exit 1; }
-      jobs=$2; shift 2 ;;
+      [ "$#" -ge 2 ] || {
+        echo 'Missing --jobs value' >&2
+        exit 1
+      }
+      jobs=$2
+      shift 2
+      ;;
     --help)
       echo 'Usage: src/scripts/build.sh [--clean] [--jobs N]'
       echo '--clean removes build/, including old logs; stop all project services first.'
-      exit 0 ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
   esac
 done
-case "$jobs" in ''|*[!0-9]*) echo 'Jobs must be a positive integer' >&2; exit 1 ;; esac
-[ "$jobs" -gt 0 ] || { echo 'Jobs must be positive' >&2; exit 1; }
+case "$jobs" in
+  ''|*[!0-9]*)
+    echo 'Jobs must be a positive integer' >&2
+    exit 1
+    ;;
+esac
+[ "$jobs" -gt 0 ] || {
+  echo 'Jobs must be positive' >&2
+  exit 1
+}
 if [ "$clean" = true ]; then
   [ "$build_root" = "$repo_root/build" ] && [ -n "$repo_root" ] || exit 1
   rm -rf -- "$build_root"

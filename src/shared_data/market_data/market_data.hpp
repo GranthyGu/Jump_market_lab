@@ -16,8 +16,14 @@ inline constexpr std::size_t level_size = 21;
 inline constexpr std::size_t max_snapshot_size = header_size + 2 * depth * level_size;
 inline constexpr std::size_t max_delta_size = header_size + 4 * depth * level_size;
 inline constexpr std::uint8_t shard_query = 1;
-enum class Kind : std::uint8_t { Delta = 1, Snapshot = 2 };
-enum class Side : std::uint8_t { Buy = 1, Sell = 2 };
+enum class Kind : std::uint8_t {
+  Delta = 1,
+  Snapshot = 2
+};
+enum class Side : std::uint8_t {
+  Buy = 1,
+  Sell = 2
+};
 
 struct Level {
   Side side;
@@ -26,11 +32,13 @@ struct Level {
   std::uint64_t num_orders;
   bool operator==(const Level&) const = default;
 };
+
 struct Book {
   std::uint16_t symbol_id;
   std::vector<Level> levels;
   bool operator==(const Book&) const = default;
 };
+
 struct Message {
   Kind kind;
   Epoch epoch;
@@ -39,6 +47,7 @@ struct Message {
   std::uint64_t timestamp;
   std::vector<Level> levels;
 };
+
 struct ShardView {
   Epoch epoch;
   std::map<std::uint16_t, Book> books;
@@ -53,7 +62,8 @@ std::vector<Level> difference(const Book& before, const Book& after);
 Bytes encode(const Message& message);
 Message decode(std::span<const std::uint8_t> data);
 Bytes encode_shard(const ShardView& view);
-ShardView decode_shard(std::span<const std::uint8_t> data, const std::vector<std::uint16_t>& expected);
+ShardView decode_shard(std::span<const std::uint8_t> data,
+                       const std::vector<std::uint16_t>& expected);
 std::size_t max_shard_size(std::size_t symbols);
 Epoch new_epoch();
 std::string epoch_text(const Epoch& epoch);

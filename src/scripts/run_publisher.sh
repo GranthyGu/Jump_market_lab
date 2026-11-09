@@ -7,7 +7,12 @@ build_dir="$launcher_root/build/bin"
 log_root=
 source_override=
 multicast_interface=
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
 usage() {
   cat <<'HELP'
 Usage: run_publisher.sh [options]
@@ -20,25 +25,48 @@ Usage: run_publisher.sh [options]
 Keep this terminal open. Ctrl-C stops only this publisher.
 HELP
 }
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --help) usage; exit 0 ;;
+    --help)
+      usage
+      exit 0
+      ;;
     --config|--build-dir|--log-dir|--source|--interface)
       [ "$#" -ge 2 ] || fail "Missing value for $1"
       case "$1" in
-        --config) config=$2 ;;
-        --build-dir) build_dir=$2 ;;
-        --log-dir) log_root=$2 ;;
-        --source) source_override=$2 ;;
-        --interface) multicast_interface=$2 ;;
+        --config)
+          config=$2
+          ;;
+        --build-dir)
+          build_dir=$2
+          ;;
+        --log-dir)
+          log_root=$2
+          ;;
+        --source)
+          source_override=$2
+          ;;
+        --interface)
+          multicast_interface=$2
+          ;;
       esac
-      shift 2 ;;
-    *) fail "Unknown option: $1 (see --help)" ;;
+      shift 2
+      ;;
+    *)
+      fail "Unknown option: $1 (see --help)"
+      ;;
   esac
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
 [ -x "$build_dir/market_broadcast" ] || fail "Missing market_broadcast; run $launcher_root/src/scripts/build.sh or select --build-dir"
-case "$source_override" in ''|tcp|shm) ;; *) fail "Source must be tcp or shm" ;; esac
+case "$source_override" in
+  ''|tcp|shm)
+    ;;
+  *)
+    fail "Source must be tcp or shm"
+    ;;
+esac
 umask 077
 [ -n "$log_root" ] || log_root="$launcher_root/build/logs/publisher"
 mkdir -p "$log_root"
@@ -51,14 +79,22 @@ cleanup() {
     kill "$child_pid" 2>/dev/null || true
     wait "$child_pid" 2>/dev/null || true
   fi
-  if [ -n "$follower_pid" ]; then kill "$follower_pid" 2>/dev/null || true; wait "$follower_pid" 2>/dev/null || true; fi
+  if [ -n "$follower_pid" ]; then
+    kill "$follower_pid" 2>/dev/null || true
+    wait "$follower_pid" 2>/dev/null || true
+  fi
 }
+
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 set -- "$build_dir/market_broadcast" publish --config "$config"
-if [ -n "$source_override" ]; then set -- "$@" --source "$source_override"; fi
-if [ -n "$multicast_interface" ]; then set -- "$@" --interface "$multicast_interface"; fi
+if [ -n "$source_override" ]; then
+  set -- "$@" --source "$source_override"
+fi
+if [ -n "$multicast_interface" ]; then
+  set -- "$@" --interface "$multicast_interface"
+fi
 "$@" > "$run_dir/service.log" 2>&1 &
 child_pid=$!
 printf '%s\n' "$child_pid" > "$run_dir/service.pid"
@@ -78,5 +114,7 @@ wait "$child_pid"
 result=$?
 set -e
 child_pid=
-if [ "$result" -ne 0 ]; then printf 'ERROR: Publisher exited (%s). Log: %s/service.log\n' "$result" "$run_dir" >&2; fi
+if [ "$result" -ne 0 ]; then
+  printf 'ERROR: Publisher exited (%s). Log: %s/service.log\n' "$result" "$run_dir" >&2
+fi
 exit "$result"

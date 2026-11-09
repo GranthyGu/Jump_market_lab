@@ -51,16 +51,18 @@ class ReadPageGuard {
    */
   ReadPageGuard() = default;
 
-  ReadPageGuard(const ReadPageGuard &) = delete;
-  auto operator=(const ReadPageGuard &) -> ReadPageGuard & = delete;
-  ReadPageGuard(ReadPageGuard &&that) noexcept;
-  auto operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard &;
+  ReadPageGuard(const ReadPageGuard&) = delete;
+  auto operator=(const ReadPageGuard&) -> ReadPageGuard& = delete;
+  ReadPageGuard(ReadPageGuard&& that) noexcept;
+  auto operator=(ReadPageGuard&& that) noexcept -> ReadPageGuard&;
   auto GetPageId() const -> page_id_t;
-  auto GetData() const -> const char *;
+  auto GetData() const -> const char*;
+
   template <class T>
-  auto As() const -> const T * {
-    return reinterpret_cast<const T *>(GetData());
+  auto As() const -> const T* {
+    return reinterpret_cast<const T*>(GetData());
   }
+
   auto IsDirty() const -> bool;
   void Flush();
   void Drop();
@@ -68,8 +70,11 @@ class ReadPageGuard {
 
  private:
   /** @brief Only the buffer pool manager is allowed to construct a valid `ReadPageGuard.` */
-  explicit ReadPageGuard(page_id_t page_id, std::shared_ptr<FrameHeader> frame, std::shared_ptr<ArcReplacer> replacer,
-                         std::shared_ptr<std::mutex> bpm_latch, std::shared_ptr<DiskScheduler> disk_scheduler);
+  explicit ReadPageGuard(page_id_t page_id,
+                         std::shared_ptr<FrameHeader> frame,
+                         std::shared_ptr<ArcReplacer> replacer,
+                         std::shared_ptr<std::mutex> bpm_latch,
+                         std::shared_ptr<DiskScheduler> disk_scheduler);
 
   /** @brief The page ID of the page we are guarding. */
   page_id_t page_id_{INVALID_PAGE_ID};
@@ -153,21 +158,25 @@ class WritePageGuard {
    */
   WritePageGuard() = default;
 
-  WritePageGuard(const WritePageGuard &) = delete;
-  auto operator=(const WritePageGuard &) -> WritePageGuard & = delete;
-  WritePageGuard(WritePageGuard &&that) noexcept;
-  auto operator=(WritePageGuard &&that) noexcept -> WritePageGuard &;
+  WritePageGuard(const WritePageGuard&) = delete;
+  auto operator=(const WritePageGuard&) -> WritePageGuard& = delete;
+  WritePageGuard(WritePageGuard&& that) noexcept;
+  auto operator=(WritePageGuard&& that) noexcept -> WritePageGuard&;
   auto GetPageId() const -> page_id_t;
-  auto GetData() const -> const char *;
+  auto GetData() const -> const char*;
+
   template <class T>
-  auto As() const -> const T * {
-    return reinterpret_cast<const T *>(GetData());
+  auto As() const -> const T* {
+    return reinterpret_cast<const T*>(GetData());
   }
-  auto GetDataMut() -> char *;
+
+  auto GetDataMut() -> char*;
+
   template <class T>
-  auto AsMut() -> T * {
-    return reinterpret_cast<T *>(GetDataMut());
+  auto AsMut() -> T* {
+    return reinterpret_cast<T*>(GetDataMut());
   }
+
   auto IsDirty() const -> bool;
   void Flush();
   void Drop();
@@ -175,8 +184,11 @@ class WritePageGuard {
 
  private:
   /** @brief Only the buffer pool manager is allowed to construct a valid `WritePageGuard.` */
-  explicit WritePageGuard(page_id_t page_id, std::shared_ptr<FrameHeader> frame, std::shared_ptr<ArcReplacer> replacer,
-                          std::shared_ptr<std::mutex> bpm_latch, std::shared_ptr<DiskScheduler> disk_scheduler);
+  explicit WritePageGuard(page_id_t page_id,
+                          std::shared_ptr<FrameHeader> frame,
+                          std::shared_ptr<ArcReplacer> replacer,
+                          std::shared_ptr<std::mutex> bpm_latch,
+                          std::shared_ptr<DiskScheduler> disk_scheduler);
 
   /** @brief The page ID of the page we are guarding. */
   page_id_t page_id_{INVALID_PAGE_ID};

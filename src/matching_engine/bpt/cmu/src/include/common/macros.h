@@ -27,7 +27,10 @@ namespace internal {  // NOLINT
 // An internal stream, used to take C++ stream-style parameters for display, and exit the program with `std::abort`.
 class LogFatalStream {
  public:
-  LogFatalStream(const char *file, int line) : file_(file), line_(line) {}
+  LogFatalStream(const char* file, int line)
+      : file_(file),
+        line_(line) {
+  }
 
   ~LogFatalStream() {
     std::cerr << file_ << ":" << line_ << ": " << log_stream_.str() << std::endl;
@@ -35,13 +38,13 @@ class LogFatalStream {
   }
 
   template <typename T>
-  auto operator<<(const T &val) -> LogFatalStream & {
+  auto operator<<(const T& val) -> LogFatalStream& {
     log_stream_ << val;
     return *this;
   }
 
  private:
-  const char *file_;
+  const char* file_;
   int line_;
   std::ostringstream log_stream_;
 };
@@ -50,9 +53,10 @@ class LogFatalStream {
 
 // A macro which checks `expr` value and performs assert.
 // Different from `BUSTUB_ASSERT`, it takes stream-style parameters.
-#define BUSTUB_ASSERT_AND_LOG(expr)                       /*NOLINT*/ \
-  if (bool val = (expr); !val) internal::LogFatalStream { /*NOLINT*/ \
-      __FILE__, __LINE__                                  /*NOLINT*/ \
+#define BUSTUB_ASSERT_AND_LOG(expr) /*NOLINT*/ \
+  if (bool val = (expr); !val)                 \
+    internal::LogFatalStream { /*NOLINT*/      \
+      __FILE__, __LINE__       /*NOLINT*/      \
     }
 
 #define UNIMPLEMENTED(message) throw std::logic_error(message)
@@ -66,13 +70,13 @@ class LogFatalStream {
 #define UNREACHABLE(message) throw std::logic_error(message)
 
 // Macros to disable copying and moving
-#define DISALLOW_COPY(cname)                                    \
-  cname(const cname &) = delete;                   /* NOLINT */ \
-  auto operator=(const cname &)->cname & = delete; /* NOLINT */
+#define DISALLOW_COPY(cname)                                  \
+  cname(const cname&) = delete;                  /* NOLINT */ \
+  auto operator=(const cname&)->cname& = delete; /* NOLINT */
 
-#define DISALLOW_MOVE(cname)                               \
-  cname(cname &&) = delete;                   /* NOLINT */ \
-  auto operator=(cname &&)->cname & = delete; /* NOLINT */
+#define DISALLOW_MOVE(cname)                             \
+  cname(cname&&) = delete;                  /* NOLINT */ \
+  auto operator=(cname&&)->cname& = delete; /* NOLINT */
 
 #define DISALLOW_COPY_AND_MOVE(cname) \
   DISALLOW_COPY(cname);               \

@@ -24,9 +24,19 @@
 
 namespace bustub {
 
-enum class AccessType { Unknown = 0, Lookup, Scan, Index };
+enum class AccessType {
+  Unknown = 0,
+  Lookup,
+  Scan,
+  Index
+};
 
-enum class ArcStatus { MRU, MFU, MRU_GHOST, MFU_GHOST };
+enum class ArcStatus {
+  MRU,
+  MFU,
+  MRU_GHOST,
+  MFU_GHOST
+};
 
 // TODO(student): You can modify or remove this struct as you like.
 struct FrameStatus {
@@ -35,8 +45,13 @@ struct FrameStatus {
   bool evictable_;
   ArcStatus arc_status_;
   std::list<int32_t>::iterator position_;
+
   FrameStatus(page_id_t pid, frame_id_t fid, bool ev, ArcStatus st)
-      : page_id_(pid), frame_id_(fid), evictable_(ev), arc_status_(st) {}
+      : page_id_(pid),
+        frame_id_(fid),
+        evictable_(ev),
+        arc_status_(st) {
+  }
 };
 
 /**
@@ -56,7 +71,9 @@ class ArcReplacer {
   ~ArcReplacer() = default;
 
   auto Evict() -> std::optional<frame_id_t>;
-  void RecordAccess(frame_id_t frame_id, page_id_t page_id, AccessType access_type = AccessType::Unknown);
+  void RecordAccess(frame_id_t frame_id,
+                    page_id_t page_id,
+                    AccessType access_type = AccessType::Unknown);
   void SetEvictable(frame_id_t frame_id, bool set_evictable);
   void Remove(frame_id_t frame_id);
   auto Size() -> size_t;

@@ -69,8 +69,8 @@ class FrameHeader {
   explicit FrameHeader(frame_id_t frame_id);
 
  private:
-  auto GetData() const -> const char *;
-  auto GetDataMut() -> char *;
+  auto GetData() const -> const char*;
+  auto GetDataMut() -> char*;
   void Reset();
 
   /** @brief The frame ID / index of the frame this header represents. */
@@ -114,7 +114,9 @@ class FrameHeader {
  */
 class BufferPoolManager {
  public:
-  BufferPoolManager(size_t num_frames, DiskManager *disk_manager, LogManager *log_manager = nullptr);
+  BufferPoolManager(size_t num_frames,
+                    DiskManager* disk_manager,
+                    LogManager* log_manager = nullptr);
   ~BufferPoolManager();
 
   auto Size() const -> size_t;
@@ -122,7 +124,8 @@ class BufferPoolManager {
   auto DeletePage(page_id_t page_id) -> bool;
   auto CheckedWritePage(page_id_t page_id, AccessType access_type = AccessType::Unknown)
       -> std::optional<WritePageGuard>;
-  auto CheckedReadPage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> std::optional<ReadPageGuard>;
+  auto CheckedReadPage(page_id_t page_id, AccessType access_type = AccessType::Unknown)
+      -> std::optional<ReadPageGuard>;
   auto WritePage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> WritePageGuard;
   auto ReadPage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> ReadPageGuard;
   auto TryReadPage(page_id_t page_id) -> std::optional<ReadPageGuard>;
@@ -131,8 +134,14 @@ class BufferPoolManager {
   void FlushAllPagesUnsafe();
   void FlushAllPages();
   auto GetPinCount(page_id_t page_id) -> std::optional<size_t>;
-  void SetNextPageId(page_id_t id) { next_page_id_.store(id); }
-  auto NextPageId() const -> page_id_t { return next_page_id_.load(); }
+
+  void SetNextPageId(page_id_t id) {
+    next_page_id_.store(id);
+  }
+
+  auto NextPageId() const -> page_id_t {
+    return next_page_id_.load();
+  }
 
  private:
   auto Pin(page_id_t page_id, AccessType type) -> std::shared_ptr<FrameHeader>;
@@ -169,7 +178,7 @@ class BufferPoolManager {
    *
    * Note: Please ignore this for P1.
    */
-  LogManager *log_manager_ __attribute__((__unused__));
+  LogManager* log_manager_ __attribute__((__unused__));
 
   /**
    * TODO(P1): You may add additional private members and helper functions if you find them necessary.

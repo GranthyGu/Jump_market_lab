@@ -15,30 +15,51 @@ class MatchingEngine final : public EngineBackend {
  public:
   MatchingEngine(const OrderConfig&, std::uint16_t shard);
   void execute(const LinkHeader&, std::span<const std::uint8_t>, persistence::Result&);
-  void restore(std::span<const persistence::StoredOrder>, std::uint64_t next_order, std::uint64_t next_trade);
-  std::uint64_t next_order() const { return next_order_; }
-  std::uint64_t next_trade() const { return next_trade_; }
+  void restore(std::span<const persistence::StoredOrder>,
+               std::uint64_t next_order,
+               std::uint64_t next_trade);
+
+  std::uint64_t next_order() const {
+    return next_order_;
+  }
+
+  std::uint64_t next_trade() const {
+    return next_trade_;
+  }
+
   std::size_t active_order_count(std::uint32_t user) const;
   void copy_active_orders(std::uint32_t user, std::span<OrderState> destination) const;
   void command(const LinkHeader&, std::span<const std::uint8_t>, const Emit&) override;
-  std::size_t symbol_count() const noexcept override { return books_.size(); }
+
+  std::size_t symbol_count() const noexcept override {
+    return books_.size();
+  }
+
   void copy_market(MarketSnapshot&) noexcept override;
 
  private:
   struct Order;
+
   struct Level {
     Order* head = nullptr;
     Order* tail = nullptr;
     std::uint64_t quantity = 0, count = 0;
   };
+
   using Levels = std::pmr::map<Price, Level>;
+
   struct Book {
-    explicit Book(std::pmr::memory_resource* resource) : bids(resource), asks(resource) {}
+    explicit Book(std::pmr::memory_resource* resource)
+        : bids(resource),
+          asks(resource) {
+    }
+
     SymbolName symbol{};
     std::uint16_t symbol_id = 0;
     std::int64_t lower = 0, upper = 0;
     Levels bids, asks;
   };
+
   struct Order {
     OrderState state{};
     std::uint32_t user = 0;
@@ -49,6 +70,7 @@ class MatchingEngine final : public EngineBackend {
     Order* user_prev = nullptr;
     Order* user_next = nullptr;
   };
+
   // Stable pointers, lazy 1024-node blocks, and an intrusive free list.
   class Pool {
    public:
@@ -60,6 +82,7 @@ class MatchingEngine final : public EngineBackend {
     std::vector<std::unique_ptr<Order[]>> blocks_;
     Order* free_ = nullptr;
   };
+
   using Event = persistence::Event;
   persistence::Result* capture_ = nullptr;
   std::vector<persistence::Name> usernames_;

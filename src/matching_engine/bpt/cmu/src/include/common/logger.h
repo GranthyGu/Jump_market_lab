@@ -39,13 +39,15 @@
 namespace bustub {
 
 // https://blog.galowicz.de/2016/02/20/short_file_macro/
-using cstr = const char *;
+using cstr = const char*;
 
 static constexpr auto PastLastSlash(cstr a, cstr b) -> cstr {
   return *a == '\0' ? b : *a == '/' ? PastLastSlash(a + 1, a + 1) : PastLastSlash(a + 1, b);
 }
 
-static constexpr auto PastLastSlash(cstr a) -> cstr { return PastLastSlash(a, a); }
+static constexpr auto PastLastSlash(cstr a) -> cstr {
+  return PastLastSlash(a, a);
+}
 
 #define __SHORT_FILE__                            \
   ({                                              \
@@ -86,7 +88,7 @@ static constexpr auto PastLastSlash(cstr a) -> cstr { return PastLastSlash(a, a)
 #define __FUNCTION__ ""
 #endif
 
-void OutputLogHeader(const char *file, int line, const char *func, int level);
+void OutputLogHeader(const char* file, int line, const char* func, int level);
 
 // Two convenient macros for debugging
 // 1. Logging macros.
@@ -169,12 +171,12 @@ void OutputLogHeader(const char *file, int line, const char *func, int level);
 
 // Output log message header in this format: [type] [file:line:function] time -
 // ex: [ERROR] [somefile.cpp:123:doSome()] 2008/07/06 10:00:00 -
-inline void OutputLogHeader(const char *file, int line, const char *func, int level) {
+inline void OutputLogHeader(const char* file, int line, const char* func, int level) {
   time_t t = ::time(nullptr);
-  tm *curTime = localtime(&t);  // NOLINT
+  tm* curTime = localtime(&t);  // NOLINT
   char time_str[32];            // FIXME
   ::strftime(time_str, 32, LOG_LOG_TIME_FORMAT, curTime);
-  const char *type;
+  const char* type;
   switch (level) {
     case LOG_LEVEL_ERROR:
       type = "ERROR";

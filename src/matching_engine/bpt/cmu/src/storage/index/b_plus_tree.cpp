@@ -16,6 +16,7 @@
 // RID and the debug helpers below belong to the full upstream BusTub build.
 #ifndef MARKETLAB_BPT_STANDALONE
 #include "storage/index/b_plus_tree_debug.h"
+
 namespace bustub {
 template class BPlusTree<GenericKey<4>, RID, GenericComparator<4>>;
 

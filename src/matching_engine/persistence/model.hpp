@@ -9,11 +9,13 @@
 
 namespace marketlab::orders::persistence {
 using Name = std::array<char, 32>;
+
 struct StoredOrder {
   OrderState state{};
   Name username{};
   std::uint64_t arrival = 0;
 };
+
 // Process-local identities keep change buffers and COW pages compact. The
 // persistent format still contains names, expanded by the immutable dictionary.
 struct CompactOrder {
@@ -29,11 +31,20 @@ struct CompactOrder {
   OrderStatus status{};
 };
 
-inline CompactOrder compact_order(const OrderState& state, std::uint32_t user,
-                                  std::uint16_t symbol, std::uint64_t arrival) {
-  return {state.orderId, arrival, state.price, state.originalQuantity,
-          state.filledQuantity, state.remainingQuantity, user, symbol,
-          state.side, state.status};
+inline CompactOrder compact_order(const OrderState& state,
+                                  std::uint32_t user,
+                                  std::uint16_t symbol,
+                                  std::uint64_t arrival) {
+  return {state.orderId,
+          arrival,
+          state.price,
+          state.originalQuantity,
+          state.filledQuantity,
+          state.remainingQuantity,
+          user,
+          symbol,
+          state.side,
+          state.status};
 }
 
 struct TradeRecord {
@@ -45,10 +56,12 @@ struct TradeRecord {
   Name buyer{}, seller{};
   bool operator==(const TradeRecord&) const = default;
 };
+
 struct Change {
   bool erase = false;
   CompactOrder order{};
 };
+
 struct Event {
   LinkKind kind{};
   LinkHeader context{};
@@ -57,15 +70,18 @@ struct Event {
   std::array<std::uint8_t, sizeof(ActiveOrderSnapshot)> payload{};
   std::size_t size = 0;
 };
+
 struct Result {
   std::vector<TradeRecord> trades;
   std::vector<Change> changes;
   std::vector<Event> events;
   std::size_t limit = 8 * 1024 * 1024;
+
   std::size_t bytes() const {
     return trades.capacity() * sizeof(TradeRecord) + changes.capacity() * sizeof(Change) +
            events.capacity() * sizeof(Event);
   }
+
   template <class T>
   void add(std::vector<T>& target, const T& value) {
     if (target.size() == target.capacity()) {
@@ -77,6 +93,7 @@ struct Result {
     }
     target.push_back(value);
   }
+
   void clear() {
     trades.clear();
     changes.clear();
@@ -97,6 +114,7 @@ enum class Stage {
   BeforePrune,
   Emitting
 };
+
 struct Options {
   std::filesystem::path directory;
   std::size_t pending_slots = 128;
@@ -112,6 +130,7 @@ struct Options {
   std::chrono::milliseconds checkpoint_interval{600000};
   std::function<void(Stage, std::uint64_t)> hook;
 };
+
 struct Boundary {
   std::uint64_t seq = 0, next_order = 1, next_trade = 1, trade_end = 0, trade_count = 0;
 };

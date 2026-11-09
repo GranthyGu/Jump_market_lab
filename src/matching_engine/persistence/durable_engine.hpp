@@ -14,16 +14,35 @@ class DurableEngine final : public EngineBackend {
   DurableEngine(const OrderConfig&, std::uint16_t, Options);
   ~DurableEngine() override;
   void command(const LinkHeader&, std::span<const std::uint8_t>, const Emit&) override;
-  int notification_fd() const noexcept override { return wakeup_.fd(); }
+
+  int notification_fd() const noexcept override {
+    return wakeup_.fd();
+  }
+
   void poll() override;
   void drain() override;
   void request_checkpoint();
   void wait_checkpoint();
-  std::size_t symbol_count() const noexcept override { return committed_.symbol_count(); }
-  void copy_market(MarketSnapshot& out) noexcept override { committed_.market(out); }
-  Boundary boundary() const { return boundary_; }
-  std::uint64_t checkpoint_sequence() const { return checkpoint_seq_; }
-  const std::filesystem::path& directory() const { return storage_.root(); }
+
+  std::size_t symbol_count() const noexcept override {
+    return committed_.symbol_count();
+  }
+
+  void copy_market(MarketSnapshot& out) noexcept override {
+    committed_.market(out);
+  }
+
+  Boundary boundary() const {
+    return boundary_;
+  }
+
+  std::uint64_t checkpoint_sequence() const {
+    return checkpoint_seq_;
+  }
+
+  const std::filesystem::path& directory() const {
+    return storage_.root();
+  }
 
  private:
   struct Batch {
@@ -33,19 +52,23 @@ class DurableEngine final : public EngineBackend {
     std::atomic<unsigned> done{0};
     std::uint64_t trade_end = 0, trade_count = 0;
   };
+
   struct Cut {
     std::uint64_t seq = 0;
     std::atomic_bool done{false};
   };
+
   struct Job {
     Batch* batch = nullptr;
     Cut* cut = nullptr;
   };
+
   struct Snapshot {
     Boundary b;
     FrozenPages pages;
     std::atomic_bool done{false};
   };
+
   struct Query {
     std::uint64_t target = 0;
     LinkHeader context{};
@@ -54,6 +77,7 @@ class DurableEngine final : public EngineBackend {
     std::size_t count = 0;
     Emit emit;
   };
+
   Options options_;
   Storage storage_;
   MatchingEngine working_;

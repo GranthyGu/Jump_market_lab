@@ -21,28 +21,46 @@ class SnapshotMailbox {
   void drain_requests() noexcept;
   // Wake readers before joining their threads. Join before destroying mailbox.
   void close() noexcept;
+
  private:
   class Signal {
    public:
     Signal();
     void notify() noexcept;
     void drain() noexcept;
-    int fd() const noexcept { return read_.get(); }
+
+    int fd() const noexcept {
+      return read_.get();
+    }
+
    private:
-    md::Fd read_,write_;
+    md::Fd read_, write_;
   };
-  enum State : std::uint32_t { Free, Reserved, Requested, Writing, Ready, Abandoned };
+
+  enum State : std::uint32_t {
+    Free,
+    Reserved,
+    Requested,
+    Writing,
+    Ready,
+    Abandoned
+  };
+
   struct alignas(64) Slot {
-    explicit Slot(std::size_t symbols) : snapshot(symbols) {}
+    explicit Slot(std::size_t symbols)
+        : snapshot(symbols) {
+    }
+
     std::atomic<std::uint32_t> state{Free};
     MarketSnapshot snapshot;
     Signal completed;
   };
+
   static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
-  std::array<std::unique_ptr<Slot>,capacity> slots_;
+  std::array<std::unique_ptr<Slot>, capacity> slots_;
   Signal requested_;
   alignas(64) std::atomic<std::uint32_t> pending_{0};
-  alignas(64) std::atomic<std::uint32_t> cursor_{0},closed_{0};
+  alignas(64) std::atomic<std::uint32_t> cursor_{0}, closed_{0};
   static void abandon(Slot&) noexcept;
 };
 }  // namespace marketlab::orders

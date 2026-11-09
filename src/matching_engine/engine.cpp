@@ -7,23 +7,33 @@
 namespace marketlab::orders {
 namespace {
 constexpr std::uint64_t sequence_limit = (1ULL << 48) - 1;
+
 std::uint64_t allocate(std::uint16_t shard, std::uint64_t& sequence) {
-  if (sequence > sequence_limit) throw std::overflow_error("Shard ID sequence exhausted");
+  if (sequence > sequence_limit)
+    throw std::overflow_error("Shard ID sequence exhausted");
   return (static_cast<std::uint64_t>(shard) << 48) | sequence++;
 }
 }  // namespace
+
 MatchingEngine::MatchingEngine(const OrderConfig& config, std::uint16_t shard)
-    : shard_(shard), epoch_(md::new_epoch()), users_(config.accounts.size() + 1, nullptr),
+    : shard_(shard),
+      epoch_(md::new_epoch()),
+      users_(config.accounts.size() + 1, nullptr),
       user_order_counts_(config.accounts.size() + 1, 0) {
-  if (!shard || config.products.size() > 65535) throw std::runtime_error("Invalid shard/products");
-  const auto count = std::count_if(config.products.begin(), config.products.end(),
-                                   [&](const auto& p) { return p.shard == shard; });
-  if (!count) throw std::runtime_error("Shard has no products");
+  if (!shard || config.products.size() > 65535)
+    throw std::runtime_error("Invalid shard/products");
+  const auto count =
+      std::count_if(config.products.begin(), config.products.end(), [&](const auto& p) {
+        return p.shard == shard;
+      });
+  if (!count)
+    throw std::runtime_error("Shard has no products");
   books_.reserve(static_cast<std::size_t>(count));
   symbols_.reserve(static_cast<std::size_t>(count));
   for (std::size_t i = 0; i < config.products.size(); ++i) {
     const auto& product = config.products[i];
-    if (product.shard != shard) continue;
+    if (product.shard != shard)
+      continue;
     books_.emplace_back(&price_memory_);
     auto& book = books_.back();
     put_string(book.symbol, product.symbol);
@@ -34,13 +44,16 @@ MatchingEngine::MatchingEngine(const OrderConfig& config, std::uint16_t shard)
   }
   usernames_.resize(config.accounts.size() + 1);
   for (std::size_t i = 0; i < config.accounts.size(); ++i)
-    std::copy(config.accounts[i].name.begin(), config.accounts[i].name.end(), usernames_[i + 1].begin());
+    std::copy(
+        config.accounts[i].name.begin(), config.accounts[i].name.end(), usernames_[i + 1].begin());
   outgoing_.reserve(64);
 }
+
 MatchingEngine::Order* MatchingEngine::Pool::acquire() {
   if (!free_) {
     auto block = std::make_unique<Order[]>(block_size);
-    for (std::size_t i = 0; i + 1 < block_size; ++i) block[i].next = &block[i + 1];
+    for (std::size_t i = 0; i + 1 < block_size; ++i)
+      block[i].next = &block[i + 1];
     auto* first = block.get();
     blocks_.push_back(std::move(block));
     free_ = first;
@@ -50,10 +63,12 @@ MatchingEngine::Order* MatchingEngine::Pool::acquire() {
   *order = Order{};
   return order;
 }
+
 void MatchingEngine::Pool::release(Order* order) noexcept {
   order->next = free_;
   free_ = order;
 }
+
 template <typename T>
 void MatchingEngine::queue(LinkKind kind, const LinkHeader& context, const T& record) {
   static_assert(sizeof(T) <= sizeof(Event::payload));
@@ -67,10 +82,14 @@ void MatchingEngine::queue(LinkKind kind, const LinkHeader& context, const T& re
   else
     outgoing_.push_back(event);
 }
-void MatchingEngine::command(const LinkHeader& h, std::span<const std::uint8_t> bytes, const Emit& emit) {
+
+void MatchingEngine::command(const LinkHeader& h,
+                             std::span<const std::uint8_t> bytes,
+                             const Emit& emit) {
   // The reactor exclusively owns all live state; readers use copied snapshots.
   outgoing_.clear();
-  if (!h.user || h.user >= users_.size()) throw std::runtime_error("Unknown engine user");
+  if (!h.user || h.user >= users_.size())
+    throw std::runtime_error("Unknown engine user");
   if (h.kind == LinkKind::NewOrder)
     new_order(h, copy_record<NewOrderRequest>(bytes));
   else if (h.kind == LinkKind::Cancel)
@@ -78,33 +97,46 @@ void MatchingEngine::command(const LinkHeader& h, std::span<const std::uint8_t> 
   else if (h.kind == LinkKind::Snapshot)
     snapshot(h, copy_record<Header>(bytes));
   else if (h.kind == LinkKind::History)
-    queue(LinkKind::Event, h, rejected(copy_record<TradeHistoryRequest>(bytes).header.requestId, RejectReason::HistoryUnavailable));
+    queue(LinkKind::Event,
+          h,
+          rejected(copy_record<TradeHistoryRequest>(bytes).header.requestId,
+                   RejectReason::HistoryUnavailable));
   else
     throw std::runtime_error("Unexpected engine command");
-  for (const auto& event : outgoing_) emit(event.kind, event.context, {event.payload.data(), event.size});
+  for (const auto& event : outgoing_)
+    emit(event.kind, event.context, {event.payload.data(), event.size});
 }
-void MatchingEngine::execute(const LinkHeader& h, std::span<const std::uint8_t> bytes,
+
+void MatchingEngine::execute(const LinkHeader& h,
+                             std::span<const std::uint8_t> bytes,
                              persistence::Result& result) {
-  if (capture_) throw std::logic_error("Reentrant matching command");
+  if (capture_)
+    throw std::logic_error("Reentrant matching command");
   capture_ = &result;
   try {
-    command(h, bytes, [](auto, const auto&, auto) {});
+    command(h, bytes, [](auto, const auto&, auto) {
+    });
     capture_ = nullptr;
   } catch (...) {
     capture_ = nullptr;
     throw;
   }
 }
+
 void MatchingEngine::change(const Order& o, bool erase) {
-  if (!capture_) return;
+  if (!capture_)
+    return;
   persistence::Change c;
   c.erase = erase;
   c.order = persistence::compact_order(o.state, o.user, o.book->symbol_id, o.state.orderId);
   capture_->add(capture_->changes, c);
 }
-void MatchingEngine::restore(std::span<const persistence::StoredOrder> orders, std::uint64_t next_order,
+
+void MatchingEngine::restore(std::span<const persistence::StoredOrder> orders,
+                             std::uint64_t next_order,
                              std::uint64_t next_trade) {
-  if (next_order_ != 1 || next_trade_ != 1) throw std::logic_error("Restore into nonempty core");
+  if (next_order_ != 1 || next_trade_ != 1)
+    throw std::logic_error("Restore into nonempty core");
   std::uint64_t previous = 0;
   for (const auto& stored : orders) {
     const auto id = OrderId(stored.state.orderId);
@@ -126,7 +158,10 @@ void MatchingEngine::restore(std::span<const persistence::StoredOrder> orders, s
   next_order_ = next_order;
   next_trade_ = next_trade;
 }
-void MatchingEngine::update(const Order& order, RequestId request, const LinkHeader& context,
+
+void MatchingEngine::update(const Order& order,
+                            RequestId request,
+                            const LinkHeader& context,
                             Timestamp time) {
   OrderUpdate record{};
   record.header = {MessageType::OrderUpdate, sizeof(record), request};
@@ -136,7 +171,9 @@ void MatchingEngine::update(const Order& order, RequestId request, const LinkHea
   destination.user = order.user;
   queue(LinkKind::Event, destination, record);
 }
-void MatchingEngine::trade(const Order& order, TradeId id, Price price, Quantity quantity, Timestamp time) {
+
+void MatchingEngine::trade(
+    const Order& order, TradeId id, Price price, Quantity quantity, Timestamp time) {
   Trade record{};
   record.header = {MessageType::Trade, sizeof(record), 0};
   record.timestamp = time;
@@ -148,14 +185,16 @@ void MatchingEngine::trade(const Order& order, TradeId id, Price price, Quantity
   record.quantity = quantity;
   queue(LinkKind::Event, {0, LinkKind::Event, 0, order.user, 0}, record);
 }
+
 void MatchingEngine::new_order(const LinkHeader& h, const NewOrderRequest& request) {
   // Validate fixed-width strings without allocating a temporary std::string.
   const auto end = std::find(std::begin(request.symbol), std::end(request.symbol), '\0');
-  if (end == std::end(request.symbol) ||
-      !std::all_of(end, std::end(request.symbol), [](char c) { return c == 0; }))
+  if (end == std::end(request.symbol) || !std::all_of(end, std::end(request.symbol), [](char c) {
+        return c == 0;
+      }))
     throw std::runtime_error("Invalid symbol wire field");
-  const auto found =
-      symbols_.find(std::string_view(request.symbol, static_cast<std::size_t>(end - request.symbol)));
+  const auto found = symbols_.find(
+      std::string_view(request.symbol, static_cast<std::size_t>(end - request.symbol)));
   if (found == symbols_.end() || (request.side != Side::Buy && request.side != Side::Sell) ||
       request.price <= 0 || request.quantity <= 0 || request.price < books_[found->second].lower ||
       request.price > books_[found->second].upper || next_order_ > sequence_limit ||
@@ -175,9 +214,11 @@ void MatchingEngine::new_order(const LinkHeader& h, const NewOrderRequest& reque
   incoming.state.status = OrderStatus::Accepted;
   update(incoming, request.header.requestId, h);
   match(incoming, request.side == Side::Buy ? book.asks : book.bids);
-  if (incoming.state.remainingQuantity) rest(incoming);
+  if (incoming.state.remainingQuantity)
+    rest(incoming);
   change(incoming, !incoming.state.remainingQuantity);
 }
+
 void MatchingEngine::match(Order& incoming, Levels& opposite) {
   while (incoming.state.remainingQuantity && !opposite.empty()) {
     auto best = incoming.state.side == Side::Buy ? opposite.begin() : std::prev(opposite.end());
@@ -197,7 +238,8 @@ void MatchingEngine::match(Order& incoming, Levels& opposite) {
       persistence::TradeRecord t;
       t.id = id;
       t.timestamp = time;
-      std::copy(std::begin(incoming.state.symbol), std::end(incoming.state.symbol), t.symbol.begin());
+      std::copy(
+          std::begin(incoming.state.symbol), std::end(incoming.state.symbol), t.symbol.begin());
       t.price = price;
       t.quantity = quantity;
       t.buy_order = buy->state.orderId;
@@ -220,10 +262,12 @@ void MatchingEngine::match(Order& incoming, Levels& opposite) {
       unlink(*resting);
       active_.erase(resting->state.orderId);
       pool_.release(resting);
-      if (!best->second.count) opposite.erase(best);
+      if (!best->second.count)
+        opposite.erase(best);
     }
   }
 }
+
 void MatchingEngine::rest(const Order& incoming) {
   auto* order = pool_.acquire();
   *order = incoming;
@@ -243,10 +287,12 @@ void MatchingEngine::rest(const Order& incoming) {
   level.quantity += static_cast<std::uint64_t>(order->state.remainingQuantity);
   ++level.count;
   order->user_next = users_[order->user];
-  if (order->user_next) order->user_next->user_prev = order;
+  if (order->user_next)
+    order->user_next->user_prev = order;
   users_[order->user] = order;
   ++user_order_counts_[order->user];
 }
+
 void MatchingEngine::unlink(Order& order) {
   auto& level = order.position->second;
   if (order.prev)
@@ -262,9 +308,11 @@ void MatchingEngine::unlink(Order& order) {
     order.user_prev->user_next = order.user_next;
   else
     users_[order.user] = order.user_next;
-  if (order.user_next) order.user_next->user_prev = order.user_prev;
+  if (order.user_next)
+    order.user_next->user_prev = order.user_prev;
   --user_order_counts_[order.user];
 }
+
 void MatchingEngine::cancel(const LinkHeader& h, const CancelRequest& request) {
   auto* order = active_.find(request.orderId);
   if (!order || order->user != h.user) {
@@ -275,7 +323,8 @@ void MatchingEngine::cancel(const LinkHeader& h, const CancelRequest& request) {
   const auto position = order->position;
   position->second.quantity -= static_cast<std::uint64_t>(order->state.remainingQuantity);
   unlink(*order);
-  if (!position->second.count) levels.erase(position);
+  if (!position->second.count)
+    levels.erase(position);
   order->state.remainingQuantity = 0;
   order->state.status = OrderStatus::Canceled;
   update(*order, request.header.requestId, h);
@@ -283,6 +332,7 @@ void MatchingEngine::cancel(const LinkHeader& h, const CancelRequest& request) {
   active_.erase(request.orderId);
   pool_.release(order);
 }
+
 std::size_t MatchingEngine::active_order_count(std::uint32_t user) const {
   if (!user || user >= users_.size()) {
     throw std::runtime_error("Unknown snapshot user");
@@ -291,7 +341,7 @@ std::size_t MatchingEngine::active_order_count(std::uint32_t user) const {
 }
 
 void MatchingEngine::copy_active_orders(std::uint32_t user,
-                                       std::span<OrderState> destination) const {
+                                        std::span<OrderState> destination) const {
   if (destination.size() != active_order_count(user)) {
     throw std::logic_error("Snapshot buffer does not match user order count");
   }
@@ -304,14 +354,17 @@ void MatchingEngine::copy_active_orders(std::uint32_t user,
 
 void MatchingEngine::snapshot(const LinkHeader& h, const Header& request) {
   for (auto* order = users_[h.user]; order; order = order->user_next) {
-    auto record = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot, request.requestId);
+    auto record =
+        server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot, request.requestId);
     record.order = order->state;
     queue(LinkKind::Event, h, record);
   }
-  auto end = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot, request.requestId);
+  auto end =
+      server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot, request.requestId);
   end.isEnd = 1;
   queue(LinkKind::SnapshotEnd, h, end);
 }
+
 void MatchingEngine::copy_market(MarketSnapshot& view) noexcept {
   assert(view.books.size() == books_.size());
   view.epoch = epoch_;

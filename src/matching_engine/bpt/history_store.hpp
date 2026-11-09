@@ -17,18 +17,31 @@ namespace marketlab::orders::bpt {
 class HistoryStore {
  public:
   using Emit = EngineBackend::Emit;
-  HistoryStore(const std::filesystem::path& root, const OrderConfig&, std::uint16_t shard,
-               std::uint64_t recovered_end, std::size_t cache_pages, std::size_t query_slots,
-               std::function<void()> wakeup, std::uint64_t checkpoint_bytes = 64 * 1024 * 1024);
+  HistoryStore(const std::filesystem::path& root,
+               const OrderConfig&,
+               std::uint16_t shard,
+               std::uint64_t recovered_end,
+               std::size_t cache_pages,
+               std::size_t query_slots,
+               std::function<void()> wakeup,
+               std::uint64_t checkpoint_bytes = 64 * 1024 * 1024);
   ~HistoryStore();
   void publish(std::uint64_t committed_end);
-  void request(const LinkHeader&, const TradeHistoryRequest&, std::uint64_t committed_end, const Emit&);
+  void request(const LinkHeader&,
+               const TradeHistoryRequest&,
+               std::uint64_t committed_end,
+               const Emit&);
   void poll();
   bool pending() const;
   void close() noexcept;
 
  private:
-  struct Task { LinkHeader context; TradeHistoryRequest request; Emit emit; };
+  struct Task {
+    LinkHeader context;
+    TradeHistoryRequest request;
+    Emit emit;
+  };
+
   struct Answer {
     Task task;
     std::vector<persistence::TradeRecord> records;
@@ -36,6 +49,7 @@ class HistoryStore {
     bool more = false;
     RejectReason error{};
   };
+
   std::filesystem::path root_, log_path_, working_path_, snapshot_path_;
   std::uint16_t shard_;
   std::uint64_t fingerprint_ = 1469598103934665603ULL;

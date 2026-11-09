@@ -10,7 +10,11 @@
 
 namespace marketlab::orders {
 using Clock = std::chrono::steady_clock;
-enum class Framing { Client, Internal };
+enum class Framing {
+  Client,
+  Internal
+};
+
 // Single-owner nonblocking reactor. No socket operation waits for a peer.
 // Linux uses epoll; the portable poll backend keeps macOS tests equivalent.
 class TcpReactor {
@@ -25,6 +29,7 @@ class TcpReactor {
     Clock::time_point last_receive = Clock::now(), last_progress = Clock::now();
     Clock::time_point partial_since{};
   };
+
   using Handler = std::function<void(ConnectionId)>;
   using FrameHandler = std::function<void(ConnectionId, std::span<const std::uint8_t>)>;
   explicit TcpReactor(std::size_t max_buffer = 4 * 1024 * 1024, int partial_timeout_ms = 2000);
@@ -35,17 +40,26 @@ class TcpReactor {
   ConnectionId connect(const Address& address, Framing framing);
   bool send(ConnectionId id, std::span<const std::uint8_t> bytes);
   void close(ConnectionId id);
-  bool contains(ConnectionId id) const { return peers_.contains(id); }
+
+  bool contains(ConnectionId id) const {
+    return peers_.contains(id);
+  }
+
   void step(int timeout_ms = 10);
   // Borrow a nonblocking wakeup descriptor; callback drains it on this owner.
   // The descriptor and callback captures must outlive all calls to step().
   void watch_wakeup(int fd, std::function<void()> handler);
   void expire();
   std::shared_ptr<Peer> peer(ConnectionId id) const;
-  std::size_t size() const { return peers_.size(); }
+
+  std::size_t size() const {
+    return peers_.size();
+  }
+
   std::uint64_t accepted = 0, connects = 0, disconnected = 0, bytes_in = 0, bytes_out = 0;
   Handler on_accept, on_connect, on_close;
   FrameHandler on_frame;
+
  private:
   void watch(const Peer& p, bool add);
   void flush(const std::shared_ptr<Peer>& p);
@@ -53,12 +67,12 @@ class TcpReactor {
   std::size_t max_buffer_;
   int partial_timeout_ms_;
   int listener_ = -1, poller_ = -1;
-  std::vector<std::pair<int,std::function<void()>>> wakeups_;
+  std::vector<std::pair<int, std::function<void()>>> wakeups_;
   Framing listen_framing_ = Framing::Client;
   std::size_t connection_limit_ = 4096;
   ConnectionId next_id_ = 1;
   std::unordered_map<ConnectionId, std::shared_ptr<Peer>> peers_;
-  std::vector<std::pair<ConnectionId,short>> ready_events_;
+  std::vector<std::pair<ConnectionId, short>> ready_events_;
   std::vector<pollfd> poll_fds_;
   std::vector<ConnectionId> poll_ids_;
 };

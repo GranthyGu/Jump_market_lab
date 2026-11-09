@@ -21,8 +21,9 @@ namespace bustub {
 
 #define B_PLUS_TREE_INTERNAL_PAGE_TYPE BPlusTreeInternalPage<KeyType, ValueType, KeyComparator>
 #define INTERNAL_PAGE_HEADER_SIZE 32
-#define INTERNAL_PAGE_SLOT_CNT \
-  ((BUSTUB_PAGE_SIZE - INTERNAL_PAGE_HEADER_SIZE) / ((int)(sizeof(KeyType) + sizeof(ValueType) + sizeof(uint64_t))))  // NOLINT
+#define INTERNAL_PAGE_SLOT_CNT                      \
+  ((BUSTUB_PAGE_SIZE - INTERNAL_PAGE_HEADER_SIZE) / \
+   ((int)(sizeof(KeyType) + sizeof(ValueType) + sizeof(uint64_t))))  // NOLINT
 
 /**
  * Store `n` child pointers (page_id) and `n - 1` indexed keys within internal page.
@@ -44,36 +45,62 @@ namespace bustub {
  *  ---------------------------------------------
  */
 INDEX_TEMPLATE_ARGUMENTS
+
 class BPlusTreeInternalPage : public BPlusTreePage {
  public:
-  static constexpr auto Capacity() -> int { return INTERNAL_PAGE_SLOT_CNT; }
-  // Tie breakers live only in internal routing entries. Leaf keys remain exactly KeyType.
-  auto TieAt(int i) const -> uint64_t { return tie_array_[i]; }
-  void SetTieAt(int i, uint64_t value) { tie_array_[i] = value; }
-  void SetValueAt(int i, ValueType value) { page_id_array_[i] = value; }
-  void InsertAt(int at, const KeyType &key, uint64_t tie, ValueType value) {
-    for (int i = GetSize(); i > at; --i) { key_array_[i] = key_array_[i-1]; tie_array_[i] = tie_array_[i-1]; page_id_array_[i] = page_id_array_[i-1]; }
-    key_array_[at] = key; tie_array_[at] = tie; page_id_array_[at] = value; ChangeSizeBy(1);
+  static constexpr auto Capacity() -> int {
+    return INTERNAL_PAGE_SLOT_CNT;
   }
+
+  // Tie breakers live only in internal routing entries. Leaf keys remain exactly KeyType.
+  auto TieAt(int i) const -> uint64_t {
+    return tie_array_[i];
+  }
+
+  void SetTieAt(int i, uint64_t value) {
+    tie_array_[i] = value;
+  }
+
+  void SetValueAt(int i, ValueType value) {
+    page_id_array_[i] = value;
+  }
+
+  void InsertAt(int at, const KeyType& key, uint64_t tie, ValueType value) {
+    for (int i = GetSize(); i > at; --i) {
+      key_array_[i] = key_array_[i - 1];
+      tie_array_[i] = tie_array_[i - 1];
+      page_id_array_[i] = page_id_array_[i - 1];
+    }
+    key_array_[at] = key;
+    tie_array_[at] = tie;
+    page_id_array_[at] = value;
+    ChangeSizeBy(1);
+  }
+
   void EraseAt(int at) {
-    for (int i = at + 1; i < GetSize(); ++i) { key_array_[i-1] = key_array_[i]; tie_array_[i-1] = tie_array_[i]; page_id_array_[i-1] = page_id_array_[i]; }
+    for (int i = at + 1; i < GetSize(); ++i) {
+      key_array_[i - 1] = key_array_[i];
+      tie_array_[i - 1] = tie_array_[i];
+      page_id_array_[i - 1] = page_id_array_[i];
+    }
     ChangeSizeBy(-1);
   }
+
   // Delete all constructor / destructor to ensure memory safety
   BPlusTreeInternalPage() = delete;
-  BPlusTreeInternalPage(const BPlusTreeInternalPage &other) = delete;
+  BPlusTreeInternalPage(const BPlusTreeInternalPage& other) = delete;
 
   void Init(int max_size = INTERNAL_PAGE_SLOT_CNT);
 
   auto KeyAt(int index) const -> KeyType;
 
-  void SetKeyAt(int index, const KeyType &key);
+  void SetKeyAt(int index, const KeyType& key);
 
   /**
    * @param value The value to search for
    * @return The index that corresponds to the specified value
    */
-  auto ValueIndex(const ValueType &value) const -> int;
+  auto ValueIndex(const ValueType& value) const -> int;
 
   auto ValueAt(int index) const -> ValueType;
 

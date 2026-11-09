@@ -38,7 +38,9 @@ class Page {
 
  public:
   /** Constructor. Zeros out the page data. */
-  Page() : data_(static_cast<size_t>(BUSTUB_PAGE_SIZE), 0), page_id_(INVALID_PAGE_ID) {
+  Page()
+      : data_(static_cast<size_t>(BUSTUB_PAGE_SIZE), 0),
+        page_id_(INVALID_PAGE_ID) {
     pin_count_.store(0, std::memory_order_relaxed);
     is_dirty_.store(false, std::memory_order_relaxed);
     ResetMemory();
@@ -48,34 +50,54 @@ class Page {
   ~Page() = default;
 
   /** @return the actual data contained within this page */
-  inline auto GetData() -> char * { return data_.data(); }
+  inline auto GetData() -> char* {
+    return data_.data();
+  }
 
   /** @return the page id of this page */
-  inline auto GetPageId() const -> page_id_t { return page_id_; }
+  inline auto GetPageId() const -> page_id_t {
+    return page_id_;
+  }
 
   /** @return the pin count of this page. */
-  inline auto GetPinCount() const -> int { return pin_count_.load(std::memory_order_acquire); }
+  inline auto GetPinCount() const -> int {
+    return pin_count_.load(std::memory_order_acquire);
+  }
 
   /** @return true if the page in memory has been modified from the page on disk, false otherwise */
-  inline auto IsDirty() const -> bool { return is_dirty_.load(std::memory_order_acquire); }
+  inline auto IsDirty() const -> bool {
+    return is_dirty_.load(std::memory_order_acquire);
+  }
 
   /** Acquire the page write latch. */
-  inline void WLatch() { rwlatch_.lock(); }
+  inline void WLatch() {
+    rwlatch_.lock();
+  }
 
   /** Release the page write latch. */
-  inline void WUnlatch() { rwlatch_.unlock(); }
+  inline void WUnlatch() {
+    rwlatch_.unlock();
+  }
 
   /** Acquire the page read latch. */
-  inline void RLatch() { rwlatch_.lock_shared(); }
+  inline void RLatch() {
+    rwlatch_.lock_shared();
+  }
 
   /** Release the page read latch. */
-  inline void RUnlatch() { rwlatch_.unlock_shared(); }
+  inline void RUnlatch() {
+    rwlatch_.unlock_shared();
+  }
 
   /** @return the page LSN. */
-  inline auto GetLSN() -> lsn_t { return *reinterpret_cast<lsn_t *>(GetData() + OFFSET_LSN); }
+  inline auto GetLSN() -> lsn_t {
+    return *reinterpret_cast<lsn_t*>(GetData() + OFFSET_LSN);
+  }
 
   /** Sets the page LSN. */
-  inline void SetLSN(lsn_t lsn) { memcpy(GetData() + OFFSET_LSN, &lsn, sizeof(lsn_t)); }
+  inline void SetLSN(lsn_t lsn) {
+    memcpy(GetData() + OFFSET_LSN, &lsn, sizeof(lsn_t));
+  }
 
  protected:
   static_assert(sizeof(page_id_t) == 4);

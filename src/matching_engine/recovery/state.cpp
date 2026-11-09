@@ -4,7 +4,8 @@
 #include <cassert>
 
 namespace marketlab::orders::persistence {
-CommittedState::CommittedState(const OrderConfig& c, std::uint16_t shard) : epoch_(md::new_epoch()) {
+CommittedState::CommittedState(const OrderConfig& c, std::uint16_t shard)
+    : epoch_(md::new_epoch()) {
   symbol_books_.resize(c.products.size() + 1, std::numeric_limits<std::size_t>::max());
   for (std::size_t i = 0; i < c.products.size(); ++i) {
     if (c.products[i].shard == shard) {
@@ -13,6 +14,7 @@ CommittedState::CommittedState(const OrderConfig& c, std::uint16_t shard) : epoc
     }
   }
 }
+
 Page& CommittedState::writable(std::size_t p) {
   if (pages_[p].use_count() != 1) {
     pages_[p] = std::make_shared<Page>(*pages_[p]);
@@ -20,12 +22,15 @@ Page& CommittedState::writable(std::size_t p) {
   }
   return *pages_[p];
 }
+
 bool CommittedState::needs_copy(const Change& c) const {
   const auto id = c.order.id;
   auto it = positions_.find(id);
-  if (it != positions_.end()) return pages_[it->second / Page::slots].use_count() != 1;
+  if (it != positions_.end())
+    return pages_[it->second / Page::slots].use_count() != 1;
   return !c.erase && !free_.empty() && pages_[free_.back() / Page::slots].use_count() != 1;
 }
+
 std::map<Price, CommittedState::Level>& CommittedState::levels(const CompactOrder& order) {
   auto& book = books_.at(symbol_books_.at(order.symbol));
   return order.side == Side::Buy ? book.bids : book.asks;
@@ -84,11 +89,13 @@ void CommittedState::apply(const Change& c) {
     }
     return;
   }
-  if (c.erase) return;
+  if (c.erase)
+    return;
   if (free_.empty()) {
     const auto start = pages_.size() * Page::slots;
     pages_.push_back(std::make_shared<Page>());
-    for (std::size_t i = Page::slots; i > 0; --i) free_.push_back(start + i - 1);
+    for (std::size_t i = Page::slots; i > 0; --i)
+      free_.push_back(start + i - 1);
   }
   const auto slot = free_.back();
   free_.pop_back();
@@ -96,9 +103,11 @@ void CommittedState::apply(const Change& c) {
   positions_.emplace(id, slot);
   aggregate(c.order, true);
 }
+
 FrozenPages CommittedState::freeze() const {
   return {pages_.begin(), pages_.end()};
 }
+
 void CommittedState::market(MarketSnapshot& view) const noexcept {
   assert(view.books.size() == books_.size());
   view.epoch = epoch_;

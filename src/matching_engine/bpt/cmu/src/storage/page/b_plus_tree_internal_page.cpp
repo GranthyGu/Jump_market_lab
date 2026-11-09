@@ -16,6 +16,7 @@
 #ifndef MARKETLAB_BPT_STANDALONE
 #include "storage/index/generic_key.h"
 #include "common/rid.h"
+
 namespace bustub {
 template class BPlusTreeInternalPage<GenericKey<4>, page_id_t, GenericComparator<4>>;
 template class BPlusTreeInternalPage<GenericKey<8>, page_id_t, GenericComparator<8>>;

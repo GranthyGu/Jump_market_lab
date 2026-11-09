@@ -4,5 +4,7 @@
 #include <string>
 
 namespace marketlab::orders {
-void run_gateway(const OrderConfig& config, const std::atomic_bool& stop, const std::string& stats_path = "");
+void run_gateway(const OrderConfig& config,
+                 const std::atomic_bool& stop,
+                 const std::string& stats_path = "");
 }  // namespace marketlab::orders

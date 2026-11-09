@@ -9,7 +9,12 @@ count=
 host=
 port=
 raw=false
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
 usage() {
   cat <<'HELP'
 Usage: run_market_client.sh [options]
@@ -25,33 +30,69 @@ Maintains a book with reorder buffering and automatic TCP snapshot recovery.
 Multiple terminals can join the same group. Ctrl-C stops only this receiver.
 HELP
 }
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --help) usage; exit 0 ;;
-    --raw) raw=true; shift ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    --raw)
+      raw=true
+      shift
+      ;;
     --config|--interface|--count|--build-dir|--host|--port)
       [ "$#" -ge 2 ] || fail "Missing value for $1"
       case "$1" in
-        --config) config=$2 ;;
-        --interface) multicast_interface=$2 ;;
-        --count) count=$2 ;;
-        --build-dir) build_dir=$2 ;;
-        --host) host=$2 ;;
-        --port) port=$2 ;;
+        --config)
+          config=$2
+          ;;
+        --interface)
+          multicast_interface=$2
+          ;;
+        --count)
+          count=$2
+          ;;
+        --build-dir)
+          build_dir=$2
+          ;;
+        --host)
+          host=$2
+          ;;
+        --port)
+          port=$2
+          ;;
       esac
-      shift 2 ;;
-    *) fail "Unknown option: $1 (see --help)" ;;
+      shift 2
+      ;;
+    *)
+      fail "Unknown option: $1 (see --help)"
+      ;;
   esac
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
 [ -x "$build_dir/market_broadcast" ] || fail "Missing market_broadcast; run $launcher_root/src/scripts/build.sh or select --build-dir"
 if [ -n "$count" ]; then
-  case "$count" in *[!0-9]*) fail "Count must be a nonnegative integer" ;; esac
+  case "$count" in
+    *[!0-9]*)
+      fail "Count must be a nonnegative integer"
+      ;;
+  esac
 fi
 set -- "$build_dir/market_broadcast" observe --config "$config"
-if [ -n "$multicast_interface" ]; then set -- "$@" --interface "$multicast_interface"; fi
-if [ -n "$count" ]; then set -- "$@" --count "$count"; fi
-if [ -n "$host" ]; then set -- "$@" --host "$host"; fi
-if [ -n "$port" ]; then set -- "$@" --port "$port"; fi
-if [ "$raw" = true ]; then set -- "$@" --raw; fi
+if [ -n "$multicast_interface" ]; then
+  set -- "$@" --interface "$multicast_interface"
+fi
+if [ -n "$count" ]; then
+  set -- "$@" --count "$count"
+fi
+if [ -n "$host" ]; then
+  set -- "$@" --host "$host"
+fi
+if [ -n "$port" ]; then
+  set -- "$@" --port "$port"
+fi
+if [ "$raw" = true ]; then
+  set -- "$@" --raw
+fi
 exec "$@"

@@ -25,13 +25,14 @@
 
 namespace bustub {
 
-static char *buffer_used;
+static char* buffer_used;
 
 /**
  * Creates a new disk manager that writes to the specified database file.
  * @param db_file the file name of the database file to write to
  */
-DiskManager::DiskManager(const std::filesystem::path &db_file) : db_file_name_(db_file) {
+DiskManager::DiskManager(const std::filesystem::path& db_file)
+    : db_file_name_(db_file) {
   log_file_name_ = db_file_name_.filename().stem().string() + ".log";
 
   log_io_.open(log_file_name_, std::ios::binary | std::ios::in | std::ios::app | std::ios::out);
@@ -78,7 +79,7 @@ void DiskManager::ShutDown() {
 /**
  * Write the contents of the specified page into disk file
  */
-void DiskManager::WritePage(page_id_t page_id, const char *page_data) {
+void DiskManager::WritePage(page_id_t page_id, const char* page_data) {
   std::scoped_lock scoped_db_io_latch(db_io_latch_);
   size_t offset;
   if (pages_.find(page_id) != pages_.end()) {
@@ -107,7 +108,7 @@ void DiskManager::WritePage(page_id_t page_id, const char *page_data) {
 /**
  * Read the contents of the specified page into the given memory area
  */
-void DiskManager::ReadPage(page_id_t page_id, char *page_data) {
+void DiskManager::ReadPage(page_id_t page_id, char* page_data) {
   std::scoped_lock scoped_db_io_latch(db_io_latch_);
   size_t offset;
   if (pages_.find(page_id) != pages_.end()) {
@@ -142,7 +143,9 @@ void DiskManager::ReadPage(page_id_t page_id, char *page_data) {
   // Check if the file ended before we could read a full page.
   int read_count = db_io_.gcount();
   if (read_count < BUSTUB_PAGE_SIZE) {
-    LOG_DEBUG("I/O error: Read page %d hit the end of file at offset %lu, missing %d bytes", page_id, offset,
+    LOG_DEBUG("I/O error: Read page %d hit the end of file at offset %lu, missing %d bytes",
+              page_id,
+              offset,
               BUSTUB_PAGE_SIZE - read_count);
     db_io_.clear();
     memset(page_data + read_count, 0, BUSTUB_PAGE_SIZE - read_count);
@@ -171,7 +174,7 @@ void DiskManager::DeletePage(page_id_t page_id) {
  * @param log_data raw log data
  * @param size size of log entry
  */
-void DiskManager::WriteLog(char *log_data, int size) {
+void DiskManager::WriteLog(char* log_data, int size) {
   // enforce swap log buffer
   assert(log_data != buffer_used);
   buffer_used = log_data;
@@ -209,7 +212,7 @@ void DiskManager::WriteLog(char *log_data, int size) {
  * @param offset offset of the log entry in the file
  * @return true if the read was successful, false otherwise
  */
-auto DiskManager::ReadLog(char *log_data, int size, int offset) -> bool {
+auto DiskManager::ReadLog(char* log_data, int size, int offset) -> bool {
   if (offset >= GetFileSize(log_file_name_)) {
     // LOG_DEBUG("end of log file");
     // LOG_DEBUG("file size is %d", GetFileSize(log_name_));
@@ -233,21 +236,29 @@ auto DiskManager::ReadLog(char *log_data, int size, int offset) -> bool {
 }
 
 /** @return the number of disk flushes */
-auto DiskManager::GetNumFlushes() const -> int { return num_flushes_; }
+auto DiskManager::GetNumFlushes() const -> int {
+  return num_flushes_;
+}
 
 /** @return true iff the in-memory content has not been flushed yet */
-auto DiskManager::GetFlushState() const -> bool { return flush_log_; }
+auto DiskManager::GetFlushState() const -> bool {
+  return flush_log_;
+}
 
 /** @return the number of disk writes */
-auto DiskManager::GetNumWrites() const -> int { return num_writes_; }
+auto DiskManager::GetNumWrites() const -> int {
+  return num_writes_;
+}
 
 /** @return the number of deletions */
-auto DiskManager::GetNumDeletes() const -> int { return num_deletes_; }
+auto DiskManager::GetNumDeletes() const -> int {
+  return num_deletes_;
+}
 
 /**
  * Private helper function to get disk file size
  */
-auto DiskManager::GetFileSize(const std::string &file_name) -> int {
+auto DiskManager::GetFileSize(const std::string& file_name) -> int {
   struct stat stat_buf;
   int rc = stat(file_name.c_str(), &stat_buf);
   return rc == 0 ? static_cast<int>(stat_buf.st_size) : -1;

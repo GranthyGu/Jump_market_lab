@@ -34,7 +34,7 @@ struct DiskRequest {
    *   1. being read into from disk (on a read).
    *   2. being written out to disk (on a write).
    */
-  char *data_;
+  char* data_;
 
   /** ID of the page being read from / written to disk. */
   page_id_t page_id_;
@@ -52,10 +52,10 @@ struct DiskRequest {
  */
 class DiskScheduler {
  public:
-  explicit DiskScheduler(DiskManager *disk_manager);
+  explicit DiskScheduler(DiskManager* disk_manager);
   ~DiskScheduler();
 
-  void Schedule(std::vector<DiskRequest> &requests);
+  void Schedule(std::vector<DiskRequest>& requests);
 
   void StartWorkerThread();
 
@@ -67,7 +67,9 @@ class DiskScheduler {
    *
    * @return std::promise<bool>
    */
-  auto CreatePromise() -> DiskSchedulerPromise { return {}; };
+  auto CreatePromise() -> DiskSchedulerPromise {
+    return {};
+  };
 
   /**
    * @brief Deallocates a page on disk.
@@ -76,11 +78,13 @@ class DiskScheduler {
    *
    * @param page_id The page ID of the page to deallocate from disk.
    */
-  void DeallocatePage(page_id_t page_id) { disk_manager_->DeletePage(page_id); }
+  void DeallocatePage(page_id_t page_id) {
+    disk_manager_->DeletePage(page_id);
+  }
 
  private:
   /** Pointer to the disk manager. */
-  DiskManager *disk_manager_ __attribute__((__unused__));
+  DiskManager* disk_manager_ __attribute__((__unused__));
   /** A shared queue to concurrently schedule and process requests. When the DiskScheduler's destructor is called,
    * `std::nullopt` is put into the queue to signal to the background thread to stop execution. */
   Channel<std::optional<DiskRequest>> request_queue_;

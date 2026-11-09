@@ -5,3 +5,4 @@
 **/.marketlab-data/
 /data/
 /.vscode
+/src/.clang-format

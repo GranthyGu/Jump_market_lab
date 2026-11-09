@@ -26,8 +26,9 @@ namespace bustub {
 #define LEAF_PAGE_HEADER_SIZE 32
 #define LEAF_PAGE_DEFAULT_TOMB_CNT 0
 #define LEAF_PAGE_TOMB_CNT ((NumTombs < 0) ? LEAF_PAGE_DEFAULT_TOMB_CNT : NumTombs)
-#define LEAF_PAGE_SLOT_CNT                                                                               \
-  ((BUSTUB_PAGE_SIZE - LEAF_PAGE_HEADER_SIZE - sizeof(size_t) - (LEAF_PAGE_TOMB_CNT * sizeof(size_t))) / \
+#define LEAF_PAGE_SLOT_CNT                                      \
+  ((BUSTUB_PAGE_SIZE - LEAF_PAGE_HEADER_SIZE - sizeof(size_t) - \
+    (LEAF_PAGE_TOMB_CNT * sizeof(size_t))) /                    \
    (sizeof(KeyType) + sizeof(ValueType)))  // NOLINT
 
 /**
@@ -61,72 +62,134 @@ namespace bustub {
  *  -----------------
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
+
 class BPlusTreeLeafPage : public BPlusTreePage {
  public:
   // Delete all constructor / destructor to ensure memory safety
   BPlusTreeLeafPage() = delete;
-  BPlusTreeLeafPage(const BPlusTreeLeafPage &other) = delete;
+  BPlusTreeLeafPage(const BPlusTreeLeafPage& other) = delete;
 
   void Init(int max_size = LEAF_PAGE_SLOT_CNT);
 
   auto GetTombstones() const -> std::vector<KeyType>;
 
-  auto KeyRef(int i) const -> const KeyType & { return key_array_[i]; }
-  auto ValueRef(int i) const -> const ValueType & { return rid_array_[i]; }
-  auto ValueAt(int i) const -> ValueType { return rid_array_[i]; }
-  void SetValueAt(int i, const ValueType &value) { rid_array_[i] = value; }
-  auto IsTomb(int i) const -> bool {
-    return std::find(tombstones_, tombstones_ + num_tombstones_, static_cast<size_t>(i)) != tombstones_ + num_tombstones_;
+  auto KeyRef(int i) const -> const KeyType& {
+    return key_array_[i];
   }
+
+  auto ValueRef(int i) const -> const ValueType& {
+    return rid_array_[i];
+  }
+
+  auto ValueAt(int i) const -> ValueType {
+    return rid_array_[i];
+  }
+
+  void SetValueAt(int i, const ValueType& value) {
+    rid_array_[i] = value;
+  }
+
+  auto IsTomb(int i) const -> bool {
+    return std::find(tombstones_, tombstones_ + num_tombstones_, static_cast<size_t>(i)) !=
+           tombstones_ + num_tombstones_;
+  }
+
   void Untomb(int i) {
     auto end = std::remove(tombstones_, tombstones_ + num_tombstones_, static_cast<size_t>(i));
     num_tombstones_ = end - tombstones_;
   }
-  void InsertAt(int i, const KeyType &key, const ValueType &value) {
-    for (int j = GetSize(); j > i; --j) { key_array_[j] = key_array_[j-1]; rid_array_[j] = rid_array_[j-1]; }
-    for (size_t j = 0; j < num_tombstones_; ++j) { if (tombstones_[j] >= static_cast<size_t>(i)) { ++tombstones_[j]; } }
-    key_array_[i] = key; rid_array_[i] = value; ChangeSizeBy(1);
+
+  void InsertAt(int i, const KeyType& key, const ValueType& value) {
+    for (int j = GetSize(); j > i; --j) {
+      key_array_[j] = key_array_[j - 1];
+      rid_array_[j] = rid_array_[j - 1];
+    }
+    for (size_t j = 0; j < num_tombstones_; ++j) {
+      if (tombstones_[j] >= static_cast<size_t>(i)) {
+        ++tombstones_[j];
+      }
+    }
+    key_array_[i] = key;
+    rid_array_[i] = value;
+    ChangeSizeBy(1);
   }
+
   void EraseAt(int i) {
     Untomb(i);
-    for (int j = i + 1; j < GetSize(); ++j) { key_array_[j-1] = key_array_[j]; rid_array_[j-1] = rid_array_[j]; }
-    for (size_t j = 0; j < num_tombstones_; ++j) { if (tombstones_[j] > static_cast<size_t>(i)) { --tombstones_[j]; } }
+    for (int j = i + 1; j < GetSize(); ++j) {
+      key_array_[j - 1] = key_array_[j];
+      rid_array_[j - 1] = rid_array_[j];
+    }
+    for (size_t j = 0; j < num_tombstones_; ++j) {
+      if (tombstones_[j] > static_cast<size_t>(i)) {
+        --tombstones_[j];
+      }
+    }
     ChangeSizeBy(-1);
   }
+
   void Tomb(int i) {
-    if constexpr (LEAF_PAGE_TOMB_CNT == 0) { EraseAt(i); }
-    else {
-      if (num_tombstones_ == LEAF_PAGE_TOMB_CNT) { auto old = tombstones_[0]; EraseAt(old); if (old < static_cast<size_t>(i)) { --i; } }
+    if constexpr (LEAF_PAGE_TOMB_CNT == 0) {
+      EraseAt(i);
+    } else {
+      if (num_tombstones_ == LEAF_PAGE_TOMB_CNT) {
+        auto old = tombstones_[0];
+        EraseAt(old);
+        if (old < static_cast<size_t>(i)) {
+          --i;
+        }
+      }
       tombstones_[num_tombstones_++] = i;
     }
   }
+
   // Split without flushing pending deletions; preserve each page's tombstone FIFO.
-  void SplitTo(BPlusTreeLeafPage *right, int cut) {
+  void SplitTo(BPlusTreeLeafPage* right, int cut) {
     int n = GetSize();
-    for (int i = cut; i < n; ++i) { right->InsertAt(right->GetSize(), key_array_[i], rid_array_[i]); }
+    for (int i = cut; i < n; ++i) {
+      right->InsertAt(right->GetSize(), key_array_[i], rid_array_[i]);
+    }
     size_t left_count = 0;
     for (size_t j = 0; j < num_tombstones_; ++j) {
       auto i = tombstones_[j];
-      if (i >= static_cast<size_t>(cut)) { right->tombstones_[right->num_tombstones_++] = i - cut; }
-      else { tombstones_[left_count++] = i; }
+      if (i >= static_cast<size_t>(cut)) {
+        right->tombstones_[right->num_tombstones_++] = i - cut;
+      } else {
+        tombstones_[left_count++] = i;
+      }
     }
-    num_tombstones_ = left_count; SetSize(cut);
+    num_tombstones_ = left_count;
+    SetSize(cut);
   }
+
   // Used during borrowing; incoming deletions are newer than the recipient's pending deletions.
-  void MoveOneTo(BPlusTreeLeafPage *to, int from, int at) {
-    auto key = KeyAt(from); auto value = ValueAt(from); bool tomb = IsTomb(from);
-    EraseAt(from); to->InsertAt(at, key, value); if (tomb) { to->Tomb(at); }
+  void MoveOneTo(BPlusTreeLeafPage* to, int from, int at) {
+    auto key = KeyAt(from);
+    auto value = ValueAt(from);
+    bool tomb = IsTomb(from);
+    EraseAt(from);
+    to->InsertAt(at, key, value);
+    if (tomb) {
+      to->Tomb(at);
+    }
   }
-  void MergeFrom(BPlusTreeLeafPage *right) {
-    for (int i = 0; i < right->GetSize(); ++i) { InsertAt(GetSize(), right->KeyAt(i), right->ValueAt(i)); }
+
+  void MergeFrom(BPlusTreeLeafPage* right) {
+    for (int i = 0; i < right->GetSize(); ++i) {
+      InsertAt(GetSize(), right->KeyAt(i), right->ValueAt(i));
+    }
     // Apply source tombstones in FIFO order after those already in the destination.
     auto tombs = right->GetTombstones();
-    for (const auto &key : tombs) {
+    for (const auto& key : tombs) {
       for (int i = 0; i < GetSize(); ++i) {
-        if (std::memcmp(&key_array_[i], &key, sizeof(KeyType)) == 0) { Tomb(i); break; }
+        if (std::memcmp(&key_array_[i], &key, sizeof(KeyType)) == 0) {
+          Tomb(i);
+          break;
+        }
       }
     }
   }
+
   // Helper methods
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);

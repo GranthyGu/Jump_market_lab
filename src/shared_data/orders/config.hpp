@@ -5,10 +5,27 @@
 
 namespace marketlab::orders {
 inline constexpr std::uint16_t default_gateway_port = 7001;
-struct Address { std::string host; std::uint16_t port; };
-struct Account { std::string name, password; };
-struct EngineShard { std::uint16_t id; Address address; };
-struct Product { std::string symbol; std::int32_t previous_close; std::uint16_t shard; };
+
+struct Address {
+  std::string host;
+  std::uint16_t port;
+};
+
+struct Account {
+  std::string name, password;
+};
+
+struct EngineShard {
+  std::uint16_t id;
+  Address address;
+};
+
+struct Product {
+  std::string symbol;
+  std::int32_t previous_close;
+  std::uint16_t shard;
+};
+
 struct OrderConfig {
   bool direct = true;
   Address gateway_listen{"127.0.0.1", default_gateway_port};
@@ -28,5 +45,6 @@ struct OrderConfig {
   int reconnect_ms = 200;
   bool trace = false;
 };
+
 OrderConfig load_order_config(const std::string& path);
 }  // namespace marketlab::orders

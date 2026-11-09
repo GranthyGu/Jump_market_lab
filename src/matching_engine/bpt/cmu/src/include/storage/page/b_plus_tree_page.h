@@ -31,10 +31,15 @@ namespace bustub {
   template <typename KeyType, typename ValueType, typename KeyComparator, ssize_t NumTombs = 0>
 #define FULL_INDEX_TEMPLATE_ARGUMENTS \
   template <typename KeyType, typename ValueType, typename KeyComparator, ssize_t NumTombs>
-#define INDEX_TEMPLATE_ARGUMENTS template <typename KeyType, typename ValueType, typename KeyComparator>
+#define INDEX_TEMPLATE_ARGUMENTS \
+  template <typename KeyType, typename ValueType, typename KeyComparator>
 
 // define page type enum
-enum class IndexPageType { INVALID_INDEX_PAGE = 0, LEAF_PAGE, INTERNAL_PAGE };
+enum class IndexPageType {
+  INVALID_INDEX_PAGE = 0,
+  LEAF_PAGE,
+  INTERNAL_PAGE
+};
 
 /**
  * Both internal and leaf page are inherited from this page.
@@ -51,7 +56,7 @@ class BPlusTreePage {
  public:
   // Delete all constructor / destructor to ensure memory safety
   BPlusTreePage() = delete;
-  BPlusTreePage(const BPlusTreePage &other) = delete;
+  BPlusTreePage(const BPlusTreePage& other) = delete;
   ~BPlusTreePage() = delete;
 
   auto IsLeafPage() const -> bool;

@@ -7,14 +7,15 @@ namespace marketlab::orders::persistence {
 namespace {
 Options validate(Options o) {
   if (o.directory.empty() || !o.pending_slots || o.pending_slots > 65536 || !o.sync_group ||
-      o.sync_group > o.pending_slots || o.command_bytes < 4096 || o.command_bytes > maximum_payload ||
-      o.pending_bytes < o.command_bytes || o.cow_bytes < sizeof(Page) ||
-      !o.query_slots || o.query_slots > 65536 || o.query_bytes < sizeof(OrderState) ||
-      o.checkpoint_interval.count() <= 0)
+      o.sync_group > o.pending_slots || o.command_bytes < 4096 ||
+      o.command_bytes > maximum_payload || o.pending_bytes < o.command_bytes ||
+      o.cow_bytes < sizeof(Page) || !o.query_slots || o.query_slots > 65536 ||
+      o.query_bytes < sizeof(OrderState) || o.checkpoint_interval.count() <= 0)
     throw std::invalid_argument("Invalid persistence buffer/checkpoint options");
   return o;
 }
 }  // namespace
+
 DurableEngine::DurableEngine(const OrderConfig& c, std::uint16_t shard, Options o)
     : options_(validate(std::move(o))),
       storage_(options_, c, shard),
@@ -34,37 +35,64 @@ DurableEngine::DurableEngine(const OrderConfig& c, std::uint16_t shard, Options 
   File initial(storage_.delta_path(executed_ + 1), true, true);
   initial.sync();
   sync_directory(storage_.root() / "orders");
-  history_ = std::make_unique<bpt::HistoryStore>(storage_.root(), c, shard, boundary_.trade_end,
-      options_.history_cache_pages, options_.query_slots, [this] { wakeup_.notify(); }, options_.history_checkpoint_bytes);
+  history_ = std::make_unique<bpt::HistoryStore>(
+      storage_.root(),
+      c,
+      shard,
+      boundary_.trade_end,
+      options_.history_cache_pages,
+      options_.query_slots,
+      [this] {
+        wakeup_.notify();
+      },
+      options_.history_checkpoint_bytes);
   std::cout << "RECOVERY_READY shard=" << shard << " batch=" << boundary_.seq
             << " checkpoint=" << checkpoint_seq_ << " active_orders=" << recovered.orders.size()
             << " trades=" << boundary_.trade_count << " data=" << storage_.root() << std::endl;
   try {
-    trade_thread_ = std::thread([this] { writer(true); });
-    order_thread_ = std::thread([this] { writer(false); });
-    snapshot_thread_ = std::thread([this] { snapshot_worker(); });
+    trade_thread_ = std::thread([this] {
+      writer(true);
+    });
+    order_thread_ = std::thread([this] {
+      writer(false);
+    });
+    snapshot_thread_ = std::thread([this] {
+      snapshot_worker();
+    });
   } catch (...) {
     stop();
     throw;
   }
 }
-DurableEngine::~DurableEngine() { stop(); }
+
+DurableEngine::~DurableEngine() {
+  stop();
+}
+
 void DurableEngine::stop() noexcept {
   trade_queue_.close();
   order_queue_.close();
   snapshot_queue_.close();
-  if (trade_thread_.joinable()) trade_thread_.join();
-  if (order_thread_.joinable()) order_thread_.join();
-  if (snapshot_thread_.joinable()) snapshot_thread_.join();
-  if (history_) history_->close();
+  if (trade_thread_.joinable())
+    trade_thread_.join();
+  if (order_thread_.joinable())
+    order_thread_.join();
+  if (snapshot_thread_.joinable())
+    snapshot_thread_.join();
+  if (history_)
+    history_->close();
 }
+
 void DurableEngine::hook(Stage s, std::uint64_t seq) {
-  if (options_.hook) options_.hook(s, seq);
+  if (options_.hook)
+    options_.hook(s, seq);
 }
+
 void DurableEngine::fail(std::exception_ptr error) {
   {
     std::lock_guard lock(completion_mutex_);
-    if (!error_) error_ = error;
+    if (!error_)
+      error_ = error;
     failed_.store(true, std::memory_order_release);
   }
   trade_queue_.close();
@@ -73,16 +101,19 @@ void DurableEngine::fail(std::exception_ptr error) {
   completion_.notify_all();
   wakeup_.notify();
 }
+
 void DurableEngine::check_error() {
   if (failed_.load(std::memory_order_acquire)) {
     std::lock_guard lock(completion_mutex_);
     std::rethrow_exception(error_);
   }
 }
+
 void DurableEngine::wait_progress() {
   std::unique_lock lock(completion_mutex_);
   completion_.wait_for(lock, std::chrono::milliseconds(10));
 }
+
 void DurableEngine::writer(bool trades) {
   try {
     auto& queue = trades ? trade_queue_ : order_queue_;
@@ -96,7 +127,8 @@ void DurableEngine::writer(bool trades) {
     std::optional<Job> deferred;
     while (!failed_.load(std::memory_order_acquire)) {
       auto first = deferred ? std::exchange(deferred, std::nullopt) : queue.pop();
-      if (!first) break;
+      if (!first)
+        break;
       if (first->cut) {
         auto* cut = first->cut;
         file.sync();
@@ -113,7 +145,8 @@ void DurableEngine::writer(bool trades) {
       group.push_back(first->batch);
       while (group.size() < options_.sync_group) {
         auto job = queue.try_pop();
-        if (!job) break;
+        if (!job)
+          break;
         if (job->cut) {
           deferred = job;
           break;
@@ -126,13 +159,14 @@ void DurableEngine::writer(bool trades) {
         hook(trades ? Stage::BeforeTradeWrite : Stage::BeforeOrderWrite, batch->b.seq);
         // Reserve once per frame before encoding. PUT is the largest delta;
         // the upper bound avoids a second scan just to count DELETE records.
-        const auto payload_bound =
-            trades ? r.trades.size() * stored_trade_bytes : r.changes.size() * (1 + stored_order_bytes);
+        const auto payload_bound = trades ? r.trades.size() * stored_trade_bytes
+                                          : r.changes.size() * (1 + stored_order_bytes);
         scratch.reserve(header_bytes + payload_bound + trailer_bytes);
         if (trades) {
           if (!r.trades.empty()) {
             start_frame(scratch, Kind::Trades, batch->b, r.trades.size(), r.trades.size());
-            for (const auto& t : r.trades) encode_trade(scratch, t);
+            for (const auto& t : r.trades)
+              encode_trade(scratch, t);
             finish_frame(scratch);
             file.append(scratch);
             wrote = true;
@@ -172,10 +206,12 @@ void DurableEngine::writer(bool trades) {
     fail(std::current_exception());
   }
 }
+
 void DurableEngine::snapshot_worker() {
   try {
     while (auto work = snapshot_queue_.pop()) {
-      if (failed_.load(std::memory_order_acquire)) break;
+      if (failed_.load(std::memory_order_acquire))
+        break;
       storage_.checkpoint((*work)->b, (*work)->pages);
       (*work)->done.store(true, std::memory_order_release);
       completion_.notify_all();
@@ -185,18 +221,20 @@ void DurableEngine::snapshot_worker() {
     fail(std::current_exception());
   }
 }
+
 void DurableEngine::service_checkpoint() {
   if (snapshot_ && snapshot_->done.load(std::memory_order_acquire)) {
     checkpoint_seq_ = snapshot_->b.seq;
-    std::cout << "CHECKPOINT_READY batch=" << checkpoint_seq_ << " active_generation=" << checkpoint_seq_ + 1
-              << std::endl;
+    std::cout << "CHECKPOINT_READY batch=" << checkpoint_seq_
+              << " active_generation=" << checkpoint_seq_ + 1 << std::endl;
     snapshot_.reset();
     cut_.reset();
     snapshot_sent_ = false;
     committed_.reset_copy_count();
     last_checkpoint_ = std::chrono::steady_clock::now();
   }
-  if (!cut_) return;
+  if (!cut_)
+    return;
   if (!snapshot_ && boundary_.seq == cut_->seq) {
     snapshot_ = std::make_unique<Snapshot>();
     snapshot_->b = boundary_;
@@ -204,10 +242,12 @@ void DurableEngine::service_checkpoint() {
     committed_.reset_copy_count();
   }
   if (snapshot_ && !snapshot_sent_ && cut_->done.load(std::memory_order_acquire)) {
-    if (!snapshot_queue_.push(snapshot_.get())) check_error();
+    if (!snapshot_queue_.push(snapshot_.get()))
+      check_error();
     snapshot_sent_ = true;
   }
 }
+
 void DurableEngine::poll() {
   wakeup_.drain();
   check_error();
@@ -220,7 +260,8 @@ void DurableEngine::poll() {
       while (snapshot_ && committed_.needs_copy(change) &&
              committed_.copied_bytes() + sizeof(Page) > options_.cow_bytes) {
         service_checkpoint();
-        if (!snapshot_) break;
+        if (!snapshot_)
+          break;
         wait_progress();
         check_error();
       }
@@ -241,14 +282,18 @@ void DurableEngine::poll() {
     pending_.pop_front();
     recycled->emit = {};
     recycled->result.clear();
-    if (recycled->result.bytes() <= 256 * 1024 && free_.size() < 16) free_.push_back(std::move(recycled));
+    if (recycled->result.bytes() <= 256 * 1024 && free_.size() < 16)
+      free_.push_back(std::move(recycled));
   }
   if (!cut_ && executed_ > checkpoint_seq_ &&
       (std::chrono::steady_clock::now() - last_checkpoint_ >= options_.checkpoint_interval ||
        delta_bytes_.load(std::memory_order_relaxed) >= options_.checkpoint_bytes))
     request_checkpoint();
 }
-void DurableEngine::command(const LinkHeader& h, std::span<const std::uint8_t> bytes, const Emit& emit) {
+
+void DurableEngine::command(const LinkHeader& h,
+                            std::span<const std::uint8_t> bytes,
+                            const Emit& emit) {
   try {
     poll();
     if (h.kind == LinkKind::History) {
@@ -265,7 +310,8 @@ void DurableEngine::command(const LinkHeader& h, std::span<const std::uint8_t> b
       poll();
     }
     auto batch = free_.empty() ? std::make_unique<Batch>() : std::move(free_.back());
-    if (!free_.empty()) free_.pop_back();
+    if (!free_.empty())
+      free_.pop_back();
     batch->result.clear();
     batch->result.limit = options_.command_bytes;
     batch->done.store(0, std::memory_order_relaxed);
@@ -287,7 +333,9 @@ void DurableEngine::command(const LinkHeader& h, std::span<const std::uint8_t> b
     throw;
   }
 }
-void DurableEngine::capture_query(const LinkHeader& context, const Header& request,
+
+void DurableEngine::capture_query(const LinkHeader& context,
+                                  const Header& request,
                                   const Emit& emit) {
   const auto count = working_.active_order_count(context.user);
   if (count > options_.query_bytes / sizeof(OrderState)) {
@@ -328,7 +376,7 @@ void DurableEngine::emit_queries() {
       query.emit(LinkKind::Event, query.context, record_bytes(record));
     }
     auto end = server_record<ActiveOrderSnapshot>(MessageType::ActiveOrderSnapshot,
-                                                 query.request.requestId);
+                                                  query.request.requestId);
     end.isEnd = 1;
     query.emit(LinkKind::SnapshotEnd, query.context, record_bytes(end));
     query_bytes_ -= query.count * sizeof(OrderState);
@@ -339,24 +387,30 @@ void DurableEngine::emit_queries() {
 void DurableEngine::drain() {
   while (!pending_.empty() || history_->pending()) {
     poll();
-    if (!pending_.empty() || history_->pending()) wait_progress();
+    if (!pending_.empty() || history_->pending())
+      wait_progress();
   }
   check_error();
   service_checkpoint();
 }
+
 void DurableEngine::request_checkpoint() {
   check_error();
-  if (cut_ || executed_ <= checkpoint_seq_) return;
+  if (cut_ || executed_ <= checkpoint_seq_)
+    return;
   cut_ = std::make_unique<Cut>();
   cut_->seq = executed_;
-  if (!order_queue_.push({nullptr, cut_.get()})) check_error();
+  if (!order_queue_.push({nullptr, cut_.get()}))
+    check_error();
   service_checkpoint();
 }
+
 void DurableEngine::wait_checkpoint() {
   drain();
   while (cut_) {
     poll();
-    if (cut_) wait_progress();
+    if (cut_)
+      wait_progress();
   }
 }
 }  // namespace marketlab::orders::persistence

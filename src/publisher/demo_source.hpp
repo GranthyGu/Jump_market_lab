@@ -8,6 +8,7 @@ class SyntheticMarketSource {
  public:
   SyntheticMarketSource(const Config& config, ShardConfig shard, bool is_static);
   void run(const std::atomic_bool& stop);
+
  private:
   ShardView generate(std::uint64_t step) const;
   Config config_;
@@ -19,6 +20,8 @@ class SyntheticMarketSource {
 };
 
 // An empty shard name starts all configured mock shards in this process.
-void run_demo_sources(const Config& config, const std::string& shard_name, bool is_static,
-              std::atomic_bool& stop);
+void run_demo_sources(const Config& config,
+                      const std::string& shard_name,
+                      bool is_static,
+                      std::atomic_bool& stop);
 }  // namespace marketlab::md

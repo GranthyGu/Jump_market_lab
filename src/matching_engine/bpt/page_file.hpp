@@ -17,8 +17,15 @@ class PageFile final : public bustub::DiskManager {
   void DeletePage(bustub::page_id_t) override;
   void sync();
   std::uint64_t size() const;
-  struct Metrics { std::uint64_t reads, writes; };
-  Metrics metrics() const { return {reads_.load(), writes_.load()}; }
+
+  struct Metrics {
+    std::uint64_t reads, writes;
+  };
+
+  Metrics metrics() const {
+    return {reads_.load(), writes_.load()};
+  }
+
  private:
   int fd_ = -1;
   std::atomic<std::uint64_t> reads_{0}, writes_{0};

@@ -9,12 +9,15 @@ class TracedBufferPoolManager {
  private:
   std::atomic<size_t> reads_ = 0;
   std::atomic<size_t> writes_ = 0;
-  BufferPoolManager *bpm_;
+  BufferPoolManager* bpm_;
 
  public:
-  explicit TracedBufferPoolManager(BufferPoolManager *bpm) : bpm_{bpm} {}
+  explicit TracedBufferPoolManager(BufferPoolManager* bpm)
+      : bpm_{bpm} {
+  }
 
-  auto WritePage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> WritePageGuard {
+  auto WritePage(page_id_t page_id, AccessType access_type = AccessType::Unknown)
+      -> WritePageGuard {
     writes_++;
     return bpm_->WritePage(page_id, access_type);
   }
@@ -24,12 +27,26 @@ class TracedBufferPoolManager {
     return bpm_->ReadPage(page_id, access_type);
   }
 
-  auto NewPage() -> page_id_t { return bpm_->NewPage(); }
-  auto TryReadPage(page_id_t id) -> std::optional<ReadPageGuard> { reads_++; return bpm_->TryReadPage(id); }
-  auto DeletePage(page_id_t page) -> bool { return bpm_->DeletePage(page); }
+  auto NewPage() -> page_id_t {
+    return bpm_->NewPage();
+  }
 
-  auto GetReads() -> size_t { return reads_; }
-  auto GetWrites() -> size_t { return writes_; }
+  auto TryReadPage(page_id_t id) -> std::optional<ReadPageGuard> {
+    reads_++;
+    return bpm_->TryReadPage(id);
+  }
+
+  auto DeletePage(page_id_t page) -> bool {
+    return bpm_->DeletePage(page);
+  }
+
+  auto GetReads() -> size_t {
+    return reads_;
+  }
+
+  auto GetWrites() -> size_t {
+    return writes_;
+  }
 };
 
 };  // namespace bustub

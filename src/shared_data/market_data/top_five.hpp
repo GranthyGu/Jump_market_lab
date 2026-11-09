@@ -4,7 +4,10 @@
 
 namespace marketlab::md {
 // Matching engines keep these aggregates as part of their own order books.
-struct PriceLevelTotals { std::uint64_t quantity; std::uint64_t num_orders; };
+struct PriceLevelTotals {
+  std::uint64_t quantity;
+  std::uint64_t num_orders;
+};
 
 // Bids must iterate from highest to lowest price; asks from lowest to highest.
 // Call under the engine's state ownership/lock, then release before any socket I/O.

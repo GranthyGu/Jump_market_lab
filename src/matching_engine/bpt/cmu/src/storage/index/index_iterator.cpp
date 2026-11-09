@@ -16,6 +16,7 @@
 #ifndef MARKETLAB_BPT_STANDALONE
 #include "storage/index/generic_key.h"
 #include "common/rid.h"
+
 namespace bustub {
 template class IndexIterator<GenericKey<4>, RID, GenericComparator<4>>;
 

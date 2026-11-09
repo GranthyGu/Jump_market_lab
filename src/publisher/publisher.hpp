@@ -19,15 +19,18 @@ class Publisher {
  public:
   explicit Publisher(Config config);
   void run(const std::atomic_bool& stop);
+
   std::shared_ptr<const Batch> latest() const {
     std::lock_guard lock(latest_mutex_);
     return latest_;
   }
+
  private:
   void set_latest(std::shared_ptr<const Batch> batch) {
     std::lock_guard lock(latest_mutex_);
     latest_ = std::move(batch);
   }
+
   void sample_loop(const std::atomic_bool& stop, const std::atomic_bool& cancelled);
   Config config_;
   UdpSender sender_;

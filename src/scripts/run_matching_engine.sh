@@ -11,7 +11,12 @@ trace=false
 data_dir=
 checkpoint_ms=600000
 pending_mib=64
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
 usage() {
   cat <<'HELP'
 Usage: run_matching_engine.sh [options]
@@ -29,24 +34,50 @@ Ports and symbol ownership come from the two configs, not a fixed shard formula.
 Keep this terminal open. Ctrl-C stops only the shards started by this script.
 HELP
 }
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --help) usage; exit 0 ;;
-    --trace) trace=true; shift ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    --trace)
+      trace=true
+      shift
+      ;;
     --config|--market-config|--shard|--build-dir|--log-dir|--data-dir|--checkpoint-ms|--pending-mib)
       [ "$#" -ge 2 ] || fail "Missing value for $1"
       case "$1" in
-        --config) config=$2 ;;
-        --market-config) market_config=$2 ;;
-        --shard) selected_shard=$2 ;;
-        --build-dir) build_dir=$2 ;;
-        --log-dir) log_root=$2 ;;
-        --data-dir) data_dir=$2 ;;
-        --checkpoint-ms) checkpoint_ms=$2 ;;
-        --pending-mib) pending_mib=$2 ;;
+        --config)
+          config=$2
+          ;;
+        --market-config)
+          market_config=$2
+          ;;
+        --shard)
+          selected_shard=$2
+          ;;
+        --build-dir)
+          build_dir=$2
+          ;;
+        --log-dir)
+          log_root=$2
+          ;;
+        --data-dir)
+          data_dir=$2
+          ;;
+        --checkpoint-ms)
+          checkpoint_ms=$2
+          ;;
+        --pending-mib)
+          pending_mib=$2
+          ;;
       esac
-      shift 2 ;;
-    *) fail "Unknown option: $1 (see --help)" ;;
+      shift 2
+      ;;
+    *)
+      fail "Unknown option: $1 (see --help)"
+      ;;
   esac
 done
 [ -r "$config" ] || fail "Cannot read configuration: $config"
@@ -119,10 +150,18 @@ shard_pids=
 follower_pid=
 cleanup() {
   trap '' INT TERM
-  for shard_pid in $shard_pids; do kill "$shard_pid" 2>/dev/null || true; done
-  for shard_pid in $shard_pids; do wait "$shard_pid" 2>/dev/null || true; done
-  if [ -n "$follower_pid" ]; then kill "$follower_pid" 2>/dev/null || true; wait "$follower_pid" 2>/dev/null || true; fi
+  for shard_pid in $shard_pids; do
+    kill "$shard_pid" 2>/dev/null || true
+  done
+  for shard_pid in $shard_pids; do
+    wait "$shard_pid" 2>/dev/null || true
+  done
+  if [ -n "$follower_pid" ]; then
+    kill "$follower_pid" 2>/dev/null || true
+    wait "$follower_pid" 2>/dev/null || true
+  fi
 }
+
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -133,9 +172,15 @@ while IFS='|' read -r shard_id host order_port market_port transport shared_path
   set -- "$build_dir/market_matching_engine" --config "$config" --shard "$shard_id" \
     --market-port "$market_port" --stats "$run_dir/shard-${shard_id}.json" \
     --checkpoint-ms "$checkpoint_ms" --pending-mib "$pending_mib"
-  if [ -n "$data_dir" ]; then set -- "$@" --data-dir "$data_dir"; fi
-  if [ "$transport" = shm ]; then set -- "$@" --market-shm "$shared_path"; fi
-  if [ "$trace" = true ]; then set -- "$@" --trace; fi
+  if [ -n "$data_dir" ]; then
+    set -- "$@" --data-dir "$data_dir"
+  fi
+  if [ "$transport" = shm ]; then
+    set -- "$@" --market-shm "$shared_path"
+  fi
+  if [ "$trace" = true ]; then
+    set -- "$@" --trace
+  fi
   "$@" > "$run_dir/shard-${shard_id}.log" 2>&1 &
   shard_pid=$!
   shard_pids="$shard_pids $shard_pid"

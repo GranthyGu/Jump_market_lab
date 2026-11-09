@@ -36,7 +36,7 @@ namespace bustub {
  */
 class DiskManager {
  public:
-  explicit DiskManager(const std::filesystem::path &db_file);
+  explicit DiskManager(const std::filesystem::path& db_file);
 
   /** FOR TEST / LEADERBOARD ONLY, used by DiskManagerMemory */
   DiskManager() = default;
@@ -50,14 +50,14 @@ class DiskManager {
    * @param page_id id of the page
    * @param page_data raw page data
    */
-  virtual void WritePage(page_id_t page_id, const char *page_data);
+  virtual void WritePage(page_id_t page_id, const char* page_data);
 
   /**
    * Read a page from the database file.
    * @param page_id id of the page
    * @param[out] page_data output buffer
    */
-  virtual void ReadPage(page_id_t page_id, char *page_data);
+  virtual void ReadPage(page_id_t page_id, char* page_data);
 
   /**
    * Delete a page from the database file. Reclaim the disk space.
@@ -65,9 +65,9 @@ class DiskManager {
    */
   virtual void DeletePage(page_id_t page_id);
 
-  void WriteLog(char *log_data, int size);
+  void WriteLog(char* log_data, int size);
 
-  auto ReadLog(char *log_data, int size, int offset) -> bool;
+  auto ReadLog(char* log_data, int size, int offset) -> bool;
 
   auto GetNumFlushes() const -> int;
 
@@ -81,13 +81,19 @@ class DiskManager {
    * Sets the future which is used to check for non-blocking flushes.
    * @param f the non-blocking flush check
    */
-  inline void SetFlushLogFuture(std::future<void> *f) { flush_log_f_ = f; }
+  inline void SetFlushLogFuture(std::future<void>* f) {
+    flush_log_f_ = f;
+  }
 
   /** Checks if the non-blocking flush future was set. */
-  inline auto HasFlushLogFuture() -> bool { return flush_log_f_ != nullptr; }
+  inline auto HasFlushLogFuture() -> bool {
+    return flush_log_f_ != nullptr;
+  }
 
   /** @brief returns the log file name */
-  inline auto GetLogFileName() const -> std::filesystem::path { return log_file_name_; }
+  inline auto GetLogFileName() const -> std::filesystem::path {
+    return log_file_name_;
+  }
 
   /** @brief returns the size of disk space in use */
   auto GetDbFileSize() -> size_t {
@@ -108,7 +114,7 @@ class DiskManager {
   size_t page_capacity_{DEFAULT_DB_IO_SIZE};
 
  private:
-  auto GetFileSize(const std::string &file_name) -> int;
+  auto GetFileSize(const std::string& file_name) -> int;
 
   auto AllocatePage() -> size_t;
 
@@ -125,7 +131,7 @@ class DiskManager {
   std::vector<size_t> free_slots_;
 
   bool flush_log_{false};
-  std::future<void> *flush_log_f_{nullptr};
+  std::future<void>* flush_log_f_{nullptr};
   // With multiple buffer pool instances, need to protect file access
   std::mutex db_io_latch_;
 };

@@ -17,26 +17,33 @@ sockaddr_in address(const std::string& host, std::uint16_t port) {
     throw std::runtime_error("Expected numeric IPv4 address: " + host);
   return out;
 }
+
 std::vector<std::string> split(const std::string& text, char separator) {
   std::vector<std::string> parts;
   std::istringstream in(text);
   std::string part;
-  while (std::getline(in, part, separator)) parts.push_back(part);
+  while (std::getline(in, part, separator))
+    parts.push_back(part);
   return parts;
 }
+
 std::string trim(std::string text) {
   const auto first = text.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) return {};
+  if (first == std::string::npos)
+    return {};
   return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
 }
+
 unsigned long long number(const std::string& text) {
   if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
     throw std::runtime_error("Expected unsigned integer: " + text);
   return std::stoull(text);
 }
+
 std::uint16_t identifier(const std::string& text) {
   const auto value = number(text);
-  if (!value || value > 65535) throw std::runtime_error("ID/port outside 1..65535");
+  if (!value || value > 65535)
+    throw std::runtime_error("ID/port outside 1..65535");
   return static_cast<std::uint16_t>(value);
 }
 
@@ -45,7 +52,8 @@ std::uint16_t identifier(const std::string& text) {
 void validate_multicast(const MulticastConfig& config) {
   const auto group = address(config.group.host, config.group.port);
   if (!IN_MULTICAST(ntohl(group.sin_addr.s_addr)) || !config.group.port)
-    throw std::runtime_error("Multicast group must be an IPv4 multicast address with a nonzero port");
+    throw std::runtime_error(
+        "Multicast group must be an IPv4 multicast address with a nonzero port");
   const auto iface = address(config.interface, 0);
   if (IN_MULTICAST(ntohl(iface.sin_addr.s_addr)) || iface.sin_addr.s_addr == INADDR_BROADCAST)
     throw std::runtime_error("Multicast interface must be a local unicast IPv4 address or 0.0.0.0");
@@ -55,101 +63,147 @@ void validate_multicast(const MulticastConfig& config) {
 
 Config load_config(const std::string& path, const std::string& source_override) {
   std::ifstream input(path);
-  if (!input) throw std::runtime_error("Cannot open config: " + path);
+  if (!input)
+    throw std::runtime_error("Cannot open config: " + path);
   Config cfg;
   MulticastConfig multicast;
   std::string line;
   std::set<std::string> singular;
   while (std::getline(input, line)) {
     line = trim(line.substr(0, line.find('#')));
-    if (line.empty()) continue;
+    if (line.empty())
+      continue;
     const auto eq = line.find('=');
-    if (eq == std::string::npos) throw std::runtime_error("Expected key=value");
+    if (eq == std::string::npos)
+      throw std::runtime_error("Expected key=value");
     const auto key = trim(line.substr(0, eq));
     const auto value = trim(line.substr(eq + 1));
     auto fields = split(value, ',');
-    for (auto& field : fields) field = trim(field);
+    for (auto& field : fields)
+      field = trim(field);
     if (key != "shard" && key != "udp_receiver" && !singular.insert(key).second)
       throw std::runtime_error("Repeated setting: " + key);
     if (key == "symbols") {
       for (const auto& field : fields) {
         const auto pair = split(field, ':');
-        if (pair.size() != 2 || pair[1].empty() || !cfg.symbols.emplace(identifier(pair[0]), pair[1]).second)
+        if (pair.size() != 2 || pair[1].empty() ||
+            !cfg.symbols.emplace(identifier(pair[0]), pair[1]).second)
           throw std::runtime_error("Invalid or duplicate symbol");
       }
     } else if (key == "shard") {
-      if (fields.size() < 6) throw std::runtime_error("Invalid shard config");
-      ShardConfig shard{fields[0], source_override.empty() ? fields[1] : source_override,
-                        fields[2], identifier(fields[3]), fields[4], {}};
-      for (std::size_t i = 5; i < fields.size(); ++i) shard.symbols.push_back(identifier(fields[i]));
+      if (fields.size() < 6)
+        throw std::runtime_error("Invalid shard config");
+      ShardConfig shard{fields[0],
+                        source_override.empty() ? fields[1] : source_override,
+                        fields[2],
+                        identifier(fields[3]),
+                        fields[4],
+                        {}};
+      for (std::size_t i = 5; i < fields.size(); ++i)
+        shard.symbols.push_back(identifier(fields[i]));
       cfg.shards.push_back(std::move(shard));
     } else if (key == "udp_receiver") {
-      if (fields.size() != 2) throw std::runtime_error("Invalid UDP destination");
+      if (fields.size() != 2)
+        throw std::runtime_error("Invalid UDP destination");
       cfg.receivers.push_back({fields[0], identifier(fields[1])});
     } else if (key == "multicast_group") {
-      if (fields.size() != 2) throw std::runtime_error("Expected multicast_group=IPv4,port");
+      if (fields.size() != 2)
+        throw std::runtime_error("Expected multicast_group=IPv4,port");
       multicast.group = {fields[0], identifier(fields[1])};
-    } else if (key == "multicast_interface") multicast.interface = value;
+    } else if (key == "multicast_interface")
+      multicast.interface = value;
     else if (key == "multicast_ttl") {
       const auto ttl = number(value);
-      if (ttl < 1 || ttl > 255) throw std::runtime_error("Multicast TTL must be in 1..255");
+      if (ttl < 1 || ttl > 255)
+        throw std::runtime_error("Multicast TTL must be in 1..255");
       multicast.ttl = static_cast<int>(ttl);
     } else if (key == "multicast_loopback") {
-      if (value != "0" && value != "1") throw std::runtime_error("multicast_loopback must be 0 or 1");
+      if (value != "0" && value != "1")
+        throw std::runtime_error("multicast_loopback must be 0 or 1");
       multicast.loopback = value == "1";
-    } else if (key == "query_host") cfg.query.host = value;
-    else if (key == "query_port") cfg.query.port = identifier(value);
-    else if (key == "snapshot_every") cfg.snapshot_every = number(value);
+    } else if (key == "query_host")
+      cfg.query.host = value;
+    else if (key == "query_port")
+      cfg.query.port = identifier(value);
+    else if (key == "snapshot_every")
+      cfg.snapshot_every = number(value);
     else if (key.starts_with("client_")) {
       const auto v = number(value);
-      if (!v || v > 256ULL * 1024 * 1024) throw std::runtime_error("Client setting outside safe range");
+      if (!v || v > 256ULL * 1024 * 1024)
+        throw std::runtime_error("Client setting outside safe range");
       auto& r = cfg.recovery;
-      if (key == "client_max_buffer_bytes") r.max_buffer_bytes = v;
-      else if (v > 1'000'000) throw std::runtime_error("Client setting outside safe range");
-      else if (key == "client_reorder_wait_ms") r.reorder_wait_ms = static_cast<int>(v);
-      else if (key == "client_late_after_ms") r.late_after_ms = static_cast<int>(v);
-      else if (key == "client_stale_after_ms") r.stale_after_ms = static_cast<int>(v);
-      else if (key == "client_recovery_timeout_ms") r.timeout_ms = static_cast<int>(v);
-      else if (key == "client_max_pending_batches") r.max_pending_batches = v;
-      else if (key == "client_max_queries") r.max_queries = v;
-      else if (key == "client_retry_initial_ms") r.retry_initial_ms = static_cast<int>(v);
-      else if (key == "client_retry_max_ms") r.retry_max_ms = static_cast<int>(v);
-      else throw std::runtime_error("Unknown setting: " + key);
-    }
-    else {
+      if (key == "client_max_buffer_bytes")
+        r.max_buffer_bytes = v;
+      else if (v > 1'000'000)
+        throw std::runtime_error("Client setting outside safe range");
+      else if (key == "client_reorder_wait_ms")
+        r.reorder_wait_ms = static_cast<int>(v);
+      else if (key == "client_late_after_ms")
+        r.late_after_ms = static_cast<int>(v);
+      else if (key == "client_stale_after_ms")
+        r.stale_after_ms = static_cast<int>(v);
+      else if (key == "client_recovery_timeout_ms")
+        r.timeout_ms = static_cast<int>(v);
+      else if (key == "client_max_pending_batches")
+        r.max_pending_batches = v;
+      else if (key == "client_max_queries")
+        r.max_queries = v;
+      else if (key == "client_retry_initial_ms")
+        r.retry_initial_ms = static_cast<int>(v);
+      else if (key == "client_retry_max_ms")
+        r.retry_max_ms = static_cast<int>(v);
+      else
+        throw std::runtime_error("Unknown setting: " + key);
+    } else {
       const auto v = number(value);
-      if (!v || v > 1'000'000) throw std::runtime_error("Setting outside safe range: " + key);
-      if (key == "source_timeout_ms") cfg.source_timeout_ms = static_cast<int>(v);
-      else if (key == "query_timeout_ms") cfg.query_timeout_ms = static_cast<int>(v);
-      else if (key == "shm_max_age_ms") cfg.shm_max_age_ms = static_cast<int>(v);
-      else if (key == "mock_update_ms") cfg.mock_update_ms = static_cast<int>(v);
-      else if (key == "mock_step_ms") cfg.mock_step_ms = static_cast<int>(v);
-      else if (key == "max_query_connections") cfg.max_query_connections = v;
-      else throw std::runtime_error("Unknown setting: " + key);
+      if (!v || v > 1'000'000)
+        throw std::runtime_error("Setting outside safe range: " + key);
+      if (key == "source_timeout_ms")
+        cfg.source_timeout_ms = static_cast<int>(v);
+      else if (key == "query_timeout_ms")
+        cfg.query_timeout_ms = static_cast<int>(v);
+      else if (key == "shm_max_age_ms")
+        cfg.shm_max_age_ms = static_cast<int>(v);
+      else if (key == "mock_update_ms")
+        cfg.mock_update_ms = static_cast<int>(v);
+      else if (key == "mock_step_ms")
+        cfg.mock_step_ms = static_cast<int>(v);
+      else if (key == "max_query_connections")
+        cfg.max_query_connections = v;
+      else
+        throw std::runtime_error("Unknown setting: " + key);
     }
   }
   if (singular.contains("multicast_group")) {
-    if (!cfg.receivers.empty()) throw std::runtime_error("Do not mix multicast_group and legacy udp_receiver destinations");
+    if (!cfg.receivers.empty())
+      throw std::runtime_error("Do not mix multicast_group and legacy udp_receiver destinations");
     validate_multicast(multicast);
     cfg.multicast = multicast;
-  } else if (singular.contains("multicast_interface") || singular.contains("multicast_ttl") || singular.contains("multicast_loopback"))
+  } else if (singular.contains("multicast_interface") || singular.contains("multicast_ttl") ||
+             singular.contains("multicast_loopback"))
     throw std::runtime_error("Multicast options require multicast_group");
-  if (cfg.symbols.empty() || cfg.shards.empty() || (!cfg.multicast && cfg.receivers.empty()) || cfg.snapshot_every < 5 || cfg.source_timeout_ms >= 1000)
+  if (cfg.symbols.empty() || cfg.shards.empty() || (!cfg.multicast && cfg.receivers.empty()) ||
+      cfg.snapshot_every < 5 || cfg.source_timeout_ms >= 1000)
     throw std::runtime_error("Missing config, snapshot period <5, or source timeout >=1000ms");
   std::set<std::uint16_t> owned;
   std::set<std::string> names, paths, symbol_names;
   for (const auto& [id, name] : cfg.symbols) {
     (void)id;
-    if (!symbol_names.insert(name).second) throw std::runtime_error("Duplicate symbol name");
+    if (!symbol_names.insert(name).second)
+      throw std::runtime_error("Duplicate symbol name");
   }
   for (const auto& shard : cfg.shards) {
     (void)address(shard.host, shard.port);
-    if (shard.name.empty() || shard.mmap_path.empty() || !names.insert(shard.name).second || !paths.insert(shard.mmap_path).second ||
-        (shard.transport != "tcp" && shard.transport != "shm")) throw std::runtime_error("Invalid shard name, path or transport");
+    if (shard.name.empty() || shard.mmap_path.empty() || !names.insert(shard.name).second ||
+        !paths.insert(shard.mmap_path).second ||
+        (shard.transport != "tcp" && shard.transport != "shm"))
+      throw std::runtime_error("Invalid shard name, path or transport");
     for (auto id : shard.symbols)
-      if (!cfg.symbols.contains(id) || !owned.insert(id).second) throw std::runtime_error("Invalid symbol ownership");
+      if (!cfg.symbols.contains(id) || !owned.insert(id).second)
+        throw std::runtime_error("Invalid symbol ownership");
   }
-  if (owned.size() != cfg.symbols.size()) throw std::runtime_error("Unassigned symbols");
+  if (owned.size() != cfg.symbols.size())
+    throw std::runtime_error("Unassigned symbols");
   for (const auto& receiver : cfg.receivers) {
     const auto receiver_address = address(receiver.host, receiver.port);
     if (IN_MULTICAST(ntohl(receiver_address.sin_addr.s_addr)))
@@ -159,13 +213,13 @@ Config load_config(const std::string& path, const std::string& source_override) 
   validate_recovery(cfg.recovery);
   return cfg;
 }
+
 void validate_recovery(const RecoveryConfig& r) {
   if (r.reorder_wait_ms <= 0 || r.late_after_ms <= r.reorder_wait_ms ||
-      r.stale_after_ms <= r.late_after_ms || r.timeout_ms <= 0 ||
-      !r.max_pending_batches || r.max_pending_batches > 64 ||
-      r.max_buffer_bytes < 1024 || r.max_buffer_bytes > 256ULL * 1024 * 1024 ||
-      !r.max_queries || r.max_queries > 64 || r.retry_initial_ms <= 0 ||
-      r.retry_max_ms < r.retry_initial_ms)
+      r.stale_after_ms <= r.late_after_ms || r.timeout_ms <= 0 || !r.max_pending_batches ||
+      r.max_pending_batches > 64 || r.max_buffer_bytes < 1024 ||
+      r.max_buffer_bytes > 256ULL * 1024 * 1024 || !r.max_queries || r.max_queries > 64 ||
+      r.retry_initial_ms <= 0 || r.retry_max_ms < r.retry_initial_ms)
     throw std::runtime_error("Invalid client recovery limits or timer ordering");
 }
 }  // namespace marketlab::md

@@ -39,7 +39,10 @@ enum class MessageType : std::uint16_t {
   TradeHistoryEnd = 11,
 };
 
-enum class Side : std::uint8_t { Buy = 1, Sell = 2 };
+enum class Side : std::uint8_t {
+  Buy = 1,
+  Sell = 2
+};
 
 enum class OrderStatus : std::uint8_t {
   Accepted = 1,
@@ -62,7 +65,7 @@ enum class RejectReason : std::uint16_t {
 struct Header {
   MessageType messageType;
   std::uint32_t messageLength;  // Includes Header; use sizeof(the full message).
-  RequestId requestId;         // Echo requests; unsolicited notifications use 0.
+  RequestId requestId;          // Echo requests; unsolicited notifications use 0.
 };
 
 // Embedded record with no header of its own.
@@ -113,16 +116,16 @@ struct Trade {
   TradeId tradeId;
   OrderId orderId;  // Recipient's participating order.
   SymbolName symbol;
-  Side side;       // Recipient's side.
+  Side side;  // Recipient's side.
   Price price;
   Quantity quantity;
 };
 
 struct ActiveOrderSnapshot {
-  Header header;        // Echo the login requestId, including on the end marker.
+  Header header;  // Echo the login requestId, including on the end marker.
   Timestamp timestamp;
-  std::uint8_t isEnd;    // 0 = record, 1 = terminal marker (not a native bool).
-  OrderState order;     // All bytes zero and ignored when isEnd == 1.
+  std::uint8_t isEnd;  // 0 = record, 1 = terminal marker (not a native bool).
+  OrderState order;    // All bytes zero and ignored when isEnd == 1.
 };
 
 struct RequestRejected {
@@ -136,6 +139,7 @@ struct RequestRejected {
 // Offsets are opaque, exclusive cursors in each shard's retained trade log.
 inline constexpr std::uint16_t trade_history_page_limit = 256;
 inline constexpr std::uint16_t history_more = 1, history_all_shards = 2;
+
 struct TradeHistoryRequest {
   Header header;
   std::uint16_t shard;
@@ -143,6 +147,7 @@ struct TradeHistoryRequest {
   std::uint64_t afterOffset;
   std::uint64_t throughOffset;  // 0 captures the current committed prefix.
 };
+
 struct TradeHistoryRecord {
   Header header;
   Timestamp timestamp;  // Original trade time, not query time.
@@ -155,6 +160,7 @@ struct TradeHistoryRecord {
   Username buyer;
   Username seller;
 };
+
 struct TradeHistoryEnd {
   Header header;
   Timestamp timestamp;
@@ -186,16 +192,15 @@ static_assert(sizeof(TradeHistoryEnd) == 46);
 
 template <typename T>
 inline constexpr bool is_wire_record =
-    std::is_standard_layout_v<T> && std::is_trivially_copyable_v<T> &&
-    alignof(T) == 1;
+    std::is_standard_layout_v<T> && std::is_trivially_copyable_v<T> && alignof(T) == 1;
 
 static_assert(is_wire_record<Header> && is_wire_record<OrderState> &&
               is_wire_record<LoginRequest> && is_wire_record<LoginAccepted> &&
               is_wire_record<NewOrderRequest> && is_wire_record<CancelRequest> &&
               is_wire_record<OrderUpdate> && is_wire_record<Trade> &&
-              is_wire_record<ActiveOrderSnapshot> &&
-              is_wire_record<RequestRejected> && is_wire_record<TradeHistoryRequest> &&
-              is_wire_record<TradeHistoryRecord> && is_wire_record<TradeHistoryEnd>);
+              is_wire_record<ActiveOrderSnapshot> && is_wire_record<RequestRejected> &&
+              is_wire_record<TradeHistoryRequest> && is_wire_record<TradeHistoryRecord> &&
+              is_wire_record<TradeHistoryEnd>);
 
 // Value-initialize records to zero before assigning fields. Character fields
 // require a null terminator and zero padding. Set messageType/messageLength

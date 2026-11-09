@@ -66,33 +66,41 @@ class Context {
   // You may want to use this when getting value, but not necessary.
   std::deque<ReadPageGuard> read_set_;
 
-  auto IsRootPage(page_id_t page_id) -> bool { return page_id == root_page_id_; }
+  auto IsRootPage(page_id_t page_id) -> bool {
+    return page_id == root_page_id_;
+  }
 };
 
 #define BPLUSTREE_TYPE BPlusTree<KeyType, ValueType, KeyComparator, NumTombs>
 
 // Main class providing the API for the Interactive B+ Tree.
 FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
+
 class BPlusTree {
   using InternalPage = BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>;
   using LeafPage = BPlusTreeLeafPage<KeyType, ValueType, KeyComparator, NumTombs>;
 
  public:
-  explicit BPlusTree(std::string name, page_id_t header_page_id, BufferPoolManager *buffer_pool_manager,
-                     const KeyComparator &comparator, int leaf_max_size = LEAF_PAGE_SLOT_CNT,
-                     int internal_max_size = InternalPage::Capacity(), bool duplicates = false, bool reopen = false);
+  explicit BPlusTree(std::string name,
+                     page_id_t header_page_id,
+                     BufferPoolManager* buffer_pool_manager,
+                     const KeyComparator& comparator,
+                     int leaf_max_size = LEAF_PAGE_SLOT_CNT,
+                     int internal_max_size = InternalPage::Capacity(),
+                     bool duplicates = false,
+                     bool reopen = false);
 
   // Returns true if this B+ tree has no keys and values.
   auto IsEmpty() const -> bool;
 
   // Insert a key-value pair into this B+ tree.
-  auto Insert(const KeyType &key, const ValueType &value) -> bool;
+  auto Insert(const KeyType& key, const ValueType& value) -> bool;
 
   // Remove a key and its value from this B+ tree.
-  void Remove(const KeyType &key);
+  void Remove(const KeyType& key);
 
   // Return all values associated with a given key (one in unique-key mode)
-  auto GetValue(const KeyType &key, std::vector<ValueType> *result) -> bool;
+  auto GetValue(const KeyType& key, std::vector<ValueType>* result) -> bool;
 
   // Return the page id of the root node
   auto GetRootPageId() -> page_id_t;
@@ -102,42 +110,52 @@ class BPlusTree {
 
   auto End() -> INDEXITERATOR_TYPE;
 
-  auto Begin(const KeyType &key) -> INDEXITERATOR_TYPE;
-  auto BeginAfter(const KeyType &key, const ValueType &value) -> INDEXITERATOR_TYPE;
+  auto Begin(const KeyType& key) -> INDEXITERATOR_TYPE;
+  auto BeginAfter(const KeyType& key, const ValueType& value) -> INDEXITERATOR_TYPE;
 
+  void Print(BufferPoolManager* bpm);
 
-  void Print(BufferPoolManager *bpm);
-
-  void Draw(BufferPoolManager *bpm, const std::filesystem::path &outf);
+  void Draw(BufferPoolManager* bpm, const std::filesystem::path& outf);
 
   auto DrawBPlusTree() -> std::string;
 
   // read data from file and insert one by one
-  void InsertFromFile(const std::filesystem::path &file_name);
+  void InsertFromFile(const std::filesystem::path& file_name);
 
   // read data from file and remove one by one
-  void RemoveFromFile(const std::filesystem::path &file_name);
+  void RemoveFromFile(const std::filesystem::path& file_name);
 
-  void BatchOpsFromFile(const std::filesystem::path &file_name);
+  void BatchOpsFromFile(const std::filesystem::path& file_name);
 
   // Do not change this type to a BufferPoolManager!
   std::shared_ptr<TracedBufferPoolManager> bpm_;
 
  private:
   bool duplicates_;
-  auto Tie(const ValueType &value) const -> uint64_t { return duplicates_ ? static_cast<uint64_t>(value.Get()) : 0; }
-  auto Compare(const KeyType &a, uint64_t av, const KeyType &b, uint64_t bv) const -> int {
-    auto c = comparator_(a, b); if (c != 0 || !duplicates_) { return c; } return av < bv ? -1 : (av > bv ? 1 : 0);
-  }
-  auto Child(const InternalPage *page, const KeyType &key, uint64_t tie) const -> int;
-  auto Position(const LeafPage *page, const KeyType &key, uint64_t tie, bool strict = false) const -> int;
-  auto OptimisticLeaf(const KeyType &key, uint64_t tie, bool inserting) -> std::optional<WritePageGuard>;
-  auto Seek(const KeyType *key, uint64_t tie, bool strict) -> INDEXITERATOR_TYPE;
-  auto InsertLeaf(LeafPage *leaf, const KeyType &key, const ValueType &value) -> bool;
-  void SplitLeaf(LeafPage *leaf, LeafPage *right, const KeyType &key, const ValueType &value);
-  void ToGraph(page_id_t page_id, const BPlusTreePage *page, std::ofstream &out);
 
-  void PrintTree(page_id_t page_id, const BPlusTreePage *page);
+  auto Tie(const ValueType& value) const -> uint64_t {
+    return duplicates_ ? static_cast<uint64_t>(value.Get()) : 0;
+  }
+
+  auto Compare(const KeyType& a, uint64_t av, const KeyType& b, uint64_t bv) const -> int {
+    auto c = comparator_(a, b);
+    if (c != 0 || !duplicates_) {
+      return c;
+    }
+    return av < bv ? -1 : (av > bv ? 1 : 0);
+  }
+
+  auto Child(const InternalPage* page, const KeyType& key, uint64_t tie) const -> int;
+  auto Position(const LeafPage* page, const KeyType& key, uint64_t tie, bool strict = false) const
+      -> int;
+  auto OptimisticLeaf(const KeyType& key, uint64_t tie, bool inserting)
+      -> std::optional<WritePageGuard>;
+  auto Seek(const KeyType* key, uint64_t tie, bool strict) -> INDEXITERATOR_TYPE;
+  auto InsertLeaf(LeafPage* leaf, const KeyType& key, const ValueType& value) -> bool;
+  void SplitLeaf(LeafPage* leaf, LeafPage* right, const KeyType& key, const ValueType& value);
+  void ToGraph(page_id_t page_id, const BPlusTreePage* page, std::ofstream& out);
+
+  void PrintTree(page_id_t page_id, const BPlusTreePage* page);
 
   auto ToPrintableBPlusTree(page_id_t root_id) -> PrintableBPlusTree;
 
@@ -165,18 +183,18 @@ struct PrintableBPlusTree {
    *
    * @param out_buf
    */
-  void Print(std::ostream &out_buf) {
-    std::vector<PrintableBPlusTree *> que = {this};
+  void Print(std::ostream& out_buf) {
+    std::vector<PrintableBPlusTree*> que = {this};
     while (!que.empty()) {
-      std::vector<PrintableBPlusTree *> new_que;
+      std::vector<PrintableBPlusTree*> new_que;
 
-      for (auto &t : que) {
+      for (auto& t : que) {
         int padding = (t->size_ - t->keys_.size()) / 2;
         out_buf << std::string(padding, ' ');
         out_buf << t->keys_;
         out_buf << std::string(padding, ' ');
 
-        for (auto &c : t->children_) {
+        for (auto& c : t->children_) {
           new_que.push_back(&c);
         }
       }
