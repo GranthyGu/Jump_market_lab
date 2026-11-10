@@ -69,6 +69,16 @@ target_compile_options(bpt_cache_concurrency_benchmark PRIVATE -Wall -Wextra -Wp
 add_test(NAME bpt_cache_control_correctness
   COMMAND bpt_cache_concurrency_benchmark "${CMAKE_BINARY_DIR}/bpt-cache-control-results" verify)
 set_tests_properties(bpt_cache_control_correctness PROPERTIES TIMEOUT 180 LABELS "bpt;concurrency;correctness")
+option(MARKETLAB_BUILD_SQLITE_BENCHMARK "Build the optional SQLite index comparison (tests only)" OFF)
+if(MARKETLAB_BUILD_SQLITE_BENCHMARK)
+  find_package(SQLite3 REQUIRED)
+  add_executable(bpt_sqlite_benchmark bpt/sqlite_benchmark.cpp)
+  target_link_libraries(bpt_sqlite_benchmark PRIVATE marketlab_bpt marketlab_order_link SQLite::SQLite3)
+  target_compile_options(bpt_sqlite_benchmark PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME bpt_sqlite_comparison_correctness
+    COMMAND bpt_sqlite_benchmark "${CMAKE_BINARY_DIR}/bpt-sqlite-verify" verify 12000 300)
+  set_tests_properties(bpt_sqlite_comparison_correctness PROPERTIES TIMEOUT 90 LABELS "bpt;correctness")
+endif()
 add_executable(trade_history_tests bpt/history.cpp)
 target_link_libraries(trade_history_tests PRIVATE marketlab_matching_core)
 add_test(NAME trade_history_correctness COMMAND trade_history_tests "${CMAKE_BINARY_DIR}/history-results")
@@ -97,3 +107,10 @@ target_link_libraries(trade_history_benchmark PRIVATE marketlab_matching_core)
 add_executable(persistence_recovery_audit EXCLUDE_FROM_ALL recovery/recovery_audit.cpp)
 target_link_libraries(persistence_recovery_audit PRIVATE marketlab_matching_core)
 target_compile_options(persistence_recovery_audit PRIVATE -Wall -Wextra -Wpedantic)
+
+# Build standalone checks/experiments alongside all ordinary default targets.
+add_custom_target(test_extras DEPENDS persistence_benchmarks
+  snapshot_contention_benchmark trade_history_benchmark persistence_recovery_audit)
+add_test(NAME test_runner_correctness
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/runner/test_run_all.py")
+set_tests_properties(test_runner_correctness PROPERTIES TIMEOUT 30 LABELS "runner;correctness")

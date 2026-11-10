@@ -62,10 +62,12 @@ disabled by the normal `./src/scripts/build.sh` build. Shared settings formerly
 in `src/cmake/MarketLab.cmake` are now integrated into `src/CMakeLists.txt`.
 Runtime prompts and log messages use English.
 
-The four presentation test suites (gateway, publisher, engine, and integration)
-are described in [tests/README.md](tests/README.md). Build them once with
-`./tests/build.sh`, then run `./tests/run_all.sh` or a component's `run.sh`.
-Each run saves correctness results, raw latency samples, metrics and logs.
+The component, recovery, trade-history and planned-restart tests are described in
+[tests/README.md](tests/README.md). Build all local targets with `./tests/build.sh`,
+then run `./tests/run_all.sh` for all regressions, standalone benchmarks, CMU tests
+and the fault audit. Use `--regression-only` for CTest regressions or `--quick` to
+reduce standalone benchmark workloads. Each run saves a summary and individual
+logs; failed tests and audit findings produce a nonzero exit code.
 
 ## Project objective
 

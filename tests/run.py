@@ -36,7 +36,7 @@ def main():
                         help="Directory containing demo_*_tests and service executables; a CMake build root also works")
     parser.add_argument("--output", type=Path, default=ROOT / "build/demo-results",
                         help="Parent of a fresh result directory; previous results are preserved")
-    parser.add_argument("--scale", type=int, choices=(1, 2, 3), default=1,
+    parser.add_argument("--scale", type=int, choices=(1, 2, 3), default=int(os.environ.get("MARKETLAB_TEST_SCALE", "1")),
                         help="Multiply request counts/query time; products <= 2000 and shards <= 32 remain fixed")
     parser.add_argument("--timeout", type=int, default=150, help="Per-suite deadline in seconds")
     args = parser.parse_args()
@@ -52,7 +52,7 @@ def main():
     missing = [str(binaries / name) for name in needed if not os.access(binaries / name, os.X_OK)]
     if missing:
         parser.error("Missing compiled executables:\n" + "\n".join(missing) + "\nBuild once with ./tests/build.sh, then rerun this script.")
-    args.output = args.output.resolve()
+    args.output = Path(os.environ.get("MARKETLAB_TEST_OUTPUT_ROOT", args.output)).resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
     directory = Path(tempfile.mkdtemp(prefix=stamp, dir=args.output))

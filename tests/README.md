@@ -1,41 +1,41 @@
-# 现场演示测试
+# 测试与统一运行
 
-四个目录分别对应 Gateway、Publisher、Engine 和全链路。它们是根据当前接口重新实现的测试，不调用旧测试程序、旧 fixture 或旧参考模型。根目录的 `harness.hpp`、`network.hpp` 只为这四套新测试提供结果记录、进程管理和网络驱动。
+测试包含组件演示、持久化恢复、成交历史查询、计划内重启，以及独立性能实验和故障审计。Gateway、Publisher、Engine 和全链路四套组件测试共用根目录的 `harness.hpp`、`network.hpp`，由它们提供结果记录、进程管理和网络驱动。
 
-## 一次编译，现场直接运行
-
-在仓库根目录执行一次：
+## 构建与统一运行
 
 ```sh
 ./tests/build.sh
-```
-
-生成服务程序、四个展示套件、`snapshot_mailbox_tests` 及两个持久化恢复测试程序到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、POSIX 网络接口和 Python 3；Python 只使用标准库。普通 `src/scripts/build.sh` 继续只编译日常程序，演示测试使用上面的独立构建目录。
-
-现场运行全部：
-
-```sh
 ./tests/run_all.sh
 ```
 
-也可以单独运行任意部分：
+`build.sh` 编译所有本地回归、正式服务、`gateway_client`、SQLite 对照和独立性能/审计程序，输出到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、Python 3、SQLite 开发库及 POSIX 网络接口；SQLite 仅用于测试。
+
+`run_all.sh` 默认执行 **所有已注册 CTest + 9 个独立测试/实验组**，按顺序运行，避免性能实验相互干扰。CTest 清单动态读取，新增已注册测试会自动纳入。某项失败、未构建或超时不会被忽略，也不会阻止后续项目运行；最终返回非零。
 
 ```sh
+./tests/run_all.sh --list                  # 仅显示完整清单与命令
+./tests/run_all.sh --quick                 # 全部项目；缩小独立性能实验的负载
+./tests/run_all.sh --regression-only       # 仅 CTest 日常回归
+./tests/run_all.sh --verbose               # 同时向终端输出每项完整日志
+./tests/run_all.sh --build-dir build/demo-tests --output build/my-test-results
+```
+
+`--quick` 不删减测试项目，不缩小 CTest 内的正确性场景；它将独立性能实验减至一轮并缩小数据量，不能作为正式性能成绩。`--regression-only` 明确排除的项目会列入报告。默认完整性能实验使用各实验原有的正式参数，耗时明显长于原来的四套演示。
+
+本地测试需要先构建；CMU 组首次运行会下载固定版本 BusTub，再构建上游测试和 benchmark，需要网络及上游构建依赖。可用 `--cmu-source PATH` 指定已有的固定版本源码，`--jobs N` 控制 CMU 编译并行度。下载或构建失败会报告失败，不会悄悄跳过。`run_all.sh` 不提交官方排行榜。
+
+`--build-dir` 接受 CMake 构建目录或其 `bin/`；相对路径以调用时的目录解释。`--scale 1/2/3` 控制四套组件演示的负载。默认超时按各项目分别设置；`--timeout SECONDS` 可覆盖统一入口的外层时限，CTest 自身时限仍生效。
+
+原来的四套组件演示仍可独立运行：
+
+```sh
+python3 tests/run.py all
 ./tests/gateway/run.sh
 ./tests/publisher/run.sh
 ./tests/engine/run.sh
 ./tests/integration/run.sh
 ```
-
-脚本只运行已编译程序，不会现场配置 CMake、安装依赖或重新编译。可以从其他工作目录通过绝对路径启动脚本。自定义参数：
-
-```sh
-./tests/run_all.sh --build-dir build/demo-tests --output build/my-demo-results
-./tests/gateway/run.sh --scale 2
-./tests/run_all.sh --help
-```
-
-`--build-dir` 接受 CMake 构建目录或其中的 `bin/`；相对路径以调用时的工作目录解释。默认 `--scale 1`；2 或 3 只增加请求数量、部分压力持续时间，商品数量始终不超过 2000，分片始终不超过 32。默认面向约两分钟内的完整演示，不是硬实时运行时限。慢机器的耗时可能增加。`--timeout` 默认每套 150 秒，超时返回失败并终止本次测试进程组。
 
 ## 测试范围
 
@@ -45,38 +45,52 @@
 | [publisher](publisher/README.md) | 全品种每秒发布、净增量、空增量、三接收端一致性、周期快照、来源故障 | 同样五组规模；并发 TCP 查询与组播接收同时进行 |
 | [engine](engine/README.md) | 独立参考模型核对撮合、撤单、用户快照、五档；并发读取 | 16/1000/2000 商品、新单撤单、64 单扫单和自成交 |
 | [integration](integration/README.md) | 真实交易与公开行情一致、双方成交、跨片快照、丢包恢复和重启 | 64 商品/2 分片与默认规模 1000 商品/4 分片，交易、采样、组播和查询同时运行 |
-| [recovery](recovery/README.md) | 双日志通知屏障、FIFO 恢复、快照发布/清理、容量等待、单边写入崩溃、kill -9 与 publisher | 正确性验证，不设置吞吐指标 |
+| [recovery](recovery/README.md) | 双日志通知屏障、FIFO 恢复、快照/增量一致性、写失败与 kill -9；独立故障审计 | bench 子目录包含队列与分片性能对照 |
+| [bpt](bpt/) | 索引、缓存、并发、成交历史 API/CLI、重启、CMU 公开测试 | 缓存/并发、SQLite、完整成交历史与恢复性能 |
+| [restart](restart/README.md) | 复制、A→B→A、请求完整性、FIFO、历史连续性、切换失败回退 | 切换暂停、排队及客户端延迟 |
+| [runner](runner/) | 新 CTest 自动纳入、失败后继续、缺失程序报错、超时终止进程组 | 不设性能指标 |
 
 网络测试启动真实组件子进程，并使用新生成的隔离配置及动态 loopback 端口，不依赖手工启动服务，不占用默认 7001/9100。服务日志和本次配置保留在结果目录；正常结束、用例异常及脚本超时都有清理路径。动态端口在启动前释放，存在常见的端口被外部进程抢占窗口；发生时结果会明确失败，重新运行即可。
 
 ## 结果怎么读
 
-启动时打印 `RESULT_DIR=...`，每次创建新目录，不覆盖上次演示：
+统一入口打印 `RESULT_DIR=...`，每次创建新的结果目录：
 
 ```text
-build/demo-results/日期时间-随机后缀/
-  report.md                 # 全部用例、性能表和计时口径
-  summary.json              # 总结果、平台、编译器、退出码和错误详情
-  gateway/                  # 单独运行时只有被选择的目录
-    console.log             # 现场终端输出的副本
-    suite.json              # 每个 case 的结果和指标
-    metrics.csv             # 吞吐、mean/p50/p95/p99/max
-    samples.csv             # 每个延迟原始样本，单位微秒
-    .../                    # 隔离配置、gateway/engine/publisher 日志
+build/test-results/日期时间-随机后缀/
+  report.md                 # 每个测试/实验组的状态与日志链接
+  summary.json              # 选中清单、命令、退出码、超时和显式排除项目
+  demo_gateway/
+    console.log
+    ctest.xml
+    artifacts/              # 原组件报告、配置及性能样本
+  bpt_cache_concurrency_comparison/
+    console.log
+    artifacts/              # 每轮原始结果和汇总
+    data/
 ```
 
-任何断言失败、缺失响应、异常退出或超时，脚本返回非零；单个用例失败仍会继续其他用例，运行全部时也会继续后续组件。终端同时打印每组压力的校验计数。PASS 表示相应测试中的检查全部通过，不表示所有可能负载或故障都已验证。
+CTest 内部测试可能继续把持久化数据写入构建目录下的原结果路径，具体见保存的命令与日志。四套组件的详细报告保持原格式；独立实验的原始结果保存在各组 `artifacts/` 中。`NOT RUN` 表示中断前尚未执行，不能视为通过。
 
-分位数从原始样本按 nearest-rank 计算，不平均多个 p99。性能是观测值，没有人为设置吞吐或低延迟门槛。必须结合报告内的 `boundary` 阅读：核心命令耗时、完整 TCP RTT、Publisher 发布一轮耗时和 UDP 到达年龄不是同一指标。并发压力是有限请求窗口的闭环负载，不能当作开放式无限发单容量。
+`persistence_recovery_audit` 专门检查已确认数据丢失、文件缺失及损坏等保护缺口；发现缺口时会失败，并使全量运行返回非零。它的失败不能改记为预期通过。
 
-## CTest 与旧报告
+测试使用隔离数据和本机动态端口，不依赖手工启动服务。网络项目需要允许本机 TCP/UDP。性能数据应结合各实验的计时范围阅读；不把核心耗时、TCP RTT、发布耗时和恢复时间混为同一指标。
 
-CMake 注册四套演示测试 `demo_gateway`、`demo_publisher`、`demo_engine`、`demo_integration`，六个邮箱生命周期用例组成的 `snapshot_mailbox`，以及 `persistence_correctness` 和 `recovery_process`。`run_all.sh` 运行四套演示，下面的 CTest 命令运行全部七项：
+## CTest 与独立项目
+
+当前启用 SQLite 时注册 16 项 CTest（含统一入口自身的正确性测试）；以 `./tests/run_all.sh --list` 的实时清单为准：
+
+- 四套组件演示、快照邮箱。
+- 持久化正确性、优化及真实进程恢复。
+- BPT 并发压力、缓存控制、SQLite 对照正确性、历史查询及真实 API/CLI。
+- 计划内重启、复制正确性、统一入口的失败传播与超时清理。
+
+9 个独立组：两种 SPSC 队列的恢复检查、队列性能对照、快照竞争、成交历史性能、BPT 缓存/并发对照、SQLite 性能对照、CMU 公开测试与 benchmark、持久化故障审计。
+
+直接运行 CTest 只运行已注册回归，不包含上述独立组：
 
 ```sh
 ctest --test-dir build/demo-tests --output-on-failure
 ```
 
-另有按需构建的 C++ 压力程序 `snapshot_contention_benchmark`，用于比较原 mutex 与快照邮箱。它不加入日常演示计时；构建、工作负载与结果见 [撮合快照邮箱与延迟对比](../docs/matching_engine/SNAPSHOT_MAILBOX_DESIGN_AND_RESULTS.md)。
-
-旧测试源码、旧辅助代码和旧 benchmark 已被本套件替换。`docs/` 中此前的性能与验证文档属于历史记录，不能作为新测试已执行的证明；本次结果只以新的 `report.md` 和 `summary.json` 为准。测试按 Linux POSIX API 编写，本机执行结果会记录实际平台，macOS 结果不等于 Linux 或跨机器验收。
+历史文档中的结果不是本次通过的证明；当前结果以本次 `summary.json` 和原始日志为准。不同平台、编译模式和 sanitizer 构建需要分别验证，统一入口不会自动创建全部 sanitizer 构建。
