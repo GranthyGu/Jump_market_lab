@@ -185,6 +185,29 @@ auto BufferPoolManager::WritePage(page_id_t id, AccessType type) -> WritePageGua
   return std::move(*guard);
 }
 
+auto BufferPoolManager::EvictUnpinnedPages() -> size_t {
+  std::lock_guard lock(*bpm_latch_);
+  size_t evicted = 0;
+  for (auto it = page_table_.begin(); it != page_table_.end();) {
+    auto f = frames_[it->second];
+    if (f->pin_count_ != 0) {
+      ++it;
+      continue;
+    }
+    // With zero pins and the pool latch held, no guard can access this frame.
+    // Keep the mapping intact if a write fails so the caller can retry safely.
+    if (f->is_dirty_) {
+      IO(disk_scheduler_, true, it->first, f->GetDataMut());
+    }
+    replacer_->Remove(f->frame_id_);
+    it = page_table_.erase(it);
+    f->Reset();
+    free_frames_.push_back(f->frame_id_);
+    ++evicted;
+  }
+  return evicted;
+}
+
 auto BufferPoolManager::DeletePage(page_id_t id) -> bool {
   std::lock_guard lock(*bpm_latch_);
   auto it = page_table_.find(id);

@@ -133,6 +133,9 @@ class BufferPoolManager {
   auto FlushPage(page_id_t page_id) -> bool;
   void FlushAllPagesUnsafe();
   void FlushAllPages();
+  // Write dirty, unpinned pages and discard their resident mappings without deleting
+  // disk pages. Pinned pages remain usable. No fsync; callers own the sync boundary.
+  auto EvictUnpinnedPages() -> size_t;
   auto GetPinCount(page_id_t page_id) -> std::optional<size_t>;
 
   void SetNextPageId(page_id_t id) {

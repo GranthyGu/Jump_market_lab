@@ -84,6 +84,12 @@ class TradeIndex {
     file_.sync();
   }
 
+  // Explicit cache control for experiments; normal indexing never calls this.
+  // Call between operations to measure a tree with no cross-operation page reuse.
+  std::size_t evict_unpinned_pages() {
+    return pool_.EvictUnpinnedPages();
+  }
+
   PageFile::Metrics metrics() const {
     return file_.metrics();
   }
