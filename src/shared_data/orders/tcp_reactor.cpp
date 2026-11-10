@@ -92,7 +92,8 @@ void TcpReactor::listen(const Address& address, Framing framing, std::size_t lim
 void TcpReactor::watch(const Peer& p, bool add) {
 #ifdef __linux__
   epoll_event event{};
-  event.events = EPOLLIN | (p.connecting || p.sent < p.output.size() ? EPOLLOUT : 0);
+  event.events =
+      (p.read_enabled ? EPOLLIN : 0) | (p.connecting || p.sent < p.output.size() ? EPOLLOUT : 0);
   event.data.u64 = p.id;
   if (epoll_ctl(poller_, add ? EPOLL_CTL_ADD : EPOLL_CTL_MOD, p.fd, &event) < 0)
     throw std::runtime_error("epoll peer");
@@ -163,6 +164,15 @@ void TcpReactor::close(ConnectionId id) {
     on_close(id);
 }
 
+void TcpReactor::enable_reads(ConnectionId id, bool enabled) {
+  if (auto p = peer(id)) {
+    p->read_enabled = enabled;
+    if (p->partial_since != Clock::time_point{})
+      p->partial_since = Clock::now();
+    watch(*p, false);
+  }
+}
+
 bool TcpReactor::send(ConnectionId id, std::span<const std::uint8_t> bytes) {
   auto p = peer(id);
   if (!p)
@@ -221,7 +231,7 @@ void TcpReactor::flush(const std::shared_ptr<Peer>& p) {
 void TcpReactor::receive(const std::shared_ptr<Peer>& p) {
   std::array<std::uint8_t, 16384> buffer{};
   std::size_t total = 0;
-  while (p->fd >= 0 && total < io_budget) {
+  while (p->fd >= 0 && p->read_enabled && total < io_budget) {
     const auto n = recv(p->fd, buffer.data(), buffer.size(), 0);
     if (n < 0 && errno == EINTR)
       continue;
@@ -307,10 +317,10 @@ void TcpReactor::step(int timeout_ms) {
     ids.push_back(wakeup_event - i);
   }
   for (const auto& [id, p] : peers_) {
-    fds.push_back(
-        {p->fd,
-         static_cast<short>(POLLIN | (p->connecting || p->sent < p->output.size() ? POLLOUT : 0)),
-         0});
+    fds.push_back({p->fd,
+                   static_cast<short>((p->read_enabled ? POLLIN : 0) |
+                                      (p->connecting || p->sent < p->output.size() ? POLLOUT : 0)),
+                   0});
     ids.push_back(id);
   }
   if (poll(fds.data(), fds.size(), timeout_ms) < 0 && errno != EINTR)
@@ -367,7 +377,7 @@ void TcpReactor::step(int timeout_ms) {
       if (on_connect)
         on_connect(id);
     }
-    if (p->fd >= 0 && (flags & POLLIN))
+    if (p->fd >= 0 && p->read_enabled && (flags & POLLIN))
       receive(p);
     if (p->fd >= 0 && (flags & POLLOUT))
       flush(p);
@@ -381,7 +391,7 @@ void TcpReactor::expire() {
   std::vector<ConnectionId> expired;
   for (const auto& [id, p] : peers_) {
     if ((p->connecting && now - p->last_receive > std::chrono::seconds(1)) ||
-        (p->partial_since != Clock::time_point{} &&
+        (p->read_enabled && p->partial_since != Clock::time_point{} &&
          now - p->partial_since > std::chrono::milliseconds(partial_timeout_ms_)) ||
         (p->sent < p->output.size() &&
          now - p->last_progress > std::chrono::milliseconds(partial_timeout_ms_)))

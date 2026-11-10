@@ -1,5 +1,4 @@
 #include "gateway/gateway.hpp"
-#include "gateway/net/order_router.hpp"
 #include "shared_data/paths.hpp"
 #include <atomic>
 #include <cerrno>
@@ -17,10 +16,10 @@ void signal_handler(int) {
   interrupted = 1;
 }
 
-int run_legacy_shard(int argc, char** argv) {
+int run_legacy_engine(int argc, char** argv, const std::string& name) {
   // Keep the old command as a process launcher, without linking engine business
   // code into the gateway. Standalone engine builds can live in another folder.
-  const auto binary = std::filesystem::canonical(argv[0]).parent_path() / "market_matching_engine";
+  const auto binary = std::filesystem::canonical(argv[0]).parent_path() / name;
   std::string executable = binary.string();
   std::vector<char*> arguments{executable.data()};
   for (int i = 2; i < argc; ++i)
@@ -50,8 +49,10 @@ int main(int argc, char** argv) {
     }
     const std::string role = argv[1];
     if (role == "shard")
-      return run_legacy_shard(argc, argv);
-    if (role != "gateway" && role != "router")
+      return run_legacy_engine(argc, argv, "market_matching_engine");
+    if (role == "router")
+      return run_legacy_engine(argc, argv, "market_engine_router");
+    if (role != "gateway")
       throw std::runtime_error("Unknown role");
     std::string path = marketlab::default_exchange_config, stats;
     bool trace = false;
@@ -83,8 +84,6 @@ int main(int argc, char** argv) {
     try {
       if (role == "gateway")
         run_gateway(config, stop, stats);
-      else if (role == "router")
-        run_order_router(config, stop, stats);
     } catch (...) {
       done.store(true);
       signals.join();

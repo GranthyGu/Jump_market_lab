@@ -396,13 +396,69 @@ void DurableEngine::drain() {
 
 void DurableEngine::request_checkpoint() {
   check_error();
-  if (cut_ || executed_ <= checkpoint_seq_)
+  if (checkpoints_frozen_ || cut_ || executed_ <= checkpoint_seq_)
     return;
   cut_ = std::make_unique<Cut>();
   cut_->seq = executed_;
   if (!order_queue_.push({nullptr, cut_.get()}))
     check_error();
   service_checkpoint();
+}
+
+bool DurableEngine::idle() const {
+  return pending_.empty() && queries_.empty() && !history_->pending() &&
+         history_->caught_up(boundary_.trade_end);
+}
+
+void DurableEngine::replicate(const Frame& orders, const std::optional<Frame>& trades) {
+  if (orders.kind != Kind::Orders || orders.boundary.seq != executed_ + 1 ||
+      orders.boundary.next_order < working_.next_order() ||
+      orders.boundary.next_trade != working_.next_trade() + orders.trades ||
+      bool(trades) != bool(orders.trades))
+    throw std::runtime_error("Replication sequence/counter gap");
+  if (trades && (trades->kind != Kind::Trades || trades->boundary.seq != orders.boundary.seq ||
+                 trades->count != orders.trades || trades->trades != orders.trades ||
+                 trades->boundary.next_order != orders.boundary.next_order ||
+                 trades->boundary.next_trade != orders.boundary.next_trade))
+    throw std::runtime_error("Replication parallel-log mismatch");
+  while (pending_.size() >= options_.pending_slots ||
+         pending_bytes_ > options_.pending_bytes - options_.command_bytes) {
+    wait_progress();
+    poll();
+  }
+  auto batch = std::make_unique<Batch>();
+  batch->b = orders.boundary;
+  batch->result.limit = options_.command_bytes;
+  Reader reader{orders.payload};
+  for (std::uint32_t i = 0; i < orders.count; ++i) {
+    Change change;
+    const auto kind = reader.number(1);
+    if (kind == 0) {
+      change.erase = true;
+      change.order.id = reader.number(8);
+    } else if (kind == 1) {
+      change.order = storage_.dictionary().compact(decode_order(reader));
+    } else {
+      throw std::runtime_error("Invalid replicated delta");
+    }
+    batch->result.add(batch->result.changes, change);
+  }
+  reader.finish();
+  if (trades) {
+    Reader tr{trades->payload};
+    for (std::uint32_t i = 0; i < trades->count; ++i)
+      batch->result.add(batch->result.trades, decode_trade(tr));
+    tr.finish();
+  }
+  working_.replicate(batch->result.changes, storage_.dictionary(), batch->b);
+  auto* handle = batch.get();
+  pending_bytes_ += batch->result.bytes();
+  pending_.push_back(std::move(batch));
+  if (!trade_queue_.push({handle, nullptr}) || !order_queue_.push({handle, nullptr})) {
+    check_error();
+    throw std::runtime_error("Replication writer stopped");
+  }
+  ++executed_;
 }
 
 void DurableEngine::wait_checkpoint() {

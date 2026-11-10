@@ -24,6 +24,17 @@ class DurableEngine final : public EngineBackend {
   void request_checkpoint();
   void wait_checkpoint();
 
+  void freeze_checkpoints(bool frozen) {
+    checkpoints_frozen_ = frozen;
+  }
+
+  bool checkpoints_frozen() const {
+    return checkpoints_frozen_ && !cut_;
+  }
+
+  bool idle() const;
+  void replicate(const Frame& orders, const std::optional<Frame>& trades);
+
   std::size_t symbol_count() const noexcept override {
     return committed_.symbol_count();
   }
@@ -97,6 +108,7 @@ class DurableEngine final : public EngineBackend {
   std::unique_ptr<Cut> cut_;
   std::unique_ptr<Snapshot> snapshot_;
   bool snapshot_sent_ = false;
+  bool checkpoints_frozen_ = false;
   std::atomic<std::uint64_t> delta_bytes_{0};
   std::atomic_bool failed_{false};
   std::mutex completion_mutex_;

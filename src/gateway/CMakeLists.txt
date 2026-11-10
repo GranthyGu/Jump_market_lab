@@ -4,7 +4,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 include(../CMakeLists.txt)
 
-add_library(marketlab_gateway STATIC gateway.cpp net/order_router.cpp)
+add_library(marketlab_gateway STATIC gateway.cpp)
 target_link_libraries(marketlab_gateway PUBLIC marketlab_order_link)
 add_executable(market_gateway main.cpp)
 target_link_libraries(market_gateway PRIVATE marketlab_gateway)

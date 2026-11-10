@@ -8,6 +8,7 @@
 #include "matching_engine/active_index.hpp"
 #include "matching_engine/backend.hpp"
 #include "matching_engine/persistence/model.hpp"
+#include "matching_engine/persistence/order_dictionary.hpp"
 #include "shared_data/orders/config.hpp"
 
 namespace marketlab::orders {
@@ -18,6 +19,10 @@ class MatchingEngine final : public EngineBackend {
   void restore(std::span<const persistence::StoredOrder>,
                std::uint64_t next_order,
                std::uint64_t next_trade);
+  // Apply authoritative final state without matching again or emitting events.
+  void replicate(std::span<const persistence::Change>,
+                 const persistence::OrderDictionary&,
+                 const persistence::Boundary&);
 
   std::uint64_t next_order() const {
     return next_order_;

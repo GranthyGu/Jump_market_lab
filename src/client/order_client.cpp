@@ -177,7 +177,7 @@ class Console {
       throw std::runtime_error("Request IDs exhausted");
     value.header = {type, sizeof(T), next_++};
     waiting_ = value.header.requestId;
-    deadline_ = md::Clock::now() + std::chrono::seconds(10);
+    deadline_ = md::Clock::now() + std::chrono::seconds(35);
     md::send_all(fd_.get(), record_bytes(value), deadline_);
     std::cout << "SENT requestId=" << waiting_ << " sentAtNs=" << unix_ns() << '\n';
   }

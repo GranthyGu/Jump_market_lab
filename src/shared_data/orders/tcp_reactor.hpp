@@ -24,6 +24,7 @@ class TcpReactor {
     int fd;
     Framing framing;
     bool connecting = false;
+    bool read_enabled = true;
     Bytes input, output;
     std::size_t consumed = 0, sent = 0;
     Clock::time_point last_receive = Clock::now(), last_progress = Clock::now();
@@ -40,6 +41,7 @@ class TcpReactor {
   ConnectionId connect(const Address& address, Framing framing);
   bool send(ConnectionId id, std::span<const std::uint8_t> bytes);
   void close(ConnectionId id);
+  void enable_reads(ConnectionId id, bool enabled);
 
   bool contains(ConnectionId id) const {
     return peers_.contains(id);

@@ -9,10 +9,22 @@ Implementation layout, file migration records, and independent component builds:
 The default C++ deployment runs four independent matching-engine processes for
 1,000 symbols, with 250 symbols per shard. Symbol ID `n` belongs to shard
 `1 + (n - 1) % 4`. The gateway serves concurrent clients over one persistent
-order connection per shard (TCP 7201–7204); each shard processes orders in
-sequence to preserve price-time priority. The publisher samples all four shards
-in parallel over TCP 9201–9204. Start all four with
+order connection to the matching-engine Router (TCP 7100). The Router connects
+to each active A/B instance; each shard processes orders in sequence to preserve
+price-time priority. The publisher samples stable Router endpoints TCP 9201–9204.
+Start the Router, maintenance controller, and all four active engines with
 `./src/scripts/run_matching_engine.sh`.
+
+Planned restarts work in both directions: `restart 1` in the matching-engine
+terminal switches shard 1 from A to B; the same command again switches B to a
+fresh A. Another terminal can use
+`./src/scripts/run_matching_engine.sh --command 'restart 1'`.
+Use `status` to inspect the group or `restart all` to maintain every shard in
+sequence. The launcher requires Python 3 (standard library only); trading remains
+in C++. Explicit ports are in [engine_cluster.json](src/config/engine_cluster.json).
+See the [restart design](docs/task2_recovery/09_planned_restart_router_design.md),
+[operations and measured results](docs/task2_recovery/10_planned_restart_implementation_and_results.md),
+and [restart tests](tests/restart/README.md).
 
 Each matching thread exclusively owns its live books. Market-data adapter threads
 request coherent snapshots through a bounded atomic mailbox; the matching thread

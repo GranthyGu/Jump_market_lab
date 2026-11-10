@@ -93,6 +93,12 @@ bool valid_link_record(std::span<const std::uint8_t> bytes) {
     case LinkKind::Ping:
     case LinkKind::Pong:
       return payload.empty();
+    case LinkKind::Drain:
+    case LinkKind::MaintenanceBegin:
+    case LinkKind::MaintenanceEnd:
+      return h.token && !h.user && !h.session && payload.empty();
+    case LinkKind::Drained:
+      return h.token && !h.user && !h.session && payload.size() == 40;
     case LinkKind::NewOrder:
       return h.user && h.token && h.session && payload.size() == sizeof(NewOrderRequest) &&
              valid_client_record(payload, true) &&

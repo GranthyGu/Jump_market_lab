@@ -6,3 +6,4 @@
 /data/
 /.vscode
 /src/.clang-format
+__pycache__/

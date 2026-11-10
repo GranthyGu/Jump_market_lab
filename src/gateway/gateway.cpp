@@ -30,6 +30,8 @@ class Gateway {
     clients.reserve(c.max_connections);
     io.on_accept = [&](auto id) {
       clients.emplace(id, Client{});
+      if (maintenance)
+        io.enable_reads(id, false);
     };
     io.on_connect = [&](auto id) {
       links.connected(id);
@@ -44,6 +46,30 @@ class Gateway {
         request(id, bytes);
     };
     links.on_message = [&](auto id, const auto& h, auto bytes) {
+      if (!c.direct &&
+          (h.kind == LinkKind::MaintenanceBegin || h.kind == LinkKind::MaintenanceEnd)) {
+        const bool pause = h.kind == LinkKind::MaintenanceBegin;
+        if (pause && !maintenance)
+          maintenance_started = Clock::now();
+        if (!pause && maintenance) {
+          const auto elapsed = Clock::now() - maintenance_started;
+          for (auto& [token, p] : pending) {
+            (void)token;
+            p.deadline += elapsed;
+          }
+          for (auto& [client_id, client] : clients) {
+            (void)client_id;
+            client.opened += elapsed;
+          }
+        }
+        maintenance = pause;
+        for (const auto& [client_id, client] : clients) {
+          (void)client;
+          io.enable_reads(client_id, !pause);
+        }
+        std::cout << (pause ? "GATEWAY_RESTART_PAUSE" : "GATEWAY_RESTART_RESUME") << std::endl;
+        return;
+      }
       event(id, h, bytes);
     };
     links.on_ready = [&](auto) {
@@ -82,16 +108,19 @@ class Gateway {
         io.expire();
         std::vector<ConnectionId> expired;
         for (const auto& [id, client] : clients) {
-          if (!client.user && now - client.opened > std::chrono::milliseconds(c.request_timeout_ms))
+          if (!maintenance && !client.user &&
+              now - client.opened > std::chrono::milliseconds(c.request_timeout_ms))
             expired.push_back(id);
         }
         for (const auto& [token, p] : pending) {
           (void)token;
-          if (now > p.deadline)
+          if (!maintenance && now > p.deadline)
             expired.push_back(p.session);
         }
         for (auto id : expired)
           io.close(id);
+        if (maintenance && now - maintenance_started > std::chrono::seconds(30))
+          io.close(engines.front().connection);
         last_tick = now;
       }
     }
@@ -141,6 +170,8 @@ class Gateway {
   std::unordered_map<std::string, std::size_t> routes;
   std::uint64_t sequence, commands = 0, engine_frames = 0, events = 0, logins = 0, replaced = 0;
   std::size_t peak_pending = 0;
+  bool maintenance = false;
+  Clock::time_point maintenance_started{};
   std::unordered_map<std::string, std::uint32_t> usernames;
   std::vector<ConnectionId> online;
   std::unordered_map<ConnectionId, Client> clients;
@@ -156,6 +187,7 @@ class Gateway {
   void closed(ConnectionId id) {
     const auto engine = backend.find(id);
     if (engine != backend.end()) {
+      maintenance = false;
       links.lost(id);
       engines[engine->second].connection = 0;
       backend.erase(engine);

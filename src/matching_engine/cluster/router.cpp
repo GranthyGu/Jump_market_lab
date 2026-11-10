@@ -1,17 +1,24 @@
-#include "gateway/net/order_router.hpp"
+#include "matching_engine/cluster/router.hpp"
+#include "matching_engine/cluster/rpc.hpp"
+#include "matching_engine/persistence/codec.hpp"
 #include "shared_data/orders/engine_connections.hpp"
+#include <deque>
 #include <fstream>
+#include <sstream>
 
 namespace marketlab::orders {
 namespace {
 class Router {
  public:
-  explicit Router(const OrderConfig& config)
+  explicit Router(const OrderConfig& config,
+                  std::uint16_t admin_port,
+                  const std::string& market_routes)
       : c(config),
         io(c.max_buffer_bytes, c.partial_timeout_ms),
         links(io, c) {
     for (std::size_t i = 0; i < c.shards.size(); ++i) {
       shards.push_back({});
+      shards.back().address = c.shards[i].address;
       shard_index.emplace(c.shards[i].id, i);
     }
     for (const auto& p : c.products)
@@ -38,10 +45,20 @@ class Router {
       return true;
     };
     links.on_ready = [&](auto id) {
-      if (!backend.contains(id)) {
+      if (backend.contains(id)) {
+        auto& shard = shards[backend.at(id)];
+        if (shard.stage == "connecting") {
+          if (shard.market)
+            shard.market->port.store(shard.next_market);
+          shard.stage = "flushing";
+        }
+      } else {
         if (front && front != id)
           io.close(front);
         front = id;
+        for (const auto& shard : shards)
+          if (shard.stage != "active")
+            links.send(front, LinkKind::MaintenanceBegin, {0, {}, shard.cut_token, 0, 0}, {});
       }
     };
     links.on_message = [&](auto id, const auto& h, auto bytes) {
@@ -53,6 +70,15 @@ class Router {
         io.close(id);
     };
     io.listen(c.router_listen, Framing::Internal, 4 + c.shards.size());
+    if (admin_port) {
+      admin = std::make_unique<cluster::RpcServer>(admin_port);
+      io.watch_wakeup(admin->fd(), [&] {
+        service_admin();
+      });
+    }
+    start_market(market_routes);
+    std::cout << "ROUTER_LISTENING order=" << c.router_listen.port << " admin=" << admin_port
+              << " planned_restart=enabled" << std::endl;
   }
 
   void run(const std::atomic_bool& stop) {
@@ -62,7 +88,7 @@ class Router {
       for (std::size_t i = 0; i < shards.size(); ++i) {
         auto& shard = shards[i];
         if (!shard.connection && now >= shard.reconnect) {
-          shard.connection = io.connect(c.shards[i].address, Framing::Internal);
+          shard.connection = io.connect(shard.address, Framing::Internal);
           if (shard.connection) {
             backend.emplace(shard.connection, i);
             links.outgoing(shard.connection);
@@ -71,13 +97,19 @@ class Router {
         }
       }
       io.step(10);
+      service_admin();
+      for (auto& shard : shards)
+        flush_queued(shard);
       if (now - tick >= std::chrono::milliseconds(50)) {
         links.tick();
         io.expire();
         bool expired = false;
         for (const auto& [token, p] : pending) {
           (void)token;
-          if (now > p.deadline) {
+          const bool paused = std::any_of(shards.begin(), shards.end(), [](const auto& s) {
+            return s.stage != "active";
+          });
+          if (!paused && now > p.deadline) {
             expired = true;
             break;
           }
@@ -100,9 +132,29 @@ class Router {
   }
 
  private:
+  struct MarketRoute {
+    std::atomic<std::uint16_t> port{0};
+    const md::Epoch epoch = md::new_epoch();
+    std::unique_ptr<md::StopThread> thread;
+  };
+
+  struct Queued {
+    LinkHeader header;
+    Bytes bytes;
+  };
+
   struct Shard {
     ConnectionId connection = 0;
     Clock::time_point reconnect{};
+    Address address;
+    std::string stage = "active";
+    std::uint64_t cut_token = 0;
+    Bytes boundary;
+    std::deque<Queued> queued;
+    std::size_t queued_bytes = 0;
+    std::size_t peak_queued = 0, peak_bytes = 0;
+    std::shared_ptr<MarketRoute> market;
+    std::uint16_t next_market = 0;
   };
 
   struct Pending {
@@ -117,6 +169,7 @@ class Router {
   const OrderConfig& c;
   TcpReactor io;
   EngineLinks links;
+  std::unique_ptr<cluster::RpcServer> admin;
   ConnectionId front = 0;
   std::vector<Shard> shards;
   std::unordered_map<ConnectionId, std::size_t> backend;
@@ -125,11 +178,184 @@ class Router {
   std::unordered_map<std::uint64_t, Pending> pending;
   std::uint64_t commands = 0, events = 0, snapshot_ends = 0;
 
+  void start_market(const std::string& path) {
+    if (path.empty())
+      return;
+    std::ifstream input(path);
+    if (!input)
+      throw std::runtime_error("Cannot read market routes");
+    unsigned id, public_port, active_port;
+    while (input >> id >> public_port >> active_port) {
+      if (!public_port || public_port > 65535 || !active_port || active_port > 65535)
+        throw std::runtime_error("Invalid market route port");
+      auto route = std::make_shared<MarketRoute>();
+      route->port.store(active_port);
+      auto& shard = shards.at(shard_index.at(id));
+      shard.market = route;
+      md::ShardConfig source{"shard-" + std::to_string(id), "tcp", "127.0.0.1", 0, "", {}};
+      for (std::size_t i = 0; i < c.products.size(); ++i)
+        if (c.products[i].shard == id)
+          source.symbols.push_back(static_cast<std::uint16_t>(i + 1));
+      auto listener = md::listen_tcp("127.0.0.1", public_port);
+      // The owning Shard outlives the joining thread; don't capture shared_ptr
+      // here, which would form a cycle and leave the listener alive at shutdown.
+      route->thread = std::make_unique<md::StopThread>(
+          [state = route.get(), source, listener = std::move(listener)](const auto& stop) mutable {
+            std::unique_ptr<md::ShardSource> connection;
+            std::uint16_t connected = 0;
+            try {
+              md::serve_shard(
+                  std::move(listener),
+                  [&] {
+                    for (unsigned retry = 0; retry < 2; ++retry) {
+                      const auto port = state->port.load();
+                      if (port != connected) {
+                        source.port = port;
+                        connection = md::make_source(source, 1000);
+                        connected = port;
+                      }
+                      try {
+                        auto view =
+                            connection->read(md::Clock::now() + std::chrono::milliseconds(700));
+                        if (state->port.load() == port) {
+                          // The logical shard history continues through a planned
+                          // cut. Publisher epochs change only on router restart.
+                          view.epoch = state->epoch;
+                          return view;
+                        }
+                      } catch (...) {
+                        if (state->port.load() == port)
+                          throw;
+                      }
+                    }
+                    throw std::runtime_error("Market route changed during sample");
+                  },
+                  stop,
+                  5000,
+                  128);
+            } catch (const std::exception& e) {
+              std::cerr << "ROUTER_MARKET_FAILED " << e.what() << std::endl;
+            }
+          });
+    }
+  }
+
+  void service_admin() {
+    if (!admin)
+      return;
+    admin->service([&](auto bytes) -> std::optional<Bytes> {
+      std::istringstream input(std::string(bytes.begin(), bytes.end()));
+      std::string op;
+      unsigned id = 0;
+      input >> op;
+      if (op == "status") {
+        std::ostringstream out;
+        for (std::size_t i = 0; i < shards.size(); ++i)
+          out << c.shards[i].id << ' ' << shards[i].address.port << ' ' << shards[i].stage << ' '
+              << shards[i].queued.size() << ' ' << links.ready(shards[i].connection) << '\n';
+        return cluster::text_bytes(out.str());
+      }
+      if (!(input >> id) || !shard_index.contains(id))
+        throw std::runtime_error("Unknown shard");
+      auto& shard = shards[shard_index.at(id)];
+      if (op == "metrics")
+        return cluster::text_bytes(std::to_string(shard.peak_queued) + " " +
+                                   std::to_string(shard.peak_bytes));
+      if (op == "cut") {
+        if (shard.stage != "active" || !links.ready(shard.connection))
+          throw std::runtime_error("Shard is not ready for a cut");
+        if (!(input >> shard.cut_token) || !shard.cut_token)
+          throw std::runtime_error("Missing cut token");
+        shard.stage = "draining";
+        shard.peak_queued = shard.peak_bytes = 0;
+        shard.boundary.clear();
+        const LinkHeader context{0, {}, shard.cut_token, 0, 0};
+        if (front)
+          links.send(front, LinkKind::MaintenanceBegin, context, {});
+        if (!links.send(shard.connection, LinkKind::Drain, context, {}))
+          throw std::runtime_error("Cannot send drain marker");
+        std::cout << "ROUTER_CUT shard=" << id << " token=" << shard.cut_token << std::endl;
+        return cluster::text_bytes("STARTED");
+      }
+      if (op == "barrier") {
+        if (shard.stage != "drained")
+          return cluster::text_bytes("WAIT");
+        persistence::Reader r{shard.boundary};
+        std::ostringstream out;
+        for (int i = 0; i < 5; ++i)
+          out << (i ? " " : "") << r.number(8);
+        return cluster::text_bytes(out.str());
+      }
+      if (op == "route") {
+        unsigned port, market;
+        std::string host;
+        if (shard.stage != "drained" || !(input >> host >> port >> market) || host != "127.0.0.1" ||
+            !port || port > 65535 || market > 65535)
+          throw std::runtime_error("Route requires a drained shard and valid loopback ports");
+        const auto old = shard.connection;
+        backend.erase(old);  // Planned retirement must not close gateway sessions.
+        io.close(old);
+        shard.connection = 0;
+        shard.address = {host, static_cast<std::uint16_t>(port)};
+        shard.next_market = market;
+        shard.stage = "connecting";
+        shard.reconnect = {};
+        return cluster::text_bytes("CONNECTING");
+      }
+      if (op == "resume") {
+        if (shard.stage != "drained" || !links.ready(shard.connection))
+          throw std::runtime_error("Resume requires a drained connected source");
+        shard.stage = "flushing";
+        return cluster::text_bytes("RESUMING");
+      }
+      throw std::runtime_error("Unknown router command");
+    });
+  }
+
+  bool dispatch(Shard& shard, const LinkHeader& h, std::span<const std::uint8_t> bytes) {
+    if (shard.stage == "active")
+      return links.send(shard.connection, h.kind, h, bytes);
+    if (shard.queued.size() >= c.max_pending ||
+        shard.queued_bytes + bytes.size() > c.max_buffer_bytes)
+      return false;
+    shard.queued.push_back({h, Bytes(bytes.begin(), bytes.end())});
+    shard.queued_bytes += bytes.size();
+    shard.peak_queued = std::max(shard.peak_queued, shard.queued.size());
+    shard.peak_bytes = std::max(shard.peak_bytes, shard.queued_bytes);
+    return true;
+  }
+
+  void flush_queued(Shard& shard) {
+    if (shard.stage != "flushing")
+      return;
+    for (unsigned i = 0; i < 64 && !shard.queued.empty(); ++i) {
+      auto& queued = shard.queued.front();
+      if (!links.send(shard.connection, queued.header.kind, queued.header, queued.bytes))
+        return;
+      shard.queued_bytes -= queued.bytes.size();
+      shard.queued.pop_front();
+    }
+    if (!shard.queued.empty())
+      return;
+    shard.stage = "active";
+    for (auto& [token, p] : pending) {
+      (void)token;
+      p.deadline = Clock::now() + std::chrono::milliseconds(c.request_timeout_ms);
+    }
+    if (front)
+      links.send(front, LinkKind::MaintenanceEnd, {0, {}, shard.cut_token, 0, 0}, {});
+    std::cout << "ROUTER_RESUMED port=" << shard.address.port << std::endl;
+  }
+
   void closed(ConnectionId id) {
     links.lost(id);
     if (id == front) {
       front = 0;
       pending.clear();
+      for (auto& shard : shards) {
+        shard.queued.clear();
+        shard.queued_bytes = 0;
+      }
     }
     const auto it = backend.find(id);
     if (it != backend.end()) {
@@ -200,17 +426,30 @@ class Router {
       p.completed.resize(shards.size(), false);
     pending.emplace(h.token, std::move(p));
     if (fanout) {
-      for (const auto& shard : shards) {
-        if (!links.send(shard.connection, h.kind, h, bytes)) {
+      for (auto& shard : shards) {
+        if (!dispatch(shard, h, bytes)) {
           io.close(front);
           return;
         }
       }
-    } else if (!links.send(shards[target].connection, h.kind, h, bytes))
+    } else if (!dispatch(shards[target], h, bytes))
       io.close(front);
   }
 
   void result(ConnectionId id, const LinkHeader& h, std::span<const std::uint8_t> bytes) {
+    if (h.kind == LinkKind::Drained) {
+      auto& shard = shards[backend.at(id)];
+      if (shard.stage != "draining" || h.token != shard.cut_token) {
+        io.close(id);
+        return;
+      }
+      shard.boundary.assign(bytes.begin(), bytes.end());
+      shard.stage = "drained";
+      persistence::Reader reader{bytes};
+      std::cout << "ROUTER_DRAINED shard=" << c.shards[backend.at(id)].id
+                << " committed=" << reader.number(8) << std::endl;
+      return;
+    }
     if ((h.kind != LinkKind::Event && h.kind != LinkKind::SnapshotEnd &&
          h.kind != LinkKind::HistoryEnd) ||
         h.user > c.accounts.size()) {
@@ -345,8 +584,10 @@ class Router {
 
 void run_order_router(const OrderConfig& config,
                       const std::atomic_bool& stop,
-                      const std::string& stats_path) {
-  Router router(config);
+                      const std::string& stats_path,
+                      std::uint16_t admin_port,
+                      const std::string& market_routes) {
+  Router router(config, admin_port, market_routes);
   router.run(stop);
   router.stats(stats_path);
 }

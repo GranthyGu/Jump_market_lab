@@ -25,7 +25,11 @@ enum class LinkKind : std::uint16_t {
   History = 13,
   Event = 20,
   SnapshotEnd = 21,
-  HistoryEnd = 22
+  HistoryEnd = 22,
+  Drain = 30,
+  Drained = 31,
+  MaintenanceBegin = 32,
+  MaintenanceEnd = 33
 };
 #pragma pack(push, 1)
 

@@ -33,6 +33,12 @@ class HistoryStore {
                const Emit&);
   void poll();
   bool pending() const;
+
+  bool caught_up(std::uint64_t end) const {
+    std::lock_guard lock(mutex_);
+    return indexed_ >= end && !failure_;
+  }
+
   void close() noexcept;
 
  private:

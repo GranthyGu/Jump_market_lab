@@ -36,6 +36,8 @@ int main(int argc, char** argv) {
           << "  --config PATH       Shared deployment config; default src/config/exchange.conf\n"
           << "  --market-port PORT  Enable publisher TCP source on this port\n"
           << "  --market-shm PATH   Enable local shared-memory market view\n"
+          << "  --control-port PORT  TCP replication/control endpoint (loopback)\n"
+          << "  --standby           Accept replicated results until explicit promotion\n"
           << "  --stats PATH        Write counters on graceful shutdown\n"
           << "  --data-dir PATH     Persistent data root (each shard has its own subdirectory)\n"
           << "  --checkpoint-ms N   Checkpoint interval; default 600000\n"
@@ -48,11 +50,15 @@ int main(int argc, char** argv) {
     }
     std::string path = marketlab::default_exchange_config, stats, mmap_path, data_dir;
     orders::persistence::Options persistence_options;
-    bool volatile_mode = false;
-    std::uint16_t shard = 0, market_port = 0;
+    bool volatile_mode = false, standby = false;
+    std::uint16_t shard = 0, market_port = 0, control_port = 0;
     bool trace = false;
     for (int i = 1; i < argc; ++i) {
       const std::string flag = argv[i];
+      if (flag == "--standby") {
+        standby = true;
+        continue;
+      }
       if (flag == "--volatile") {
         volatile_mode = true;
         continue;
@@ -70,6 +76,8 @@ int main(int argc, char** argv) {
         path = value;
       else if (flag == "--market-port")
         market_port = number(value);
+      else if (flag == "--control-port")
+        control_port = number(value);
       else if (flag == "--market-shm")
         mmap_path = value;
       else if (flag == "--data-dir")
@@ -121,7 +129,15 @@ int main(int argc, char** argv) {
                             : std::filesystem::absolute(data_dir);
       persistence_options.directory = root / ("shard-" + std::to_string(shard));
     }
-    run_order_shard(config, shard, stop, stats, market_port, mmap_path, persistence_options);
+    run_order_shard(config,
+                    shard,
+                    stop,
+                    stats,
+                    market_port,
+                    mmap_path,
+                    persistence_options,
+                    control_port,
+                    standby);
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "Matching engine failed: " << e.what() << '\n';

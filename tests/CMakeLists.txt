@@ -11,7 +11,7 @@ foreach(component engine gateway publisher integration)
   else()
     target_link_libraries(demo_${component}_tests PRIVATE marketlab_order_link marketlab_market_data_link)
   endif()
-  add_dependencies(demo_${component}_tests market_gateway market_matching_engine market_broadcast)
+  add_dependencies(demo_${component}_tests market_gateway market_matching_engine market_engine_router market_broadcast)
   add_test(NAME demo_${component}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run.py" ${component}
       --build-dir "$<TARGET_FILE_DIR:demo_${component}_tests>"
@@ -71,6 +71,17 @@ add_test(NAME trade_history_process
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/bpt/process.py"
     "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/history-process-results")
 set_tests_properties(trade_history_process PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS "bpt;recovery;integration")
+add_test(NAME planned_restart_process
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/restart/process.py"
+    "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/restart-results")
+set_tests_properties(planned_restart_process PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE
+  LABELS "engine;router;recovery;integration;performance")
+add_executable(replication_tests restart/replication.cpp)
+target_link_libraries(replication_tests PRIVATE marketlab_matching_core)
+target_compile_options(replication_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME replication_correctness COMMAND replication_tests "${CMAKE_BINARY_DIR}/replication-results")
+set_tests_properties(replication_correctness PROPERTIES TIMEOUT 30 LABELS "engine;recovery;correctness")
+add_dependencies(demo_tests replication_tests market_engine_router)
 add_executable(trade_history_benchmark EXCLUDE_FROM_ALL bpt/history_benchmark.cpp)
 target_link_libraries(trade_history_benchmark PRIVATE marketlab_matching_core)
 

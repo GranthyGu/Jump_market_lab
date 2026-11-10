@@ -159,6 +159,50 @@ void MatchingEngine::restore(std::span<const persistence::StoredOrder> orders,
   next_trade_ = next_trade;
 }
 
+void MatchingEngine::replicate(std::span<const persistence::Change> changes,
+                               const persistence::OrderDictionary& dictionary,
+                               const persistence::Boundary& boundary) {
+  for (const auto& change : changes) {
+    auto* existing = active_.find(change.order.id);
+    if (change.erase) {
+      if (!existing)
+        continue;  // An incoming order may have filled without ever resting.
+      auto& levels =
+          existing->state.side == Side::Buy ? existing->book->bids : existing->book->asks;
+      const auto position = existing->position;
+      position->second.quantity -= existing->state.remainingQuantity;
+      unlink(*existing);
+      if (!position->second.count)
+        levels.erase(position);
+      active_.erase(change.order.id);
+      pool_.release(existing);
+      continue;
+    }
+    const auto stored = dictionary.expand(change.order);
+    if (existing) {
+      if (existing->user != change.order.user || existing->state.price != stored.state.price ||
+          existing->state.side != stored.state.side ||
+          existing->book->symbol_id != change.order.symbol)
+        throw std::runtime_error("Replication changed resting order identity");
+      auto& quantity = existing->position->second.quantity;
+      quantity -= existing->state.remainingQuantity;
+      quantity += stored.state.remainingQuantity;
+      existing->state = stored.state;  // Preserve the price-time queue position.
+    } else {
+      const auto found = symbols_.find(std::string_view(stored.state.symbol));
+      if (found == symbols_.end() || (change.order.id >> 48) != shard_)
+        throw std::runtime_error("Replication order belongs to another shard");
+      Order order;
+      order.state = stored.state;
+      order.user = change.order.user;
+      order.book = &books_[found->second];
+      rest(order);
+    }
+  }
+  next_order_ = boundary.next_order;
+  next_trade_ = boundary.next_trade;
+}
+
 void MatchingEngine::update(const Order& order,
                             RequestId request,
                             const LinkHeader& context,

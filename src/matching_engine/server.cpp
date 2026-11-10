@@ -3,6 +3,7 @@
 #include <fstream>
 
 #include "matching_engine/engine.hpp"
+#include "matching_engine/cluster/worker.hpp"
 #include "matching_engine/persistence/durable_engine.hpp"
 #include "matching_engine/snapshot_mailbox.hpp"
 #include "shared_data/market_data/transport.hpp"
@@ -15,7 +16,9 @@ void serve_order_engine(EngineBackend& book,
                         const std::atomic_bool& stop,
                         const std::string& stats_path,
                         std::uint16_t market_port,
-                        const std::string& mmap_path) {
+                        const std::string& mmap_path,
+                        std::uint16_t control_port,
+                        bool standby) {
   const auto found = std::find_if(c.shards.begin(), c.shards.end(), [&](const auto& s) {
     return s.id == shard;
   });
@@ -23,6 +26,18 @@ void serve_order_engine(EngineBackend& book,
     throw std::runtime_error("Unknown shard");
   TcpReactor io(c.max_buffer_bytes, c.partial_timeout_ms);
   EngineLinks links(io, c);
+  std::unique_ptr<cluster::WorkerControl> control;
+  if (control_port) {
+    auto* durable = dynamic_cast<persistence::DurableEngine*>(&book);
+    if (!durable)
+      throw std::runtime_error("Planned restart requires persistence");
+    control = std::make_unique<cluster::WorkerControl>(*durable, control_port, standby);
+    io.watch_wakeup(control->fd(), [&] {
+      control->poll();
+    });
+  } else if (standby) {
+    throw std::runtime_error("Standby requires a control port");
+  }
   SnapshotMailbox snapshots(book.symbol_count());
   io.watch_wakeup(snapshots.request_fd(), [&] {
     snapshots.drain_requests();
@@ -34,6 +49,7 @@ void serve_order_engine(EngineBackend& book,
       snapshots.service(book);
     });
   ConnectionId router = 0;
+  std::optional<LinkHeader> drain;
   std::uint64_t commands = 0, events = 0;
   io.on_accept = [&](auto id) {
     links.incoming(id);
@@ -52,6 +68,15 @@ void serve_order_engine(EngineBackend& book,
     router = id;
   };
   links.on_message = [&](auto id, const auto& h, auto bytes) {
+    if (id == router && h.kind == LinkKind::Drain && control && control->active()) {
+      control->begin_drain();
+      drain = h;
+      return;
+    }
+    if (control && !control->active()) {
+      io.close(id);  // Standby/fenced instances never accept business commands.
+      return;
+    }
     if (id != router || h.user > c.accounts.size() ||
         (h.kind != LinkKind::NewOrder && h.kind != LinkKind::Cancel &&
          h.kind != LinkKind::Snapshot && h.kind != LinkKind::History)) {
@@ -126,6 +151,13 @@ void serve_order_engine(EngineBackend& book,
   while (!stop.load() && !market_failed.load()) {
     io.step(10);
     book.poll();
+    if (control) {
+      control->poll();
+      if (drain && control->finish_drain()) {
+        links.send(router, LinkKind::Drained, *drain, control->boundary_bytes());
+        drain.reset();
+      }
+    }
     snapshots.service(book);
     const auto now = Clock::now();
     if (now - tick >= std::chrono::milliseconds(50)) {
@@ -150,13 +182,17 @@ void run_order_shard(const OrderConfig& c,
                      const std::string& stats_path,
                      std::uint16_t market_port,
                      const std::string& mmap_path,
-                     const persistence::Options& options) {
+                     const persistence::Options& options,
+                     std::uint16_t control_port,
+                     bool standby) {
   if (options.directory.empty()) {
     MatchingEngine book(c, shard);
-    serve_order_engine(book, c, shard, stop, stats_path, market_port, mmap_path);
+    serve_order_engine(
+        book, c, shard, stop, stats_path, market_port, mmap_path, control_port, standby);
   } else {
     persistence::DurableEngine book(c, shard, options);
-    serve_order_engine(book, c, shard, stop, stats_path, market_port, mmap_path);
+    serve_order_engine(
+        book, c, shard, stop, stats_path, market_port, mmap_path, control_port, standby);
   }
 }
 }  // namespace marketlab::orders
