@@ -107,3 +107,9 @@ add_custom_target(test_extras DEPENDS persistence_benchmarks
 add_test(NAME test_runner_correctness
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/runner/test_run_all.py")
 set_tests_properties(test_runner_correctness PROPERTIES TIMEOUT 30 LABELS "runner;correctness")
+add_test(NAME client_reconnect_process
+  COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/client/process.py"
+    "$<TARGET_FILE_DIR:gateway_client>" "${CMAKE_BINARY_DIR}/client-reconnect-results")
+set_tests_properties(client_reconnect_process PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE
+  LABELS "client;publisher;integration;correctness")
+add_dependencies(demo_tests gateway_client)

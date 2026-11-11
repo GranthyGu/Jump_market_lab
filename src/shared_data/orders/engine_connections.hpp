@@ -1,5 +1,6 @@
 #pragma once
 #include "shared_data/orders/tcp_reactor.hpp"
+#include "shared_data/console.hpp"
 #include <iostream>
 
 namespace marketlab::orders {
@@ -76,9 +77,10 @@ class EngineLinks {
       return;
     }
     if (config_.trace)
-      std::cout << "LINK RX connection=" << id << " kind=" << static_cast<unsigned>(h.kind)
-                << " token=" << h.token << " user=" << h.user << " session=" << h.session
-                << " bytes=" << bytes.size() << " loggedAtNs=" << unix_ns() << std::endl;
+      std::cout << console::dim << "LINK RX connection=" << id
+                << " kind=" << static_cast<unsigned>(h.kind) << " token=" << h.token
+                << " user=" << h.user << " session=" << h.session << " bytes=" << bytes.size()
+                << " loggedAtNs=" << unix_ns() << console::reset << std::endl;
     if (on_message)
       on_message(id, h, bytes.subspan(link_header_size));
   }
@@ -90,10 +92,11 @@ class EngineLinks {
     if (!ready(id))
       return false;
     if (config_.trace)
-      std::cout << "LINK TX connection=" << id << " kind=" << static_cast<unsigned>(kind)
-                << " token=" << h.token << " user=" << h.user << " session=" << h.session
+      std::cout << console::dim << "LINK TX connection=" << id
+                << " kind=" << static_cast<unsigned>(kind) << " token=" << h.token
+                << " user=" << h.user << " session=" << h.session
                 << " bytes=" << link_header_size + payload.size() << " loggedAtNs=" << unix_ns()
-                << std::endl;
+                << console::reset << std::endl;
     return io_.send(id, link_frame(kind, h.token, h.user, h.session, payload));
   }
 

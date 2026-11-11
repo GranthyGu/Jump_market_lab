@@ -1,4 +1,5 @@
 #include "publisher/publisher.hpp"
+#include "shared_data/market_data/availability.hpp"
 
 #include <algorithm>
 #include <future>
@@ -17,6 +18,7 @@ Publisher::Publisher(Config config)
 
 void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool& cancelled) {
   std::vector<Epoch> previous_sources;
+  AvailabilityNotice availability("PUBLISHER");
   auto next = Clock::now();
   while (!stop.load() && !cancelled.load()) {
     const auto round_started = Clock::now();
@@ -86,25 +88,29 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
                                                 Clock::now() + std::chrono::milliseconds(200));
       for (const auto& message : outgoing)
         sender_.send(message, submission_deadline);
-      Log(std::cout) << "Published index=" << batch->index << " epoch=" << epoch_text(batch->epoch)
+      availability.recovered();
+      Log(std::cout) << console::cyan << "Published index=" << batch->index
                      << " symbols=" << batch->books.size() << " packets=" << outgoing.size()
-                     << " timestamp_ns=" << batch->timestamp << " sample_us="
+                     << console::reset << console::dim << " sample_us="
                      << std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() -
                                                                               round_started)
                             .count()
                      << " udp_submission_retries=" << sender_.submission_retries() - retries_before
-                     << '\n';
+                     << console::reset << '\n';
     } catch (const std::exception& e) {
       set_latest(nullptr);
       previous_sources.clear();
       // All asynchronous operations have joined before connections are reset.
       for (auto& source : sources_)
         source->disconnect();
-      Log(std::cerr) << "Source unavailable; publication/query paused: " << e.what() << '\n';
+      availability.unavailable(std::string("Source unavailable; publication/query paused: ") +
+                               e.what());
     }
     next += publication_period;
     if (Clock::now() > next) {
-      Log(std::cerr) << "Publication deadline missed; no synthetic catch-up batches generated\n";
+      if (!availability.active())
+        Log(std::cerr) << console::Label{"WARNING", console::yellow}
+                       << " Publication deadline missed; no synthetic catch-up batches generated\n";
       next = Clock::now() + publication_period;
     }
     sleep_until_or_stop(next, stop, cancelled);

@@ -3,6 +3,7 @@
 #include "publisher/publisher.hpp"
 #include "publisher/demo_source.hpp"
 #include "client/market_data.hpp"
+#include "shared_data/console.hpp"
 
 #include <csignal>
 #include <iostream>
@@ -138,7 +139,7 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
     }
     return 0;
   } catch (const std::exception& e) {
-    std::cerr << "Error: " << e.what() << std::endl;
+    std::cerr << console::red << "Error: " << e.what() << console::reset << std::endl;
     return 1;
   }
 }

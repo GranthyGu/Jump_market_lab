@@ -23,6 +23,7 @@ Usage: run_gateway.sh [options]
   --trace            Enable internal message tracing
   --help             Show this help
 Keep this terminal open. Ctrl-C stops only this gateway.
+Backend outages show one red warning; green confirms all backends have recovered.
 HELP
 }
 

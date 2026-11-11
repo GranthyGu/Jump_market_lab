@@ -28,6 +28,7 @@ Usage: run_market_client.sh [options]
   --help             Show this help
 Maintains a book with reorder buffering and automatic TCP snapshot recovery.
 Multiple terminals can join the same group. Ctrl-C stops only this receiver.
+An unavailable or stale feed shows one red warning; recovery continues in the background.
 HELP
 }
 

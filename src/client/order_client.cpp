@@ -1,12 +1,14 @@
 #include "shared_data/orders/engine_link.hpp"
 #include "shared_data/orders/config.hpp"
 #include "shared_data/market_data/transport.hpp"
+#include "shared_data/console.hpp"
 
 #include <arpa/inet.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <termios.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <charconv>
 #include <csignal>
@@ -31,25 +33,47 @@ T number(const std::string& text) {
   return value;
 }
 
-const char* status(OrderStatus value) {
+console::Label status(OrderStatus value) {
   switch (value) {
     case OrderStatus::Accepted:
-      return "Accepted";
+      return {"ACCEPTED", console::green};
     case OrderStatus::PartiallyFilled:
-      return "PartiallyFilled";
+      return {"PARTIAL", console::yellow};
     case OrderStatus::Filled:
-      return "Filled";
+      return {"FILLED", console::green};
     case OrderStatus::Canceled:
-      return "Canceled";
+      return {"CANCELED", console::yellow};
   }
-  return "Unknown";
+  return {"UNKNOWN", console::red};
 }
 
 void print_order(const OrderState& order) {
-  std::cout << " orderId=" << order.orderId << " symbol=" << fixed_string(order.symbol)
-            << " side=" << (order.side == Side::Buy ? "BUY" : "SELL") << " price=" << order.price
-            << " original=" << order.originalQuantity << " filled=" << order.filledQuantity
-            << " remaining=" << order.remainingQuantity << " status=" << status(order.status);
+  std::cout << "  " << (order.side == Side::Buy ? "BUY " : "SELL ") << fixed_string(order.symbol)
+            << "  qty=" << order.originalQuantity << "  price=" << order.price
+            << "  filled=" << order.filledQuantity << "  remaining=" << order.remainingQuantity
+            << "  order=" << order.orderId;
+}
+
+void print_time(Timestamp timestamp) {
+  std::cout << console::dim << '[' << console::time(timestamp) << "] " << console::reset;
+}
+
+const char* rejection(RejectReason reason) {
+  switch (reason) {
+    case RejectReason::InvalidCredentials:
+      return "Invalid username or password";
+    case RejectReason::InvalidOrder:
+      return "Invalid order";
+    case RejectReason::CancelFailed:
+      return "Order could not be canceled";
+    case RejectReason::InvalidHistoryQuery:
+      return "Trade history query is invalid; run trades again";
+    case RejectReason::HistoryUnavailable:
+      return "Trade history is temporarily unavailable; try again later";
+    case RejectReason::HistoryBusy:
+      return "Trade history is busy; try again later";
+  }
+  return "Request rejected";
 }
 
 void help() {
@@ -57,15 +81,17 @@ void help() {
       << "\nCommands (one command per line):\n"
       << "  buy SYMBOL PRICE QUANTITY  : place a buy limit order, e.g. buy AAPL 100 10\n"
       << "  sell SYMBOL PRICE QUANTITY : place a sell limit order; prices/quantities are integers\n"
-      << "  cancel ORDER_ID            : cancel your remaining open quantity using an ORDER_UPDATE/SNAPSHOT ID\n"
+      << "  cancel ORDER_ID            : cancel your remaining open quantity using the displayed order ID\n"
       << "  cancel-last                : cancel the last order accepted during this client session\n"
-      << "  trades                     : read ALL your committed trades across all shards; pages are fetched automatically\n"
-      << "                               HISTORY_TRADE prints original IDs/times, symbol, price, quantity and both parties\n"
-      << "                               HISTORY_COMPLETE confirms the full result; live TRADE notifications remain separate\n"
+      << "  trades                     : list all your trades: time, side, symbol, quantity, price and trade ID\n"
       << "  relogin                    : authenticate again and refresh your open-order snapshot\n"
       << "  help                       : display these instructions\n"
       << "  quit                       : disconnect; open orders remain on the exchange\n"
-      << "History is fixed at each shard's committed boundary when the query starts. Run trades again for newer fills.\n\n";
+      << "Trade times use your local timezone. Run trades again to include newer fills.\n"
+      << "Colors: " << console::Label{"ACCEPTED / READY", console::green} << "  "
+      << console::Label{"TRADE", console::magenta} << "  "
+      << console::Label{"CANCELED / NOTICE", console::yellow} << "  "
+      << console::Label{"ERROR / DISCONNECTED", console::red} << "\n\n";
 }
 
 struct Options {
@@ -73,82 +99,30 @@ struct Options {
   std::uint16_t port = default_gateway_port;
 };
 
+class ConnectionFailure : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 class Console {
  public:
   explicit Console(Options options)
-      : options_(std::move(options)),
-        fd_(md::connect_tcp(
-            options_.host, options_.port, md::Clock::now() + std::chrono::seconds(3))) {
-    sockaddr_in local{};
-    socklen_t size = sizeof(local);
-    if (getsockname(fd_.get(), reinterpret_cast<sockaddr*>(&local), &size) < 0)
-      throw std::runtime_error("getsockname failed");
-    char address[INET_ADDRSTRLEN]{};
-    if (!inet_ntop(AF_INET, &local.sin_addr, address, sizeof(address)))
-      throw std::runtime_error("inet_ntop failed");
-    std::cout << "CONNECTED local=" << address << ':' << ntohs(local.sin_port)
-              << " gateway=" << options_.host << ':' << options_.port << " user=" << options_.user
-              << '\n';
-    login();
+      : options_(std::move(options)) {
   }
 
   int run() {
     while (!interrupted_) {
-      if (!waiting_) {
-        const auto newline = stdin_buffer_.find('\n');
-        if (newline != std::string::npos) {
-          const auto line = stdin_buffer_.substr(0, newline);
-          stdin_buffer_.erase(0, newline + 1);
-          if (!command(line))
-            return 0;
-          continue;
-        }
-        if (stdin_closed_) {
-          if (!stdin_buffer_.empty()) {
-            auto line = std::exchange(stdin_buffer_, {});
-            if (!command(line))
-              return 0;
-          } else
-            return 0;
-          continue;
-        }
-      }
-      if (waiting_ && md::Clock::now() > deadline_)
-        throw std::runtime_error("Response timeout");
-      pollfd ready[]{{fd_.get(), POLLIN, 0},
-                     {STDIN_FILENO, static_cast<short>(waiting_ ? 0 : POLLIN), 0}};
-      // Disable stdin entirely while waiting; a closed pipe otherwise reports
-      // POLLHUP continuously even when no input events were requested.
-      if (waiting_)
-        ready[1].fd = -1;
-      const int count = poll(ready, 2, 100);
-      if (count < 0 && errno == EINTR)
-        continue;
-      if (count < 0)
-        throw std::runtime_error("poll failed");
-      if (ready[0].revents & (POLLIN | POLLHUP | POLLERR)) {
-        if (!receive()) {
-          std::cout
-              << "DISCONNECTED: gateway closed TCP (another login may have replaced this session).\n";
-          if (history_) {
-            std::cout << "HISTORY_FAILED partial_count=" << history_total_
-                      << " (query incomplete)\n";
-            return 1;
-          }
+      if (recovering_ && md::Clock::now() >= reconnect_deadline_)
+        throw std::runtime_error("RECONNECT_TIMEOUT: session unavailable for 20s; exiting");
+      try {
+        if (!fd_ && md::Clock::now() >= retry_at_)
+          connect();
+        if (waiting_ && md::Clock::now() >= deadline_)
+          throw ConnectionFailure("Response timeout");
+        if (!step())
           return 0;
-        }
-      }
-      if (!waiting_ && ready[1].revents & (POLLIN | POLLHUP)) {
-        char buffer[4096];
-        const auto n = ::read(STDIN_FILENO, buffer, sizeof(buffer));
-        if (n > 0)
-          stdin_buffer_.append(buffer, static_cast<std::size_t>(n));
-        else if (n == 0)
-          stdin_closed_ = true;
-        else if (errno != EINTR && errno != EAGAIN)
-          throw std::runtime_error("stdin read failed");
-        if (stdin_buffer_.size() > 64 * 1024)
-          throw std::runtime_error("Command input exceeds 64 KiB");
+      } catch (const ConnectionFailure& error) {
+        disconnected(error.what());
       }
     }
     return 0;
@@ -157,6 +131,56 @@ class Console {
   static volatile std::sig_atomic_t interrupted_;
 
  private:
+  bool step() {
+    if (!waiting_ || recovering_) {
+      const auto newline = stdin_buffer_.find('\n');
+      if (newline != std::string::npos) {
+        const auto line = stdin_buffer_.substr(0, newline);
+        stdin_buffer_.erase(0, newline + 1);
+        if (!command(line))
+          return false;
+        return true;
+      }
+      if (stdin_closed_ && session_ready_) {
+        if (!stdin_buffer_.empty()) {
+          auto line = std::exchange(stdin_buffer_, {});
+          if (!command(line))
+            return false;
+        } else
+          return false;
+        return true;
+      }
+    }
+    pollfd ready[]{{fd_.get(), POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
+    // Disable stdin entirely while waiting; a closed pipe otherwise reports
+    // POLLHUP continuously even when no input events were requested.
+    if (stdin_closed_ || (waiting_ && !recovering_))
+      ready[1].fd = -1;
+    const int count = poll(ready, 2, 100);
+    if (count < 0 && errno == EINTR)
+      return true;
+    if (count < 0)
+      throw std::runtime_error("poll failed");
+    if (ready[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+      if (!receive()) {
+        throw ConnectionFailure("Gateway closed TCP");
+      }
+    }
+    if (ready[1].fd >= 0 && ready[1].revents & (POLLIN | POLLHUP)) {
+      char buffer[4096];
+      const auto n = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+      if (n > 0)
+        stdin_buffer_.append(buffer, static_cast<std::size_t>(n));
+      else if (n == 0)
+        stdin_closed_ = true;
+      else if (errno != EINTR && errno != EAGAIN)
+        throw std::runtime_error("stdin read failed");
+      if (stdin_buffer_.size() > 64 * 1024)
+        throw std::runtime_error("Command input exceeds 64 KiB");
+    }
+    return true;
+  }
+
   Options options_;
   md::Fd fd_;
   Bytes input_;
@@ -170,6 +194,53 @@ class Console {
   std::map<std::uint16_t, std::uint32_t> history_page_counts_;
   std::map<std::uint16_t, TradeId> history_last_ids_;
   md::Clock::time_point deadline_;
+  static constexpr auto tolerance = std::chrono::seconds(20);
+  static constexpr auto retry_interval = std::chrono::milliseconds(200);
+  bool recovering_ = false, session_ready_ = false, recovered_last_order_ = false;
+  std::size_t recovered_orders_ = 0;
+  md::Clock::time_point reconnect_deadline_, retry_at_{};
+
+  void disconnected(const std::string& reason) {
+    if (!recovering_) {
+      recovering_ = true;
+      reconnect_deadline_ = md::Clock::now() + tolerance;
+      std::cout << console::red << "DISCONNECTED: " << reason
+                << "; retrying every 200ms for up to 20s";
+      if (waiting_ && !snapshot_) {
+        if (history_)
+          std::cout << "; history incomplete, partial_count=" << history_total_;
+        else
+          std::cout << "; requestId=" << waiting_ << " outcome unknown, not replayed";
+      }
+      std::cout << console::reset << '\n';
+    }
+    fd_.reset();
+    input_.clear();
+    waiting_ = 0;
+    session_ready_ = snapshot_ = history_ = history_fanout_ = false;
+    history_pages_.clear();
+    history_page_counts_.clear();
+    history_last_ids_.clear();
+    retry_at_ = md::Clock::now() + retry_interval;
+  }
+
+  void connect() {
+    auto until = md::Clock::now() + std::chrono::milliseconds(500);
+    if (recovering_)
+      until = std::min(until, reconnect_deadline_);
+    try {
+      fd_ = md::connect_tcp(options_.host, options_.port, until);
+    } catch (const std::exception& error) {
+      throw ConnectionFailure(error.what());
+    }
+    if (!recovering_) {
+      std::cout << console::Label{"CONNECTED", console::cyan} << "  " << options_.user << " @ "
+                << options_.host << ':' << options_.port << '\n';
+    }
+    recovered_orders_ = 0;
+    recovered_last_order_ = false;
+    login();
+  }
 
   template <typename T>
   void send(T value, MessageType type) {
@@ -178,8 +249,13 @@ class Console {
     value.header = {type, sizeof(T), next_++};
     waiting_ = value.header.requestId;
     deadline_ = md::Clock::now() + std::chrono::seconds(35);
-    md::send_all(fd_.get(), record_bytes(value), deadline_);
-    std::cout << "SENT requestId=" << waiting_ << " sentAtNs=" << unix_ns() << '\n';
+    if (recovering_)
+      deadline_ = std::min(reconnect_deadline_, md::Clock::now() + std::chrono::seconds(3));
+    try {
+      md::send_all(fd_.get(), record_bytes(value), deadline_);
+    } catch (const std::exception& error) {
+      throw ConnectionFailure(error.what());
+    }
   }
 
   void login() {
@@ -187,6 +263,7 @@ class Console {
     put_string(value.username, options_.user);
     put_string(value.password, options_.password);
     snapshot_ = true;
+    session_ready_ = false;
     send(value, MessageType::LoginRequest);
   }
 
@@ -206,6 +283,11 @@ class Console {
         help();
         return true;
       }
+      if (!session_ready_) {
+        std::cout << console::Label{"NOT_READY", console::yellow}
+                  << ": reconnecting; no request sent. Use help or quit.\n";
+        return true;
+      }
       if (op == "relogin" && args.empty()) {
         login();
         return true;
@@ -218,8 +300,12 @@ class Console {
         history_last_ids_.clear();
         TradeHistoryRequest query{};
         query.limit = trade_history_page_limit;
-        std::cout << "HISTORY_BEGIN user=" << options_.user << " page_limit=" << query.limit
-                  << '\n';
+        std::cout
+            << '\n'
+            << console::Label{"TRADE HISTORY", console::cyan} << " — " << options_.user << '\n'
+            << console::dim
+            << "        No.  Time (local)              Side  Symbol             Qty       Price  Trade ID\n"
+            << console::reset;
         send(query, MessageType::TradeHistoryRequest);
         return true;
       }
@@ -246,7 +332,7 @@ class Console {
       // Parse errors leave the connection usable; transport errors must stop it.
       if (waiting_)
         throw;
-      std::cout << "INPUT_ERROR " << e.what() << '\n';
+      std::cout << console::Label{"INPUT_ERROR", console::red} << " " << e.what() << '\n';
       return true;
     }
   }
@@ -259,7 +345,7 @@ class Console {
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
       return true;
     if (n < 0)
-      throw std::runtime_error("recv failed");
+      throw ConnectionFailure("TCP receive failed");
     input_.insert(input_.end(), buffer.begin(), buffer.begin() + n);
     std::size_t used = 0;
     while (input_.size() - used >= sizeof(Header)) {
@@ -283,32 +369,29 @@ class Console {
     bool complete = false;
     Timestamp exchange_time = 0;
     std::memcpy(&exchange_time, bytes.data() + sizeof(Header), sizeof(exchange_time));
-    const auto received_at = unix_ns();
     switch (h.messageType) {
       case MessageType::LoginAccepted:
-        std::cout << "LOGIN_ACCEPTED requestId=" << h.requestId
-                  << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n';
         break;
       case MessageType::ActiveOrderSnapshot: {
         const auto value = copy_record<ActiveOrderSnapshot>(bytes);
         if (value.isEnd) {
-          std::cout << "SNAPSHOT_END requestId=" << h.requestId
-                    << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at
-                    << '\n';
           complete = true;
+        } else if (recovering_) {
+          ++recovered_orders_;
+          recovered_last_order_ = recovered_last_order_ || value.order.orderId == last_order_;
         } else {
-          std::cout << "SNAPSHOT requestId=" << h.requestId;
+          std::cout << console::Label{"OPEN ORDER", console::cyan};
           print_order(value.order);
-          std::cout << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at
-                    << '\n';
+          std::cout << '\n';
         }
         break;
       }
       case MessageType::OrderUpdate: {
         const auto value = copy_record<OrderUpdate>(bytes);
-        std::cout << "ORDER_UPDATE requestId=" << h.requestId;
+        print_time(exchange_time);
+        std::cout << status(value.order.status);
         print_order(value.order);
-        std::cout << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n';
+        std::cout << '\n';
         if (value.order.status == OrderStatus::Accepted)
           last_order_ = value.order.orderId;
         complete = h.requestId != 0;
@@ -316,23 +399,22 @@ class Console {
       }
       case MessageType::Trade: {
         const auto value = copy_record<Trade>(bytes);
-        std::cout << "TRADE requestId=" << h.requestId << " tradeId=" << value.tradeId
-                  << " orderId=" << value.orderId << " symbol=" << fixed_string(value.symbol)
-                  << " side=" << (value.side == Side::Buy ? "BUY" : "SELL")
-                  << " price=" << value.price << " quantity=" << value.quantity
-                  << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n';
+        print_time(exchange_time);
+        std::cout << console::Label{"TRADE", console::magenta} << "  "
+                  << (value.side == Side::Buy ? "BUY " : "SELL ") << fixed_string(value.symbol)
+                  << "  qty=" << value.quantity << "  price=" << value.price
+                  << "  trade=" << value.tradeId << "  order=" << value.orderId << '\n';
         break;
       }
       case MessageType::RequestRejected: {
         const auto reason = copy_record<RequestRejected>(bytes).reason;
-        std::cout << "REJECTED requestId=" << h.requestId
-                  << " reason=" << static_cast<unsigned>(reason)
-                  << " exchangeTimeNs=" << exchange_time << " receivedAtNs=" << received_at << '\n';
+        print_time(exchange_time);
+        std::cout << console::Label{"REJECTED", console::red} << "  " << rejection(reason) << '\n';
         if (snapshot_)
           throw std::runtime_error("Login rejected");
         if (history_ && h.requestId == waiting_) {
-          std::cout << "HISTORY_FAILED partial_count=" << history_total_
-                    << " (query incomplete; reason 4=invalid cursor, 5=unavailable, 6=busy)\n";
+          std::cout << console::Label{"INCOMPLETE", console::red} << "  " << history_total_
+                    << " trades shown; query failed. Run trades again.\n\n";
           history_ = false;
           history_pages_.clear();
         }
@@ -349,14 +431,20 @@ class Console {
         history_last_ids_[shard] = value.tradeId;
         ++history_page_counts_[shard];
         ++history_total_;
-        std::cout << "HISTORY_TRADE requestId=" << h.requestId << " shard=" << shard
-                  << " tradeId=" << value.tradeId << " symbol=" << fixed_string(value.symbol)
-                  << " price=" << value.price << " quantity=" << value.quantity
-                  << " buyOrderId=" << value.buyOrderId << " sellOrderId=" << value.sellOrderId
-                  << " buyer=" << fixed_string(value.buyer)
-                  << " seller=" << fixed_string(value.seller)
-                  << " exchangeTimeNs=" << value.timestamp << " receivedAtNs=" << received_at
-                  << '\n';
+        const bool buying = fixed_string(value.buyer) == options_.user;
+        const bool selling = fixed_string(value.seller) == options_.user;
+        if (!buying && !selling)
+          throw std::runtime_error("Unexpected trade history owner");
+        std::ostringstream row;
+        row << std::right << std::setw(5) << history_total_ << "  "
+            << console::time(value.timestamp, true) << "  " << std::left << std::setw(4)
+            << (buying && selling ? "SELF"
+                : buying          ? "BUY"
+                                  : "SELL")
+            << "  " << std::setw(12) << fixed_string(value.symbol) << "  " << std::right
+            << std::setw(8) << value.quantity << "  " << std::setw(10) << value.price << "  "
+            << value.tradeId;
+        std::cout << console::Label{"TRADE", console::magenta} << ' ' << row.str() << '\n';
         break;
       }
       case MessageType::TradeHistoryEnd: {
@@ -374,10 +462,6 @@ class Console {
           history_page_counts_[shard_id] = 0;
           if (end.flags & history_more)
             history_pages_.push_back(end);
-          std::cout << "HISTORY_PAGE_END shard=" << end.shard << " count=" << end.count
-                    << " more=" << ((end.flags & history_more) != 0)
-                    << " nextOffset=" << end.nextOffset << " throughOffset=" << end.throughOffset
-                    << '\n';
           complete = !history_fanout_;
         }
         break;
@@ -388,16 +472,36 @@ class Console {
     if (complete && h.requestId == waiting_) {
       waiting_ = 0;
       if (snapshot_) {
+        const bool recovered = recovering_;
         snapshot_ = false;
-        std::cout << "READY (type help for commands)\n";
-        help();
+        session_ready_ = true;
+        if (recovering_) {
+          // Only a complete authenticated snapshot ends the outage window.
+          // A successful TCP connect alone must never reset its deadline.
+          if (md::Clock::now() >= reconnect_deadline_)
+            throw std::runtime_error("RECONNECT_TIMEOUT: session unavailable for 20s; exiting");
+          recovering_ = false;
+          if (!recovered_last_order_)
+            last_order_ = 0;
+          std::cout << console::green
+                    << "RECONNECTED: login and snapshot complete; open_orders=" << recovered_orders_
+                    << ". Use relogin to list orders or trades to check fills." << console::reset
+                    << '\n';
+        }
+        std::cout << console::green << "READY (type help for commands)" << console::reset << '\n';
+        if (!recovered)
+          std::cout
+              << "Commands: buy | sell | cancel | cancel-last | trades | relogin | help | quit\n";
       }
       if (history_) {
         history_fanout_ = false;
         if (history_pages_.empty()) {
           history_ = false;
-          std::cout << "HISTORY_COMPLETE total=" << history_total_ << " user=" << options_.user
-                    << '\n';
+          std::cout << console::Label{"COMPLETE", console::green} << "  " << history_total_
+                    << (history_total_ == 1 ? " trade" : " trades") << '\n';
+          if (!history_total_)
+            std::cout << "No trades yet.\n";
+          std::cout << '\n';
         } else {
           const auto page = history_pages_.front();
           history_pages_.pop_front();
@@ -506,6 +610,9 @@ int main(int argc, char** argv) {
             << "gateway_client [--user NAME] [--password PASSWORD] [--host 127.0.0.1] [--port "
             << default_gateway_port << "]\n";
         std::cout << "Missing credentials are prompted in a terminal; password input is hidden.\n";
+        std::cout
+            << "On disconnect, retry every 200ms for up to 20s, then exit if recovery fails.\n"
+               "Recovery requires login and a complete snapshot. Sent orders are never replayed.\n";
         help();
         return 0;
       }
@@ -525,11 +632,14 @@ int main(int argc, char** argv) {
     }
     if (!options.port)
       throw std::runtime_error("Port must be in 1..65535");
+    in_addr address{};
+    if (inet_pton(AF_INET, options.host.c_str(), &address) != 1)
+      throw std::runtime_error("Host must be a numeric IPv4 address");
     login_screen(options);
     Console client(std::move(options));
     return client.run();
   } catch (const std::exception& e) {
-    std::cerr << "ERROR " << e.what() << '\n';
+    std::cerr << console::red << "ERROR " << e.what() << console::reset << '\n';
     return 1;
   }
 }

@@ -1,5 +1,6 @@
 #include "gateway/gateway.hpp"
 #include "shared_data/orders/engine_connections.hpp"
+#include "shared_data/market_data/availability.hpp"
 #include <fstream>
 #include <limits>
 #include <unordered_set>
@@ -67,7 +68,9 @@ class Gateway {
           (void)client;
           io.enable_reads(client_id, !pause);
         }
-        std::cout << (pause ? "GATEWAY_RESTART_PAUSE" : "GATEWAY_RESTART_RESUME") << std::endl;
+        std::cout << (pause ? console::yellow : console::green)
+                  << (pause ? "GATEWAY_RESTART_PAUSE" : "GATEWAY_RESTART_RESUME") << console::reset
+                  << std::endl;
         return;
       }
       event(id, h, bytes);
@@ -77,14 +80,17 @@ class Gateway {
       for (const auto& engine : engines)
         if (links.ready(engine.connection))
           ++connected;
-      std::cout << "GATEWAY_BACKENDS_READY " << connected << '/' << engines.size()
-                << " loggedAtNs=" << unix_ns() << std::endl;
-      if (ready())
-        std::cout << "GATEWAY_READY loggedAtNs=" << unix_ns() << std::endl;
+      if (!availability.active())
+        std::cout << console::cyan << "GATEWAY_BACKENDS_READY " << connected << '/'
+                  << engines.size() << console::reset << std::endl;
+      if (ready()) {
+        availability.recovered();
+        std::cout << console::green << "GATEWAY_READY" << console::reset << std::endl;
+      }
     };
     io.listen(c.gateway_listen, Framing::Client, c.max_connections + engines.size());
-    std::cout << "GATEWAY_LISTENING " << c.gateway_listen.host << ':' << c.gateway_listen.port
-              << " loggedAtNs=" << unix_ns() << std::endl;
+    std::cout << console::cyan << "GATEWAY_LISTENING " << c.gateway_listen.host << ':'
+              << c.gateway_listen.port << console::reset << std::endl;
   }
 
   void run(const std::atomic_bool& stop) {
@@ -98,7 +104,8 @@ class Gateway {
           if (engine.connection) {
             links.outgoing(engine.connection);
             backend.emplace(engine.connection, i);
-          }
+          } else
+            availability.unavailable("Matching engine connection unavailable; trading paused");
           engine.retry = now + std::chrono::milliseconds(c.reconnect_ms);
         }
       }
@@ -171,6 +178,7 @@ class Gateway {
   std::uint64_t sequence, commands = 0, engine_frames = 0, events = 0, logins = 0, replaced = 0;
   std::size_t peak_pending = 0;
   bool maintenance = false;
+  md::AvailabilityNotice availability{"GATEWAY"};
   Clock::time_point maintenance_started{};
   std::unordered_map<std::string, std::uint32_t> usernames;
   std::vector<ConnectionId> online;
@@ -187,6 +195,8 @@ class Gateway {
   void closed(ConnectionId id) {
     const auto engine = backend.find(id);
     if (engine != backend.end()) {
+      availability.unavailable(
+          "Matching engine connection lost; trading paused; clients must reconnect");
       maintenance = false;
       links.lost(id);
       engines[engine->second].connection = 0;

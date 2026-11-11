@@ -103,7 +103,7 @@ void publication(Suite& suite,const fs::path& bin,unsigned products,unsigned sha
   const auto age_count=observations[0].ages.size();
   suite.metric("udp_age_"+name,std::move(observations[0].ages),last+1,age_count,"Same-host wall-clock batch freeze to UDP receipt; includes encoding/burst queues; rate uses nominal batch duration");
   std::vector<double> publication_times; std::istringstream lines(read_text(dir/"publisher.log"));
-  for(std::string line;std::getline(lines,line);) if(line.starts_with("Published index=")) {
+  for(std::string line;std::getline(lines,line);) if(line.find("Published index=")!=std::string::npos) {
     auto at=line.find("sample_us="); if(at!=std::string::npos) publication_times.push_back(std::stod(line.substr(at+10)));
   }
   auto rounds=publication_times.size(); require(rounds>=last+1,"Missing publication timing records");

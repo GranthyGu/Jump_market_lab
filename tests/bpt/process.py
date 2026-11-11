@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import socket
@@ -279,8 +280,21 @@ def exercise(binaries, root, routing):
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
         (root / "client.log").write_text(cli.stdout)
         check(cli.returncode == 0, "client process failed")
-        check(sum(line.startswith("HISTORY_TRADE ") for line in cli.stdout.splitlines()) == len(expected), "client did not print every trade")
-        check(f"HISTORY_COMPLETE total={len(expected)}" in cli.stdout, "client did not finish automatic pagination")
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", cli.stdout)
+        rows = re.findall(r"^TRADE\s+(\d+)\s+(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})\s+(BUY|SELL|SELF)\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)$", plain, re.MULTILINE)
+        check(len(rows) == len(expected), "client did not print every trade clearly")
+        check([int(row[0]) for row in rows] == list(range(1, len(expected) + 1)), "history row numbering skipped or repeated")
+        records = {record[1]: record for record in expected}
+        check({int(row[6]) for row in rows} == set(records), "history display lost or repeated a trade ID")
+        for _, stamp, side, symbol, quantity, price, trade in rows:
+            record = records[int(trade)]
+            buyer, seller = record[7].rstrip(b"\0"), record[8].rstrip(b"\0")
+            expected_side = "SELF" if buyer == seller == b"Alice" else "BUY" if buyer == b"Alice" else "SELL"
+            expected_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record[0] // 1_000_000_000)) + f".{record[0] // 1_000_000 % 1000:03d}"
+            check((stamp, side, symbol, int(quantity), int(price)) == (expected_time, expected_side, record[2].rstrip(b"\0").decode(), record[4], record[3]), "history row fields differ from API")
+        check(f"COMPLETE  {len(expected)} trades" in plain, "client did not finish automatic pagination")
+        check(not any(token in plain for token in ("shard", "Offset", "HISTORY_PAGE", "requestId=", "sentAtNs=", "committed")), "history display leaked internal bookkeeping")
+        check("\x1b[1;35mTRADE\x1b[0m" in cli.stdout, "trade keyword is not purple")
         check("cancel-last" in cli.stdout and "relogin" in cli.stdout and "one command per line" in cli.stdout, "client help incomplete")
         ordered = sorted(times)
         result = {"routing": routing, "trades": len(expected), "query_page_size": 256, "latency_samples": len(times),

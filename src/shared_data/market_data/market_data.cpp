@@ -1,4 +1,5 @@
 #include "shared_data/market_data/market_data.hpp"
+#include "shared_data/console.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -231,12 +232,16 @@ std::uint64_t unix_ns() {
 }
 
 void print_message(const Message& m) {
-  std::cout << (m.kind == Kind::Snapshot ? "SNAPSHOT" : "DELTA") << " symbol=" << m.symbol_id
-            << " index=" << m.index << " timestamp=" << m.timestamp
-            << " epoch=" << epoch_text(m.epoch) << " entries=" << m.levels.size() << '\n';
+  std::cout << console::cyan << (m.kind == Kind::Snapshot ? "SNAPSHOT" : "DELTA")
+            << " symbol=" << m.symbol_id << " index=" << m.index << " timestamp=" << m.timestamp
+            << " epoch=" << epoch_text(m.epoch) << " entries=" << m.levels.size() << console::reset
+            << '\n';
   for (const auto& x : m.levels)
-    std::cout << "  " << (x.side == Side::Buy ? "BUY " : "SELL") << " price=" << x.price
-              << " quantity=" << x.quantity << " numOfOrders=" << x.num_orders << '\n';
+    std::cout << "  "
+              << console::Label{x.side == Side::Buy ? "BUY " : "SELL",
+                                x.side == Side::Buy ? console::green : console::yellow}
+              << " price=" << x.price << " quantity=" << x.quantity
+              << " numOfOrders=" << x.num_orders << '\n';
   std::cout << std::flush;
 }
 }  // namespace marketlab::md

@@ -1,5 +1,6 @@
 #include "client/market_data.hpp"
 #include "client/recovery.hpp"
+#include "shared_data/market_data/availability.hpp"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -16,7 +17,11 @@ namespace marketlab::md {
 namespace {
 void observe_datagrams(Fd fd, std::size_t count, const std::atomic_bool& stop) {
   std::size_t received = 0;
+  AvailabilityNotice availability("MARKET_DATA");
+  auto last_received = Clock::now();
   while (!stop.load() && (!count || received < count)) {
+    if (Clock::now() - last_received >= std::chrono::seconds(3))
+      availability.unavailable("No market-data packets for 3s; displayed prices may be stale");
     pollfd p{fd.get(), POLLIN, 0};
     if (poll(&p, 1, 100) <= 0)
       continue;
@@ -27,10 +32,13 @@ void observe_datagrams(Fd fd, std::size_t count, const std::atomic_bool& stop) {
     if (n < 0)
       throw std::runtime_error(std::string("UDP recv: ") + std::strerror(errno));
     try {
-      print_message(decode(std::span(data.data(), static_cast<std::size_t>(n))));
+      const auto message = decode(std::span(data.data(), static_cast<std::size_t>(n)));
+      last_received = Clock::now();
+      availability.recovered();
+      print_message(message);
       ++received;
     } catch (const std::exception& e) {
-      std::cerr << "Ignored invalid datagram: " << e.what() << '\n';
+      availability.unavailable(std::string("Invalid market-data packet: ") + e.what());
     }
   }
 }
@@ -152,24 +160,58 @@ struct Query {
 };
 
 void print_view(std::string_view event, std::uint16_t id, const MarketView& view) {
-  std::cout << "CLIENT_EVENT event=" << event << " symbol=" << id
-            << " state=" << status_name(view.status) << " last=";
-  if (view.snapshot)
-    std::cout << view.snapshot->index;
-  else
-    std::cout << "none";
-  std::cout << " highest=" << view.highest_seen << " pending=" << view.pending_count << '\n';
   if (event == "BOOK" && view.snapshot) {
     const auto& m = *view.snapshot;
-    std::cout << "BOOK symbol=" << id << " index=" << m.index << " timestamp=" << m.timestamp
-              << " epoch=" << epoch_text(m.epoch) << " state=" << status_name(view.status)
-              << " entries=" << m.levels.size() << '\n';
+    std::cout << console::cyan << "BOOK symbol=" << id << " index=" << m.index
+              << " time=" << console::time(m.timestamp) << " epoch=" << epoch_text(m.epoch)
+              << " state=" << status_name(view.status) << " entries=" << m.levels.size()
+              << console::reset << '\n';
     for (const auto& level : m.levels)
-      std::cout << "  " << (level.side == Side::Buy ? "BUY " : "SELL") << " price=" << level.price
-                << " quantity=" << level.quantity << " numOfOrders=" << level.num_orders << '\n';
+      std::cout << "  "
+                << console::Label{level.side == Side::Buy ? "BUY " : "SELL",
+                                  level.side == Side::Buy ? console::green : console::yellow}
+                << " price=" << level.price << " quantity=" << level.quantity
+                << " numOfOrders=" << level.num_orders << '\n';
   }
   std::cout << std::flush;
 }
+
+class MarketConsole {
+ public:
+  void event(std::string_view event, std::uint16_t id, const MarketView& view) {
+    if (view.status == SyncStatus::Late || view.status == SyncStatus::Stale ||
+        event == "TCP_FAILED" || event == "INVALID_MESSAGE" || event == "INVALID_RESULT")
+      unavailable();
+    // Per-symbol STATE/TCP_START/TCP_FAILED events otherwise flood the terminal
+    // during a single source outage. Keep the recovery engine itself unchanged.
+    if (event == "BOOK" && view.status == SyncStatus::Synced && !availability_.active())
+      print_view(event, id, view);
+  }
+
+  void unavailable() {
+    availability_.unavailable(
+        "Feed or snapshot recovery unavailable; displayed prices may be stale");
+  }
+
+  void refresh(const Config& config, const MarketRecovery& recovery) {
+    if (!availability_.active())
+      return;
+    for (const auto& [id, name] : config.symbols) {
+      (void)name;
+      if (recovery.view(id).status != SyncStatus::Synced)
+        return;
+    }
+    availability_.recovered();
+    // Publish one coherent restored view after every configured symbol is ready.
+    for (const auto& [id, name] : config.symbols) {
+      (void)name;
+      print_view("BOOK", id, recovery.view(id));
+    }
+  }
+
+ private:
+  AvailabilityNotice availability_{"MARKET_DATA"};
+};
 }
 
 void observe_market(const Config& config, std::size_t count, const std::atomic_bool& stop) {
@@ -186,7 +228,11 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
   std::cout << "Automatic snapshot recovery TCP " << config.query.host << ':' << config.query.port
             << " reorder_wait_ms=" << config.recovery.reorder_wait_ms << '\n'
             << std::flush;
-  MarketRecovery recovery(config.symbols, config.recovery, Clock::now(), print_view);
+  MarketConsole console;
+  MarketRecovery recovery(
+      config.symbols, config.recovery, Clock::now(), [&](auto event, auto id, const auto& view) {
+        console.event(event, id, view);
+      });
   std::vector<Query> queries;
   std::size_t received = 0;
   while (!stop.load() && (!count || received < count)) {
@@ -211,8 +257,8 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
       try {
         queries.emplace_back(
             config.query, *request, now + std::chrono::milliseconds(config.recovery.timeout_ms));
-      } catch (const std::exception& e) {
-        std::cerr << "TCP recovery failed: " << e.what() << '\n';
+      } catch (const std::exception&) {
+        console.unavailable();
         recovery.failed(*request, now);
       }
     }
@@ -248,8 +294,8 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
             throw std::runtime_error("Unknown UDP symbol ID");
           recovery.udp(message, Clock::now());
           ++received;
-        } catch (const std::exception& e) {
-          std::cerr << "Rejected UDP message: " << e.what() << '\n';
+        } catch (const std::exception&) {
+          console.unavailable();
           std::optional<std::uint16_t> symbol;
           if (size >= 19)
             symbol = static_cast<std::uint16_t>(bytes[17] | (std::uint16_t(bytes[18]) << 8));
@@ -270,8 +316,8 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
           recovery.complete(query.request, *response, Clock::now());
           query.done = true;
         }
-      } catch (const std::exception& e) {
-        std::cerr << "TCP recovery failed: " << e.what() << '\n';
+      } catch (const std::exception&) {
+        console.unavailable();
         recovery.failed(query.request, Clock::now());
         query.done = true;
       }
@@ -279,6 +325,7 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
     std::erase_if(queries, [](const Query& query) {
       return query.done;
     });
+    console.refresh(config, recovery);
   }
 }
 }  // namespace marketlab::md

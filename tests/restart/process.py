@@ -5,6 +5,7 @@ from collections import Counter
 import hashlib
 import importlib.util
 import json
+import re
 import select
 from pathlib import Path
 import socket
@@ -394,7 +395,8 @@ def exercise(binaries, root, resting, rate, copy_rate, warmup, switch_gap):
                               "--user", "Alice", "--password", "demo"], input="trades\nquit\n", text=True,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=35)
         (root / "client.log").write_text(cli.stdout)
-        check(cli.returncode == 0 and f"HISTORY_COMPLETE total={len(expected) + 12}" in cli.stdout,
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", cli.stdout)
+        check(cli.returncode == 0 and f"COMPLETE  {len(expected) + 12} trades" in plain,
               "stock client API failed after restart")
         # Persist a mixed A/B topology, stop the whole managed group, and prove
         # ordinary startup uses the latest roots rather than stale slot A data.

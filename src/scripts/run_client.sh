@@ -22,6 +22,10 @@ Usage: run_client.sh [options]
   --help             Show this help
 Opens a terminal login screen, then the buy/sell/cancel trading console.
 Type help after READY for commands; quit disconnects without canceling orders.
+After a disconnect, retry every 200ms for up to 20s; exit if the session cannot recover.
+Sent orders/cancels are never replayed. Recovery reauthenticates and refreshes the snapshot.
+Colored keywords distinguish trades, accepted orders, notices and errors.
+The trades command lists every trade with its time, side, symbol, quantity, price and ID.
 HELP
 }
 

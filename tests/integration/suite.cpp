@@ -102,10 +102,11 @@ void recovery(const fs::path& bin,const fs::path& dir) {
   auto incoming=md::join_multicast(*config.multicast); auto observer_config=config;
   observer_config.multicast->group.host="239.10.20.32"; write_market(observer_config,dir/"observer.conf");
   md::UdpSender relay(*observer_config.multicast); std::atomic<unsigned> dropped{0};
+  std::atomic_bool block_symbol_one{true};
   auto proxy=std::make_unique<md::StopThread>([&](const auto& stop) {
     while(!stop.load()) {
       pollfd p{incoming.get(),POLLIN,0}; if(poll(&p,1,20)<=0) continue;
-      try { auto m=datagram(incoming.get()); if(m.symbol_id==1 && m.index==2) { ++dropped; continue; } relay.send(md::encode(m)); }
+      try { auto m=datagram(incoming.get()); if(m.symbol_id==1 && m.index>=2 && block_symbol_one.load()) { ++dropped; continue; } relay.send(md::encode(m)); }
       catch(const std::exception&) { /* Main thread detects missing progress below. */ }
     }
   });
@@ -115,23 +116,24 @@ void recovery(const fs::path& bin,const fs::path& dir) {
   publisher_ready(config);
   eventually([&]{return read_text(dir/"observer.log").find("BOOK symbol=1 index=0 ")!=std::string::npos;},"Observer did not establish TCP baseline");
   Trader alice(ex.gateway); alice.login("user0"); auto accepted=alice.add(10,symbol(0));
-  eventually([&]{return dropped.load()==1;},"Loss relay did not drop the selected genuine batch",5000);
-  const auto cut=read_text(dir/"observer.log").size();
+  eventually([&]{return dropped.load()>=1;},"Loss relay did not drop the selected genuine batch",5000);
+  // With every later UDP update for symbol 1 blocked, advancing past batch 1
+  // proves TCP recovery without depending on verbose per-symbol diagnostics.
   eventually([&] {
     auto log=read_text(dir/"observer.log");
     return log.find("BOOK symbol=1 index=2 ")!=std::string::npos || log.find("BOOK symbol=1 index=3 ")!=std::string::npos;
   },"Observer failed to recover the lost real batch",6000);
+  block_symbol_one.store(false);
   auto log=read_text(dir/"observer.log");
-  require(log.find("event=TCP_START symbol=1",cut)!=std::string::npos || log.find("event=TCP_COMPLETE symbol=1",cut)!=std::string::npos,"No TCP recovery observed after UDP loss");
   require(log.find("quantity=10 numOfOrders=1")!=std::string::npos,"Recovered public book differs from real order");
-  auto before=snapshot(config.query,1); publisher.stop();
-  eventually([&]{return read_text(dir/"observer.log").find("symbol=1 state=STALE")!=std::string::npos;},"Silent feed did not become STALE",6000);
+  auto before=snapshot(config.query,1); const auto outage_log_start=read_text(dir/"observer.log").size(); publisher.stop();
+  eventually([&]{return read_text(dir/"observer.log").find("MARKET_DATA_UNAVAILABLE",outage_log_start)!=std::string::npos;},"Silent feed warning missing",6000);
   publisher.launch(bin/"market_broadcast",{"publish","--config",(dir/"publisher.conf").string()},dir/"publisher-restarted.log"); publisher_ready(config);
   auto after=snapshot(config.query,1); require(before.epoch!=after.epoch,"Restart did not change Publisher epoch");
   eventually([&]{return read_text(dir/"observer.log").find("epoch="+md::epoch_text(after.epoch))!=std::string::npos;},"Observer did not confirm the new epoch",6000);
   alice.cancel(11,accepted.order.orderId); check_public(config,16,0);
   observer.stop(); publisher.stop(); proxy.reset();
-  std::cout << "CHECK intentional_udp_loss=1 automatic_tcp_recovery=PASS silence=STALE restart_epoch=PASS\n";
+  std::cout << "CHECK intentional_udp_loss=" << dropped.load() << " automatic_tcp_recovery=PASS silence=WARNING restart_epoch=PASS\n";
 }
 void recovery_boundaries() {
   md::RecoveryConfig config; auto now=Clock::now(); md::MarketRecovery state({{1,"one"}},config,now);

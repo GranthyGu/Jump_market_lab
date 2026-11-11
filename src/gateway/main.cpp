@@ -1,5 +1,6 @@
 #include "gateway/gateway.hpp"
 #include "shared_data/paths.hpp"
+#include "shared_data/console.hpp"
 #include <atomic>
 #include <cerrno>
 #include <csignal>
@@ -93,7 +94,8 @@ int main(int argc, char** argv) {
     signals.join();
     return 0;
   } catch (const std::exception& e) {
-    std::cerr << "Error: " << e.what() << '\n';
+    std::cerr << marketlab::console::red << "Error: " << e.what() << marketlab::console::reset
+              << '\n';
     return 1;
   }
 }

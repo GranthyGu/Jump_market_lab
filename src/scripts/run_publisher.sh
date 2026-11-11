@@ -23,6 +23,7 @@ Usage: run_publisher.sh [options]
   --interface IPv4  Local multicast sending interface (default from config)
   --help             Show this help
 Keep this terminal open. Ctrl-C stops only this publisher.
+Source outages show one red warning; retries continue silently until recovery.
 HELP
 }
 
