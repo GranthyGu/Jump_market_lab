@@ -101,7 +101,7 @@ with patch.object(runner, 'inventory', return_value=[{}]), patch.object(runner, 
             self.assertEqual({t.name for t in tasks[1:]}, {
                 "persistence_queue_recovery_spsc_park", "persistence_queue_recovery_spsc_yield",
                 "persistence_queue_comparison", "snapshot_contention_benchmark", "trade_history_benchmark",
-                "bpt_cache_concurrency_comparison", "bpt_sqlite_comparison", "cmu_public", "persistence_recovery_audit"})
+                "bpt_cache_concurrency_comparison", "bpt_sqlite_comparison", "cmu_public"})
             self.assertIn("SQLite tests are disabled", next(t.missing for t in tasks if t.name == "bpt_sqlite_comparison"))
             self.assertTrue(all(t.timeout > 0 for t in tasks))
             args.regression_only = True

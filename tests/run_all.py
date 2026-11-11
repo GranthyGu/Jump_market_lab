@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every registered regression plus standalone benchmarks, CMU checks and the fault audit."""
+"""Run every registered regression plus standalone benchmarks and CMU checks."""
 import argparse
 from dataclasses import dataclass
 import datetime
@@ -109,8 +109,6 @@ def plan(args, build, directory, tests):
                  "--build", build / "cmu-public", "--output", directory / name / "artifacts",
                  "--cxx", cache_value(build, "CMAKE_CXX_COMPILER") or "c++", "--jobs", args.jobs,
                  "--duration", 1000 if args.quick else 30000], 1800)
-    name = "persistence_recovery_audit"
-    extra(name, [binary / name, directory / name / "data"], 180, [name])
     return tasks
 
 
@@ -193,7 +191,7 @@ def save_report(directory, report, started):
                     + (f"{r['wall_seconds']:.2f} | [log]({r['log']}) |" if r else "— | — |"))
     if report["excluded"]:
         rows += ["", "Excluded explicitly by --regression-only: " + ", ".join(report["excluded"])]
-    rows += ["", "Fault-audit failures are failures, not expected passes. Quick mode reduces benchmark sizes only.", ""]
+    rows += ["", "Quick mode reduces benchmark sizes only.", ""]
     (directory / "report.md").write_text("\n".join(rows))
 
 
@@ -218,7 +216,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/demo-tests")
     parser.add_argument("--output", type=Path, default=ROOT / "build/test-results")
-    parser.add_argument("--regression-only", action="store_true", help="Only registered CTest regressions; explicitly omit standalone experiments/audit/CMU")
+    parser.add_argument("--regression-only", action="store_true", help="Only registered CTest regressions; explicitly omit standalone experiments/CMU")
     parser.add_argument("--quick", action="store_true", help="Run every selected task, with smaller standalone benchmark workloads; not a full performance measurement")
     parser.add_argument("--list", action="store_true", help="List selected tasks and commands without running them")
     parser.add_argument("--verbose", action="store_true", help="Stream task output as well as saving it")

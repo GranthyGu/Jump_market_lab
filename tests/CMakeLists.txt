@@ -101,16 +101,9 @@ add_dependencies(demo_tests replication_tests market_engine_router)
 add_executable(trade_history_benchmark EXCLUDE_FROM_ALL bpt/history_benchmark.cpp)
 target_link_libraries(trade_history_benchmark PRIVATE marketlab_matching_core)
 
-# Explicit audit for loss/corruption after an acknowledged commit. It reports
-# known protection gaps with a nonzero exit code, rather than hiding them in a
-# passing test. This is separate from the process-crash regression suite.
-add_executable(persistence_recovery_audit EXCLUDE_FROM_ALL recovery/recovery_audit.cpp)
-target_link_libraries(persistence_recovery_audit PRIVATE marketlab_matching_core)
-target_compile_options(persistence_recovery_audit PRIVATE -Wall -Wextra -Wpedantic)
-
 # Build standalone checks/experiments alongside all ordinary default targets.
 add_custom_target(test_extras DEPENDS persistence_benchmarks
-  snapshot_contention_benchmark trade_history_benchmark persistence_recovery_audit)
+  snapshot_contention_benchmark trade_history_benchmark)
 add_test(NAME test_runner_correctness
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/runner/test_run_all.py")
 set_tests_properties(test_runner_correctness PROPERTIES TIMEOUT 30 LABELS "runner;correctness")

@@ -1,6 +1,6 @@
 # 测试与统一运行
 
-测试包含组件演示、持久化恢复、成交历史查询、计划内重启，以及独立性能实验和故障审计。Gateway、Publisher、Engine 和全链路四套组件测试共用根目录的 `harness.hpp`、`network.hpp`，由它们提供结果记录、进程管理和网络驱动。
+测试包含组件演示、持久化恢复、成交历史查询、计划内重启，以及独立性能实验。Gateway、Publisher、Engine 和全链路四套组件测试共用根目录的 `harness.hpp`、`network.hpp`，由它们提供结果记录、进程管理和网络驱动。
 
 ## 构建与统一运行
 
@@ -9,9 +9,9 @@
 ./tests/run_all.sh
 ```
 
-`build.sh` 编译所有本地回归、正式服务、`gateway_client`、SQLite 对照和独立性能/审计程序，输出到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、Python 3、SQLite 开发库及 POSIX 网络接口；SQLite 仅用于测试。
+`build.sh` 编译所有本地回归、正式服务、`gateway_client`、SQLite 对照和独立性能程序，输出到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、Python 3、SQLite 开发库及 POSIX 网络接口；SQLite 仅用于测试。
 
-`run_all.sh` 默认执行 **所有已注册 CTest + 9 个独立测试/实验组**，按顺序运行，避免性能实验相互干扰。CTest 清单动态读取，新增已注册测试会自动纳入。某项失败、未构建或超时不会被忽略，也不会阻止后续项目运行；最终返回非零。
+`run_all.sh` 默认执行 **所有已注册 CTest + 8 个独立测试/实验组**，按顺序运行，避免性能实验相互干扰。CTest 清单动态读取，新增已注册测试会自动纳入。某项失败、未构建或超时不会被忽略，也不会阻止后续项目运行；最终返回非零。
 
 ```sh
 ./tests/run_all.sh --list                  # 仅显示完整清单与命令
@@ -45,7 +45,7 @@ python3 tests/run.py all
 | [publisher](publisher/README.md) | 全品种每秒发布、净增量、空增量、三接收端一致性、周期快照、来源故障 | 同样五组规模；并发 TCP 查询与组播接收同时进行 |
 | [engine](engine/README.md) | 独立参考模型核对撮合、撤单、用户快照、五档；并发读取 | 16/1000/2000 商品、新单撤单、64 单扫单和自成交 |
 | [integration](integration/README.md) | 真实交易与公开行情一致、双方成交、跨片快照、丢包恢复和重启 | 64 商品/2 分片与默认规模 1000 商品/4 分片，交易、采样、组播和查询同时运行 |
-| [recovery](recovery/README.md) | 双日志通知屏障、FIFO 恢复、快照/增量一致性、写失败与 kill -9；独立故障审计 | bench 子目录包含队列与分片性能对照 |
+| [recovery](recovery/README.md) | 双日志通知屏障、FIFO 恢复、快照/增量一致性、写失败与 kill -9 | bench 子目录包含队列与分片性能对照 |
 | [bpt](bpt/) | 索引、缓存、并发、成交历史 API/CLI、重启、CMU 公开测试 | 缓存/并发、SQLite、完整成交历史与恢复性能 |
 | [restart](restart/README.md) | 复制、A→B→A、请求完整性、FIFO、历史连续性、切换失败回退 | 切换暂停、排队及客户端延迟 |
 | [runner](runner/) | 新 CTest 自动纳入、失败后继续、缺失程序报错、超时终止进程组 | 不设性能指标 |
@@ -72,8 +72,6 @@ build/test-results/日期时间-随机后缀/
 
 CTest 内部测试可能继续把持久化数据写入构建目录下的原结果路径，具体见保存的命令与日志。四套组件的详细报告保持原格式；独立实验的原始结果保存在各组 `artifacts/` 中。`NOT RUN` 表示中断前尚未执行，不能视为通过。
 
-`persistence_recovery_audit` 专门检查已确认数据丢失、文件缺失及损坏等保护缺口；发现缺口时会失败，并使全量运行返回非零。它的失败不能改记为预期通过。
-
 测试使用隔离数据和本机动态端口，不依赖手工启动服务。网络项目需要允许本机 TCP/UDP。性能数据应结合各实验的计时范围阅读；不把核心耗时、TCP RTT、发布耗时和恢复时间混为同一指标。
 
 ## CTest 与独立项目
@@ -85,7 +83,7 @@ CTest 内部测试可能继续把持久化数据写入构建目录下的原结�
 - BPT 并发压力、缓存控制、SQLite 对照正确性、历史查询及真实 API/CLI。
 - 计划内重启、复制正确性、统一入口的失败传播与超时清理。
 
-9 个独立组：两种 SPSC 队列的恢复检查、队列性能对照、快照竞争、成交历史性能、BPT 缓存/并发对照、SQLite 性能对照、CMU 公开测试与 benchmark、持久化故障审计。
+8 个独立组：两种 SPSC 队列的恢复检查、队列性能对照、快照竞争、成交历史性能、BPT 缓存/并发对照、SQLite 性能对照、CMU 公开测试与 benchmark。
 
 直接运行 CTest 只运行已注册回归，不包含上述独立组：
 

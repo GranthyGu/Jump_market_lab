@@ -12,7 +12,7 @@ cmake --build build/persistence-check --parallel 4
 ctest --test-dir build/persistence-check -R 'persistence_correctness|recovery_process' --output-on-failure
 ```
 
-也可运行 `./tests/build.sh` 构建全部本地测试，再用 `./tests/run_all.sh --regression-only` 执行所有 CTest 回归；`./tests/run_all.sh` 还会运行独立性能实验、CMU 测试及故障审计。完整入口说明见 [tests/README.md](../README.md)。
+也可运行 `./tests/build.sh` 构建全部本地测试，再用 `./tests/run_all.sh --regression-only` 执行所有 CTest 回归；`./tests/run_all.sh` 还会运行独立性能实验和 CMU 测试。完整入口说明见 [tests/README.md](../README.md)。
 
 每次测试在 `recovery-results/` 下创建新的隔离目录，保留日志和持久化文件供检查，不使用日常数据目录。真实进程测试使用动态 loopback 端口，需允许本机 TCP/UDP。用例失败返回非零。
 

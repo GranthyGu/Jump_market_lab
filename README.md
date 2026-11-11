@@ -64,10 +64,10 @@ Runtime prompts and log messages use English.
 
 The component, recovery, trade-history and planned-restart tests are described in
 [tests/README.md](tests/README.md). Build all local targets with `./tests/build.sh`,
-then run `./tests/run_all.sh` for all regressions, standalone benchmarks, CMU tests
-and the fault audit. Use `--regression-only` for CTest regressions or `--quick` to
+then run `./tests/run_all.sh` for all regressions, standalone benchmarks and CMU tests.
+Use `--regression-only` for CTest regressions or `--quick` to
 reduce standalone benchmark workloads. Each run saves a summary and individual
-logs; failed tests and audit findings produce a nonzero exit code.
+logs; failed tests produce a nonzero exit code.
 
 ## Project objective
 
