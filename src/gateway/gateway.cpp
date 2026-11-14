@@ -1,6 +1,6 @@
 #include "gateway/gateway.hpp"
 #include "shared_data/orders/engine_connections.hpp"
-#include "shared_data/market_data/availability.hpp"
+#include "shared_data/runtime/availability.hpp"
 #include <fstream>
 #include <limits>
 #include <unordered_set>
@@ -178,7 +178,7 @@ class Gateway {
   std::uint64_t sequence, commands = 0, engine_frames = 0, events = 0, logins = 0, replaced = 0;
   std::size_t peak_pending = 0;
   bool maintenance = false;
-  md::AvailabilityNotice availability{"GATEWAY"};
+  runtime::AvailabilityNotice availability{"GATEWAY"};
   Clock::time_point maintenance_started{};
   std::unordered_map<std::string, std::uint32_t> usernames;
   std::vector<ConnectionId> online;

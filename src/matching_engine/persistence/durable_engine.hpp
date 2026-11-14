@@ -2,10 +2,10 @@
 #include <deque>
 #include <thread>
 
-#include "matching_engine/engine.hpp"
-#include "matching_engine/bpt/history_store.hpp"
+#include "matching_engine/core/engine.hpp"
+#include "matching_engine/trade_history/history_store.hpp"
 #include "matching_engine/persistence/queue.hpp"
-#include "matching_engine/persistence/wakeup.hpp"
+#include "shared_data/runtime/wakeup.hpp"
 #include "matching_engine/recovery/storage.hpp"
 
 namespace marketlab::orders::persistence {
@@ -95,8 +95,8 @@ class DurableEngine final : public EngineBackend {
   CommittedState committed_;
   Boundary boundary_;
   Boundary initial_;
-  Wakeup wakeup_;
-  std::unique_ptr<bpt::HistoryStore> history_;
+  runtime::Wakeup wakeup_;
+  std::unique_ptr<trade_history::HistoryStore> history_;
   std::uint64_t executed_ = 0, checkpoint_seq_ = 0;
   std::size_t pending_bytes_ = 0;
   std::deque<std::unique_ptr<Batch>> pending_;

@@ -1,3 +1,4 @@
+#include "shared_data/runtime/io.hpp"
 #include "client/recovery.hpp"
 #include <algorithm>
 #include <limits>
@@ -48,7 +49,7 @@ Message MarketRecovery::Pending::message(std::uint16_t id) const {
 
 MarketRecovery::MarketRecovery(const std::map<std::uint16_t, std::string>& symbols,
                                RecoveryConfig config,
-                               Deadline now,
+                               runtime::Deadline now,
                                Emit emit)
     : config_(config),
       emit_(std::move(emit)) {
@@ -78,7 +79,7 @@ void MarketRecovery::clear_pending(State& state) {
   state.pending_count = 0;
 }
 
-void MarketRecovery::refresh(std::uint16_t id, Deadline now) {
+void MarketRecovery::refresh(std::uint16_t id, runtime::Deadline now) {
   auto& s = states_.at(id);
   const bool gap = s.snapshot && s.highest_seen > s.snapshot->index;
   if (gap && !s.gap_since)
@@ -107,7 +108,7 @@ void MarketRecovery::refresh(std::uint16_t id, Deadline now) {
   }
 }
 
-void MarketRecovery::require_check(std::uint16_t id, Deadline now, std::string_view reason) {
+void MarketRecovery::require_check(std::uint16_t id, runtime::Deadline now, std::string_view reason) {
   auto& s = states_.at(id);
   clear_pending(s);
   if (!s.check_required) {
@@ -119,7 +120,7 @@ void MarketRecovery::require_check(std::uint16_t id, Deadline now, std::string_v
   emit(reason, id);
 }
 
-void MarketRecovery::invalid(std::optional<std::uint16_t> id, Deadline now) {
+void MarketRecovery::invalid(std::optional<std::uint16_t> id, runtime::Deadline now) {
   if (id) {
     if (states_.contains(*id))
       require_check(*id, now, "INVALID_MESSAGE");
@@ -131,7 +132,7 @@ void MarketRecovery::invalid(std::optional<std::uint16_t> id, Deadline now) {
   }
 }
 
-void MarketRecovery::commit(std::uint16_t id, Message snapshot, Deadline now, bool advanced) {
+void MarketRecovery::commit(std::uint16_t id, Message snapshot, runtime::Deadline now, bool advanced) {
   auto& s = states_.at(id);
   snapshot.kind = Kind::Snapshot;
   s.snapshot = std::move(snapshot);
@@ -143,7 +144,7 @@ void MarketRecovery::commit(std::uint16_t id, Message snapshot, Deadline now, bo
   emit("BOOK", id);
 }
 
-bool MarketRecovery::apply(std::uint16_t id, const Message& delta, Deadline now) {
+bool MarketRecovery::apply(std::uint16_t id, const Message& delta, runtime::Deadline now) {
   auto& s = states_.at(id);
   auto result = *s.snapshot;
   for (const auto& change : delta.levels) {
@@ -167,7 +168,7 @@ bool MarketRecovery::apply(std::uint16_t id, const Message& delta, Deadline now)
   return true;
 }
 
-void MarketRecovery::drain(std::uint16_t id, Deadline now) {
+void MarketRecovery::drain(std::uint16_t id, runtime::Deadline now) {
   auto& s = states_.at(id);
   while (s.snapshot && s.snapshot->index != std::numeric_limits<std::uint64_t>::max() &&
          !s.check_required) {
@@ -186,7 +187,7 @@ void MarketRecovery::drain(std::uint16_t id, Deadline now) {
 
 void MarketRecovery::install(std::uint16_t id,
                              const Message& snapshot,
-                             Deadline now,
+                             runtime::Deadline now,
                              bool authoritative) {
   auto& s = states_.at(id);
   if (s.snapshot && snapshot.index < s.snapshot->index)
@@ -219,7 +220,7 @@ void MarketRecovery::install(std::uint16_t id,
   drain(id, now);
 }
 
-void MarketRecovery::udp(const Message& message, Deadline now) {
+void MarketRecovery::udp(const Message& message, runtime::Deadline now) {
   const auto id = message.symbol_id;
   if (!states_.contains(id))
     return;
@@ -284,7 +285,7 @@ void MarketRecovery::udp(const Message& message, Deadline now) {
   refresh(id, now);
 }
 
-void MarketRecovery::confirm_epoch(const Epoch& epoch, Deadline now) {
+void MarketRecovery::confirm_epoch(const Epoch& epoch, runtime::Deadline now) {
   if (!epoch_ || *epoch_ != epoch) {
     if (epoch_)
       retired_.insert(*epoch_);
@@ -314,14 +315,14 @@ void MarketRecovery::confirm_epoch(const Epoch& epoch, Deadline now) {
   }
 }
 
-void MarketRecovery::tick(Deadline now) {
+void MarketRecovery::tick(runtime::Deadline now) {
   for (const auto& [id, s] : states_) {
     (void)s;
     refresh(id, now);
   }
 }
 
-bool MarketRecovery::needs_query(const State& s, std::uint16_t id, Deadline now) const {
+bool MarketRecovery::needs_query(const State& s, std::uint16_t id, runtime::Deadline now) const {
   return !s.snapshot || s.check_required || (probe_ && id == probe_symbol_) ||
          (s.highest_seen > s.snapshot->index &&
           (!s.gap_since ||
@@ -329,7 +330,7 @@ bool MarketRecovery::needs_query(const State& s, std::uint16_t id, Deadline now)
          now - s.advanced >= std::chrono::milliseconds(config_.late_after_ms);
 }
 
-std::optional<SnapshotRequest> MarketRecovery::next_request(Deadline now) {
+std::optional<SnapshotRequest> MarketRecovery::next_request(runtime::Deadline now) {
   if (states_.empty())
     return {};
   auto it = states_.upper_bound(last_requested_);
@@ -357,7 +358,7 @@ bool MarketRecovery::valid(const SnapshotRequest& request) const {
 
 void MarketRecovery::complete(const SnapshotRequest& request,
                               const Message& snapshot,
-                              Deadline now) {
+                              runtime::Deadline now) {
   if (!valid(request))
     return;
   if (snapshot.kind != Kind::Snapshot || snapshot.symbol_id != request.symbol) {
@@ -392,7 +393,7 @@ void MarketRecovery::complete(const SnapshotRequest& request,
   emit("TCP_COMPLETE", request.symbol);
 }
 
-void MarketRecovery::failed(const SnapshotRequest& request, Deadline now) {
+void MarketRecovery::failed(const SnapshotRequest& request, runtime::Deadline now) {
   if (!valid(request))
     return;
   auto& s = states_.at(request.symbol);

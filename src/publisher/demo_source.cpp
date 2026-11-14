@@ -1,3 +1,6 @@
+#include "shared_data/runtime/log.hpp"
+#include "shared_data/runtime/thread.hpp"
+#include "shared_data/runtime/io.hpp"
 #include "publisher/demo_source.hpp"
 
 #include <iostream>
@@ -45,14 +48,14 @@ void SyntheticMarketSource::run(const std::atomic_bool& stop) {
   };
   SharedViewWriter shared(shard_.mmap_path, shard_.symbols.size());
   shared.publish(provider());
-  auto listener = listen_tcp(shard_.host, shard_.port);
-  Log(std::cout) << "Mock " << shard_.name << " TCP=" << shard_.host << ':' << shard_.port
+  auto listener = runtime::listen_tcp(shard_.host, shard_.port);
+  runtime::Log(std::cout) << "Mock " << shard_.name << " TCP=" << shard_.host << ':' << shard_.port
                  << " mmap=" << shard_.mmap_path << " source_epoch=" << epoch_text(epoch_) << '\n';
-  StopThread updater([&](const std::atomic_bool& cancelled) {
-    const auto started = Clock::now();
+  runtime::StopThread updater([&](const std::atomic_bool& cancelled) {
+    const auto started = runtime::Clock::now();
     while (!stop.load() && !cancelled.load()) {
       const auto elapsed =
-          std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
+          std::chrono::duration_cast<std::chrono::milliseconds>(runtime::Clock::now() - started).count();
       auto view =
           generate(static_ ? 0 : static_cast<std::uint64_t>(elapsed / config_.mock_step_ms));
       {
@@ -62,10 +65,10 @@ void SyntheticMarketSource::run(const std::atomic_bool& stop) {
       try {
         shared.publish(view);
       } catch (const std::exception& e) {
-        Log(std::cerr) << "Shared-view update failed: " << e.what() << '\n';
+        runtime::Log(std::cerr) << "Shared-view update failed: " << e.what() << '\n';
       }
-      sleep_until_or_stop(
-          Clock::now() + std::chrono::milliseconds(config_.mock_update_ms), stop, cancelled);
+      runtime::sleep_until_or_stop(
+          runtime::Clock::now() + std::chrono::milliseconds(config_.mock_update_ms), stop, cancelled);
     }
   });
   serve_shard(
@@ -90,7 +93,7 @@ void run_demo_sources(const Config& config,
       try {
         ptr->run(stop);
       } catch (const std::exception& e) {
-        Log(std::cerr) << "Mock failed: " << e.what() << '\n';
+        runtime::Log(std::cerr) << "Mock failed: " << e.what() << '\n';
         failed.store(true);
         stop.store(true);
       }

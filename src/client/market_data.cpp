@@ -1,6 +1,7 @@
+#include "shared_data/runtime/io.hpp"
 #include "client/market_data.hpp"
 #include "client/recovery.hpp"
-#include "shared_data/market_data/availability.hpp"
+#include "shared_data/runtime/availability.hpp"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -15,12 +16,12 @@
 
 namespace marketlab::md {
 namespace {
-void observe_datagrams(Fd fd, std::size_t count, const std::atomic_bool& stop) {
+void observe_datagrams(runtime::Fd fd, std::size_t count, const std::atomic_bool& stop) {
   std::size_t received = 0;
-  AvailabilityNotice availability("MARKET_DATA");
-  auto last_received = Clock::now();
+  runtime::AvailabilityNotice availability("MARKET_DATA");
+  auto last_received = runtime::Clock::now();
   while (!stop.load() && (!count || received < count)) {
-    if (Clock::now() - last_received >= std::chrono::seconds(3))
+    if (runtime::Clock::now() - last_received >= std::chrono::seconds(3))
       availability.unavailable("No market-data packets for 3s; displayed prices may be stale");
     pollfd p{fd.get(), POLLIN, 0};
     if (poll(&p, 1, 100) <= 0)
@@ -33,7 +34,7 @@ void observe_datagrams(Fd fd, std::size_t count, const std::atomic_bool& stop) {
       throw std::runtime_error(std::string("UDP recv: ") + std::strerror(errno));
     try {
       const auto message = decode(std::span(data.data(), static_cast<std::size_t>(n)));
-      last_received = Clock::now();
+      last_received = runtime::Clock::now();
       availability.recovered();
       print_message(message);
       ++received;
@@ -45,7 +46,7 @@ void observe_datagrams(Fd fd, std::size_t count, const std::atomic_bool& stop) {
 }  // namespace
 
 void observe_udp(const Endpoint& endpoint, std::size_t count, const std::atomic_bool& stop) {
-  auto fd = bind_udp(endpoint.host, endpoint.port);
+  auto fd = runtime::bind_udp(endpoint.host, endpoint.port);
   std::cout << "Listening UDP " << endpoint.host << ':' << endpoint.port << std::endl;
   observe_datagrams(std::move(fd), count, stop);
 }
@@ -60,17 +61,17 @@ void observe_multicast(const MulticastConfig& config,
 }
 
 Message query_snapshot(const Endpoint& endpoint, std::uint16_t symbol, int timeout_ms) {
-  const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
-  auto fd = connect_tcp(endpoint.host, endpoint.port, deadline);
+  const auto deadline = runtime::Clock::now() + std::chrono::milliseconds(timeout_ms);
+  auto fd = runtime::connect_tcp(endpoint.host, endpoint.port, deadline);
   Bytes request;
   append_uint(request, symbol, 2);
-  send_all(fd.get(), request, deadline);
-  const auto prefix = receive_exact(fd.get(), 2, deadline);
+  runtime::send_all(fd.get(), request, deadline);
+  const auto prefix = runtime::receive_exact(fd.get(), 2, deadline);
   std::size_t offset = 0;
   const auto length = read_uint(prefix, offset, 2);
   if (length < header_size || length > max_snapshot_size)
     throw std::runtime_error("Invalid snapshot length");
-  auto message = decode(receive_exact(fd.get(), length, deadline));
+  auto message = decode(runtime::receive_exact(fd.get(), length, deadline));
   if (message.kind != Kind::Snapshot || message.symbol_id != symbol)
     throw std::runtime_error("Unexpected snapshot");
   return message;
@@ -78,15 +79,15 @@ Message query_snapshot(const Endpoint& endpoint, std::uint16_t symbol, int timeo
 
 namespace {
 struct Query {
-  Fd socket;
+  runtime::Fd socket;
   SnapshotRequest request;
-  Deadline deadline;
+  runtime::Deadline deadline;
   bool connecting = false, done = false;
   std::array<std::uint8_t, 2> output;
   std::size_t sent = 0, expected = 0;
   Bytes input;
 
-  Query(const Endpoint& endpoint, SnapshotRequest ticket, Deadline until)
+  Query(const Endpoint& endpoint, SnapshotRequest ticket, runtime::Deadline until)
       : socket(::socket(AF_INET, SOCK_STREAM, 0)),
         request(ticket),
         deadline(until),
@@ -210,14 +211,14 @@ class MarketConsole {
   }
 
  private:
-  AvailabilityNotice availability_{"MARKET_DATA"};
+  runtime::AvailabilityNotice availability_{"MARKET_DATA"};
 };
 }
 
 void observe_market(const Config& config, std::size_t count, const std::atomic_bool& stop) {
   auto udp = config.multicast
                  ? join_multicast(*config.multicast)
-                 : bind_udp(config.receivers.front().host, config.receivers.front().port);
+                 : runtime::bind_udp(config.receivers.front().host, config.receivers.front().port);
   if (config.multicast)
     std::cout << "Joined UDP multicast " << config.multicast->group.host << ':'
               << config.multicast->group.port
@@ -230,13 +231,13 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
             << std::flush;
   MarketConsole console;
   MarketRecovery recovery(
-      config.symbols, config.recovery, Clock::now(), [&](auto event, auto id, const auto& view) {
+      config.symbols, config.recovery, runtime::Clock::now(), [&](auto event, auto id, const auto& view) {
         console.event(event, id, view);
       });
   std::vector<Query> queries;
   std::size_t received = 0;
   while (!stop.load() && (!count || received < count)) {
-    auto now = Clock::now();
+    auto now = runtime::Clock::now();
     recovery.tick(now);
     // Obsolete tasks are closed, so their partial responses cannot enter a later query.
     std::erase_if(queries, [&](Query& query) {
@@ -292,14 +293,14 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
           const auto message = decode(std::span(bytes).first(size));
           if (!config.symbols.contains(message.symbol_id))
             throw std::runtime_error("Unknown UDP symbol ID");
-          recovery.udp(message, Clock::now());
+          recovery.udp(message, runtime::Clock::now());
           ++received;
         } catch (const std::exception&) {
           console.unavailable();
           std::optional<std::uint16_t> symbol;
           if (size >= 19)
             symbol = static_cast<std::uint16_t>(bytes[17] | (std::uint16_t(bytes[18]) << 8));
-          recovery.invalid(symbol, Clock::now());
+          recovery.invalid(symbol, runtime::Clock::now());
         }
       }
     }
@@ -313,12 +314,12 @@ void observe_market(const Config& config, std::size_t count, const std::atomic_b
         continue;
       try {
         if (const auto response = query.ready(descriptors[i + 1].revents)) {
-          recovery.complete(query.request, *response, Clock::now());
+          recovery.complete(query.request, *response, runtime::Clock::now());
           query.done = true;
         }
       } catch (const std::exception&) {
         console.unavailable();
-        recovery.failed(query.request, Clock::now());
+        recovery.failed(query.request, runtime::Clock::now());
         query.done = true;
       }
     }

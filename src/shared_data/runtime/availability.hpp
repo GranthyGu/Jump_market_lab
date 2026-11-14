@@ -3,11 +3,12 @@
 #include "shared_data/console.hpp"
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
 
-namespace marketlab::md {
+namespace marketlab::runtime {
 // One conspicuous warning per outage, followed by one recovery notice. ANSI
 // color is retained in redirected service logs because launchers tail them.
 class AvailabilityNotice {
@@ -50,4 +51,4 @@ class AvailabilityNotice {
   std::string component_;
   bool active_ = false;
 };
-}  // namespace marketlab::md
+}  // namespace marketlab::runtime

@@ -1,7 +1,8 @@
+#include "shared_data/runtime/thread.hpp"
 #include "harness.hpp"
 #include "network.hpp"
-#include "matching_engine/engine.hpp"
-#include "matching_engine/snapshot_mailbox.hpp"
+#include "matching_engine/core/engine.hpp"
+#include "matching_engine/market_data/snapshot_mailbox.hpp"
 #include <random>
 #include <limits>
 
@@ -170,8 +171,8 @@ void concurrent(unsigned scale) {
   Core c(64); std::atomic_bool done{false}; std::atomic<unsigned> reads{0}; std::exception_ptr error; std::mutex mutex;
   od::SnapshotMailbox mailbox(c.engine.symbol_count());
   std::atomic<unsigned> finished{0};
-  std::vector<std::unique_ptr<md::StopThread>> readers;
-  for(unsigned r=0;r<4;++r) readers.push_back(std::make_unique<md::StopThread>([&](const auto& stop) {
+  std::vector<std::unique_ptr<marketlab::runtime::StopThread>> readers;
+  for(unsigned r=0;r<4;++r) readers.push_back(std::make_unique<marketlab::runtime::StopThread>([&](const auto& stop) {
     try { while(!done.load() && !stop.load()) {
       for(const auto& [id,b]:mailbox.read(until()).books) { (void)id; md::validate_book(b); for(const auto& l:b.levels) require(l.quantity==5*l.num_orders,"Torn concurrent market aggregate"); }
       ++reads; std::this_thread::yield();

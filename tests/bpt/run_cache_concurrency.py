@@ -38,7 +38,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     work = args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
-    sources = sorted((repo / "src/matching_engine/bpt").rglob("*"))
+    sources = sorted((repo / "src/matching_engine/trade_history").rglob("*"))
     sources += [Path(__file__).resolve(), repo / "tests/bpt/cache_concurrency_benchmark.cpp",
                 repo / "tests/CMakeLists.txt", repo / "src/CMakeLists.txt"]
     hashes = {str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()

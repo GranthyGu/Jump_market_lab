@@ -2,12 +2,12 @@
 #include <condition_variable>
 #include <iostream>
 #include <unistd.h>
-#include "matching_engine/bpt/history_store.hpp"
+#include "matching_engine/trade_history/history_store.hpp"
 
 namespace m = marketlab;
 namespace o = m::orders;
 namespace p = o::persistence;
-namespace b = o::bpt;
+namespace history = o::trade_history;
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 namespace {
@@ -19,7 +19,7 @@ struct Wakeup {
   void wait() { std::unique_lock lock(mutex); cv.wait_for(lock,10ms,[&] { return ready; }); ready=false; }
 };
 struct Page { unsigned count=0; m::TradeHistoryEnd end{}; };
-Page query(b::HistoryStore& store,Wakeup& wake,unsigned user,std::uint64_t through,std::uint64_t after=0) {
+Page query(history::HistoryStore& store,Wakeup& wake,unsigned user,std::uint64_t through,std::uint64_t after=0) {
   bool done=false; Page page;
   m::TradeHistoryRequest request{{m::MessageType::TradeHistoryRequest,sizeof(request),1},1,256,after,through};
   store.request({0,o::LinkKind::History,1,user,1},request,through,[&](auto kind,const auto&,auto bytes) {
@@ -63,7 +63,7 @@ int main(int argc,char** argv) {
     std::cout << "LOG trades=" << trades << " bytes=" << end << " write_and_sync_ms=" << milliseconds(generated) << '\n';
     Wakeup wake;
     {
-      auto replay=Clock::now();b::HistoryStore store(root,config,1,end,1024,64,[&] { wake.notify(); },UINT64_MAX);
+      auto replay=Clock::now();history::HistoryStore store(root,config,1,end,1024,64,[&] { wake.notify(); },UINT64_MAX);
       require(query(store,wake,1,end).count==256,"hot-user first page");
       std::cout << "INDEX full_replay_through_query_ms=" << milliseconds(replay) << " cache_bytes=" << 8*1024*1024 << '\n';
       std::vector<double> hot,sparse;
@@ -80,7 +80,7 @@ int main(int argc,char** argv) {
       std::cout << "CHECKPOINT milliseconds=" << milliseconds(close) << " bytes=" << std::filesystem::file_size(root/"history/index.snapshot") << '\n';
     }
     {
-      auto reopen=Clock::now();b::HistoryStore store(root,config,1,end,1024,64,[&] { wake.notify(); });
+      auto reopen=Clock::now();history::HistoryStore store(root,config,1,end,1024,64,[&] { wake.notify(); });
       require(query(store,wake,1,end).count==256,"reopen first page");
       std::cout << "RESTORE through_first_query_ms=" << milliseconds(reopen) << '\n';
     }

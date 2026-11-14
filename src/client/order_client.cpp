@@ -1,6 +1,6 @@
+#include "shared_data/runtime/io.hpp"
 #include "shared_data/orders/engine_link.hpp"
 #include "shared_data/orders/config.hpp"
-#include "shared_data/market_data/transport.hpp"
 #include "shared_data/console.hpp"
 
 #include <arpa/inet.h>
@@ -22,7 +22,6 @@
 namespace {
 using namespace marketlab;
 using namespace marketlab::orders;
-namespace md = marketlab::md;
 
 template <typename T>
 T number(const std::string& text) {
@@ -112,12 +111,12 @@ class Console {
 
   int run() {
     while (!interrupted_) {
-      if (recovering_ && md::Clock::now() >= reconnect_deadline_)
+      if (recovering_ && runtime::Clock::now() >= reconnect_deadline_)
         throw std::runtime_error("RECONNECT_TIMEOUT: session unavailable for 20s; exiting");
       try {
-        if (!fd_ && md::Clock::now() >= retry_at_)
+        if (!fd_ && runtime::Clock::now() >= retry_at_)
           connect();
-        if (waiting_ && md::Clock::now() >= deadline_)
+        if (waiting_ && runtime::Clock::now() >= deadline_)
           throw ConnectionFailure("Response timeout");
         if (!step())
           return 0;
@@ -182,7 +181,7 @@ class Console {
   }
 
   Options options_;
-  md::Fd fd_;
+  runtime::Fd fd_;
   Bytes input_;
   RequestId next_ = 1, waiting_ = 0;
   OrderId last_order_ = 0;
@@ -193,17 +192,17 @@ class Console {
   std::deque<TradeHistoryEnd> history_pages_;
   std::map<std::uint16_t, std::uint32_t> history_page_counts_;
   std::map<std::uint16_t, TradeId> history_last_ids_;
-  md::Clock::time_point deadline_;
+  runtime::Clock::time_point deadline_;
   static constexpr auto tolerance = std::chrono::seconds(20);
   static constexpr auto retry_interval = std::chrono::milliseconds(200);
   bool recovering_ = false, session_ready_ = false, recovered_last_order_ = false;
   std::size_t recovered_orders_ = 0;
-  md::Clock::time_point reconnect_deadline_, retry_at_{};
+  runtime::Clock::time_point reconnect_deadline_, retry_at_{};
 
   void disconnected(const std::string& reason) {
     if (!recovering_) {
       recovering_ = true;
-      reconnect_deadline_ = md::Clock::now() + tolerance;
+      reconnect_deadline_ = runtime::Clock::now() + tolerance;
       std::cout << console::red << "DISCONNECTED: " << reason
                 << "; retrying every 200ms for up to 20s";
       if (waiting_ && !snapshot_) {
@@ -221,15 +220,15 @@ class Console {
     history_pages_.clear();
     history_page_counts_.clear();
     history_last_ids_.clear();
-    retry_at_ = md::Clock::now() + retry_interval;
+    retry_at_ = runtime::Clock::now() + retry_interval;
   }
 
   void connect() {
-    auto until = md::Clock::now() + std::chrono::milliseconds(500);
+    auto until = runtime::Clock::now() + std::chrono::milliseconds(500);
     if (recovering_)
       until = std::min(until, reconnect_deadline_);
     try {
-      fd_ = md::connect_tcp(options_.host, options_.port, until);
+      fd_ = runtime::connect_tcp(options_.host, options_.port, until);
     } catch (const std::exception& error) {
       throw ConnectionFailure(error.what());
     }
@@ -248,11 +247,11 @@ class Console {
       throw std::runtime_error("Request IDs exhausted");
     value.header = {type, sizeof(T), next_++};
     waiting_ = value.header.requestId;
-    deadline_ = md::Clock::now() + std::chrono::seconds(35);
+    deadline_ = runtime::Clock::now() + std::chrono::seconds(35);
     if (recovering_)
-      deadline_ = std::min(reconnect_deadline_, md::Clock::now() + std::chrono::seconds(3));
+      deadline_ = std::min(reconnect_deadline_, runtime::Clock::now() + std::chrono::seconds(3));
     try {
-      md::send_all(fd_.get(), record_bytes(value), deadline_);
+      runtime::send_all(fd_.get(), record_bytes(value), deadline_);
     } catch (const std::exception& error) {
       throw ConnectionFailure(error.what());
     }
@@ -478,7 +477,7 @@ class Console {
         if (recovering_) {
           // Only a complete authenticated snapshot ends the outage window.
           // A successful TCP connect alone must never reset its deadline.
-          if (md::Clock::now() >= reconnect_deadline_)
+          if (runtime::Clock::now() >= reconnect_deadline_)
             throw std::runtime_error("RECONNECT_TIMEOUT: session unavailable for 20s; exiting");
           recovering_ = false;
           if (!recovered_last_order_)

@@ -3,7 +3,7 @@
 #include <iostream>
 #include <utility>
 
-namespace marketlab::orders::bpt {
+namespace marketlab::orders::trade_history {
 using namespace persistence;
 
 namespace {
@@ -59,7 +59,7 @@ HistoryStore::HistoryStore(const std::filesystem::path& root,
   }
   fingerprint_ ^= shard_;
   bool restored = restore(recovered_end);
-  index_ = std::make_unique<TradeIndex>(working_path_, cache_pages, restored);
+  index_ = std::make_unique<bpt::TradeIndex>(working_path_, cache_pages, restored);
   std::cout << "HISTORY_INDEX shard=" << shard_ << " restored=" << restored
             << " indexed_bytes=" << indexed_ << " committed_bytes=" << recovered_end
             << " cache_pages=" << cache_pages << std::endl;
@@ -226,7 +226,7 @@ void HistoryStore::index_worker() {
           const auto raw =
               std::span(frame->payload)
                   .subspan(static_cast<std::size_t>(i) * stored_trade_bytes, stored_trade_bytes);
-          const TradePosition where{frame->start, i, crc32c(raw)};
+          const bpt::TradePosition where{frame->start, i, crc32c(raw)};
           index_->insert(buyer, where);
           if (buyer != seller)
             index_->insert(seller, where);
@@ -424,4 +424,4 @@ void HistoryStore::close() noexcept {
   if (index_thread_.joinable())
     index_thread_.join();
 }
-}  // namespace marketlab::orders::bpt
+}  // namespace marketlab::orders::trade_history

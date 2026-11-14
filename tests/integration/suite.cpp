@@ -1,3 +1,5 @@
+#include "shared_data/runtime/thread.hpp"
+#include "shared_data/runtime/io.hpp"
 #include "network.hpp"
 #include "client/recovery.hpp"
 using namespace demo;
@@ -13,7 +15,7 @@ void check_public(const md::Config& config,unsigned products,unsigned quantity) 
     try { auto m=snapshot(config.query,1); return quantity?m.levels.size()==1 && m.levels[0].quantity==quantity:m.levels.empty(); }
     catch(...) { return false; }
   },"Publisher did not catch up with matching state",5000);
-  auto fd=md::connect_tcp(config.query.host,config.query.port,until());
+  auto fd=marketlab::runtime::connect_tcp(config.query.host,config.query.port,until());
   for(unsigned id=1;id<=products;++id) {
     auto m=snapshot(config.query,id,&fd);
     if(!quantity) require(m.levels.empty(),"Canceled order still public");
@@ -24,9 +26,9 @@ void check_public(const md::Config& config,unsigned products,unsigned quantity) 
 void fill_roundtrip(Suite& suite,const fs::path& bin,unsigned products,unsigned shards,unsigned scale) {
   auto label=std::to_string(products)+"p_"+std::to_string(shards)+"s"; auto dir=suite.output/label;
   Exchange ex(bin,dir,products,shards); auto config=ex.market_config(); write_market(config,dir/"publisher.conf");
-  md::Fd udp=md::join_multicast(*config.multicast);
+  marketlab::runtime::Fd udp=md::join_multicast(*config.multicast);
   std::atomic<unsigned> packets{0}; std::exception_ptr capture_error;
-  auto capture=std::make_unique<md::StopThread>([&](const auto& stop) {
+  auto capture=std::make_unique<marketlab::runtime::StopThread>([&](const auto& stop) {
     try { while(!stop.load()) {
       pollfd p{udp.get(),POLLIN,0}; if(poll(&p,1,20)<=0) continue;
       auto m=datagram(udp.get()); require(m.symbol_id>=1 && m.symbol_id<=products,"Unknown public symbol"); ++packets;
@@ -78,8 +80,8 @@ void fill_roundtrip(Suite& suite,const fs::path& bin,unsigned products,unsigned 
   check_public(config,products,0);
   // Parallel load while Publisher sampling, UDP reception and TCP queries coexist.
   std::atomic_bool query_done{false}; std::atomic<unsigned> queries{0}; std::exception_ptr query_error;
-  auto query_worker=std::make_unique<md::StopThread>([&](const auto& stop) {
-    try { auto fd=md::connect_tcp(config.query.host,config.query.port,until());
+  auto query_worker=std::make_unique<marketlab::runtime::StopThread>([&](const auto& stop) {
+    try { auto fd=marketlab::runtime::connect_tcp(config.query.host,config.query.port,until());
       while(!query_done.load() && !stop.load()) { auto m=snapshot(config.query,1,&fd); md::validate_book({1,m.levels}); ++queries; std::this_thread::sleep_for(3ms); }
     } catch(...) { query_error=std::current_exception(); }
   });
@@ -103,7 +105,7 @@ void recovery(const fs::path& bin,const fs::path& dir) {
   observer_config.multicast->group.host="239.10.20.32"; write_market(observer_config,dir/"observer.conf");
   md::UdpSender relay(*observer_config.multicast); std::atomic<unsigned> dropped{0};
   std::atomic_bool block_symbol_one{true};
-  auto proxy=std::make_unique<md::StopThread>([&](const auto& stop) {
+  auto proxy=std::make_unique<marketlab::runtime::StopThread>([&](const auto& stop) {
     while(!stop.load()) {
       pollfd p{incoming.get(),POLLIN,0}; if(poll(&p,1,20)<=0) continue;
       try { auto m=datagram(incoming.get()); if(m.symbol_id==1 && m.index>=2 && block_symbol_one.load()) { ++dropped; continue; } relay.send(md::encode(m)); }

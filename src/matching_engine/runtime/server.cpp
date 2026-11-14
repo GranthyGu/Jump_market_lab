@@ -1,11 +1,13 @@
-#include "matching_engine/server.hpp"
+#include "shared_data/runtime/thread.hpp"
+#include "shared_data/runtime/io.hpp"
+#include "matching_engine/runtime/server.hpp"
 
 #include <fstream>
 
-#include "matching_engine/engine.hpp"
+#include "matching_engine/core/engine.hpp"
 #include "matching_engine/cluster/worker.hpp"
 #include "matching_engine/persistence/durable_engine.hpp"
-#include "matching_engine/snapshot_mailbox.hpp"
+#include "matching_engine/market_data/snapshot_mailbox.hpp"
 #include "shared_data/market_data/transport.hpp"
 #include "shared_data/orders/engine_connections.hpp"
 
@@ -94,7 +96,7 @@ void serve_order_engine(EngineBackend& book,
   io.listen(found->address, Framing::Internal, 4);
   // Publisher samples the same live order state through the existing IPC.
   std::atomic_bool market_failed{false};
-  std::unique_ptr<md::StopThread> market_tcp, market_shared;
+  std::unique_ptr<runtime::StopThread> market_tcp, market_shared;
 
   // Destruct before the joining threads, including on partial startup failure.
   struct CloseSnapshots {
@@ -106,14 +108,14 @@ void serve_order_engine(EngineBackend& book,
   } close_snapshots{snapshots};
 
   if (market_port) {
-    auto listener = md::listen_tcp(found->address.host, market_port);
-    market_tcp = std::make_unique<md::StopThread>(
+    auto listener = runtime::listen_tcp(found->address.host, market_port);
+    market_tcp = std::make_unique<runtime::StopThread>(
         [&, listener = std::move(listener)](const auto& cancelled) mutable {
           try {
             md::serve_shard(
                 std::move(listener),
                 [&] {
-                  return snapshots.read(md::Clock::now() +
+                  return snapshots.read(runtime::Clock::now() +
                                         std::chrono::milliseconds(c.request_timeout_ms));
                 },
                 cancelled,
@@ -128,13 +130,13 @@ void serve_order_engine(EngineBackend& book,
   if (!mmap_path.empty()) {
     auto writer = std::make_unique<md::SharedViewWriter>(mmap_path, book.symbol_count());
     market_shared =
-        std::make_unique<md::StopThread>([&, writer = std::move(writer)](const auto& cancelled) {
+        std::make_unique<runtime::StopThread>([&, writer = std::move(writer)](const auto& cancelled) {
           try {
             while (!cancelled.load()) {
-              writer->publish(snapshots.read(md::Clock::now() +
+              writer->publish(snapshots.read(runtime::Clock::now() +
                                              std::chrono::milliseconds(c.request_timeout_ms)));
-              md::sleep_until_or_stop(
-                  md::Clock::now() + std::chrono::milliseconds(100), cancelled, cancelled);
+              runtime::sleep_until_or_stop(
+                  runtime::Clock::now() + std::chrono::milliseconds(100), cancelled, cancelled);
             }
           } catch (const std::exception& e) {
             if (!stop.load() && !cancelled.load()) {

@@ -1,5 +1,5 @@
+#include "shared_data/runtime/thread.hpp"
 #include "matching_engine/cluster/router.hpp"
-#include "shared_data/market_data/transport.hpp"
 #include "shared_data/paths.hpp"
 #include <csignal>
 #include <iostream>
@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
     auto c = orders::load_order_config(config);
     c.trace = trace;
     std::atomic_bool stop{false};
-    md::StopThread signals([&](const auto& cancelled) {
+    runtime::StopThread signals([&](const auto& cancelled) {
       while (!cancelled.load() && !interrupted)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       if (interrupted)

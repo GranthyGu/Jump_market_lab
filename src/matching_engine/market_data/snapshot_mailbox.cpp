@@ -1,4 +1,5 @@
-#include "matching_engine/snapshot_mailbox.hpp"
+#include "shared_data/runtime/io.hpp"
+#include "matching_engine/market_data/snapshot_mailbox.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <climits>
@@ -74,7 +75,7 @@ void SnapshotMailbox::abandon(Slot& slot) noexcept {
   }
 }
 
-md::ShardView SnapshotMailbox::read(md::Deadline deadline) {
+md::ShardView SnapshotMailbox::read(runtime::Deadline deadline) {
   if (closed_.load(std::memory_order_acquire))
     throw std::runtime_error("Snapshot mailbox stopped");
   Slot* selected = nullptr;
@@ -100,7 +101,7 @@ md::ShardView SnapshotMailbox::read(md::Deadline deadline) {
     for (;;) {
       if (closed_.load(std::memory_order_acquire))
         throw std::runtime_error("Snapshot mailbox stopped");
-      const auto now = md::Clock::now();
+      const auto now = runtime::Clock::now();
       if (now >= deadline)
         throw std::runtime_error("Snapshot mailbox timeout");
       if (slot.state.load(std::memory_order_acquire) == Ready) {

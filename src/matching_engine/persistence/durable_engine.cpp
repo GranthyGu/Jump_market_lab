@@ -35,7 +35,7 @@ DurableEngine::DurableEngine(const OrderConfig& c, std::uint16_t shard, Options 
   File initial(storage_.delta_path(executed_ + 1), true, true);
   initial.sync();
   sync_directory(storage_.root() / "orders");
-  history_ = std::make_unique<bpt::HistoryStore>(
+  history_ = std::make_unique<trade_history::HistoryStore>(
       storage_.root(),
       c,
       shard,

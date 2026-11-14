@@ -1,4 +1,7 @@
+#include "shared_data/runtime/thread.hpp"
+#include "shared_data/runtime/io.hpp"
 #include "matching_engine/cluster/router.hpp"
+#include "shared_data/market_data/transport.hpp"
 #include "matching_engine/cluster/rpc.hpp"
 #include "matching_engine/persistence/codec.hpp"
 #include "shared_data/orders/engine_connections.hpp"
@@ -135,7 +138,7 @@ class Router {
   struct MarketRoute {
     std::atomic<std::uint16_t> port{0};
     const md::Epoch epoch = md::new_epoch();
-    std::unique_ptr<md::StopThread> thread;
+    std::unique_ptr<runtime::StopThread> thread;
   };
 
   struct Queued {
@@ -196,10 +199,10 @@ class Router {
       for (std::size_t i = 0; i < c.products.size(); ++i)
         if (c.products[i].shard == id)
           source.symbols.push_back(static_cast<std::uint16_t>(i + 1));
-      auto listener = md::listen_tcp("127.0.0.1", public_port);
+      auto listener = runtime::listen_tcp("127.0.0.1", public_port);
       // The owning Shard outlives the joining thread; don't capture shared_ptr
       // here, which would form a cycle and leave the listener alive at shutdown.
-      route->thread = std::make_unique<md::StopThread>(
+      route->thread = std::make_unique<runtime::StopThread>(
           [state = route.get(), source, listener = std::move(listener)](const auto& stop) mutable {
             std::unique_ptr<md::ShardSource> connection;
             std::uint16_t connected = 0;
@@ -216,7 +219,7 @@ class Router {
                       }
                       try {
                         auto view =
-                            connection->read(md::Clock::now() + std::chrono::milliseconds(700));
+                            connection->read(runtime::Clock::now() + std::chrono::milliseconds(700));
                         if (state->port.load() == port) {
                           // The logical shard history continues through a planned
                           // cut. Publisher epochs change only on router restart.

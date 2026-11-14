@@ -1,3 +1,4 @@
+#include "shared_data/runtime/thread.hpp"
 #include "publisher/app.hpp"
 #include "shared_data/paths.hpp"
 #include "publisher/publisher.hpp"
@@ -113,7 +114,7 @@ int marketlab::md::run_publisher_cli(int argc, char** argv) {
       validate_multicast(*config.multicast);
     }
     std::atomic_bool stop{false};
-    StopThread signals([&](const std::atomic_bool& cancelled) {
+    runtime::StopThread signals([&](const std::atomic_bool& cancelled) {
       while (!cancelled.load() && !interrupted)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
       if (interrupted)

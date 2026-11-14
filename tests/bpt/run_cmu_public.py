@@ -40,10 +40,10 @@ def main():
         raise SystemExit("Refusing modified upstream tests/benchmark")
     # Only the disposable clone receives links. Tracked production files remain
     # the single source of truth, and the tests/benchmark remain upstream originals.
-    for original in (repo / "src/matching_engine/bpt/cmu/src").rglob("*"):
+    for original in (repo / "src/matching_engine/trade_history/index/cmu/src").rglob("*"):
         if not original.is_file():
             continue
-        target = source / "src" / original.relative_to(repo / "src/matching_engine/bpt/cmu/src")
+        target = source / "src" / original.relative_to(repo / "src/matching_engine/trade_history/index/cmu/src")
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() or target.is_symlink():
             target.unlink()

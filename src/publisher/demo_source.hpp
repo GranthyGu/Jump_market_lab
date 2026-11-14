@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shared_data/market_data/transport.hpp"
+#include <mutex>
 
 namespace marketlab::md {
 // This simulator only supplies aggregate views; it does not execute orders.

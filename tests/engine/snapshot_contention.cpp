@@ -1,8 +1,8 @@
 // Fixed before the production change. Both versions use this exact workload.
 #include "harness.hpp"
-#include "matching_engine/engine.hpp"
-#if __has_include("matching_engine/snapshot_mailbox.hpp")
-#include "matching_engine/snapshot_mailbox.hpp"
+#include "matching_engine/core/engine.hpp"
+#if __has_include("matching_engine/market_data/snapshot_mailbox.hpp")
+#include "matching_engine/market_data/snapshot_mailbox.hpp"
 #define HAS_SNAPSHOT_MAILBOX 1
 #endif
 #include <atomic>

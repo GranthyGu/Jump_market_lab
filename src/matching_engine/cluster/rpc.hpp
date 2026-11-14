@@ -1,9 +1,10 @@
 #pragma once
+#include "shared_data/runtime/thread.hpp"
 #include <future>
+#include <mutex>
 #include <optional>
 
-#include "matching_engine/persistence/wakeup.hpp"
-#include "shared_data/market_data/transport.hpp"
+#include "shared_data/runtime/wakeup.hpp"
 #include "shared_data/orders/engine_link.hpp"
 
 namespace marketlab::orders::cluster {
@@ -28,11 +29,11 @@ class RpcServer {
     std::promise<Bytes> reply;
   };
 
-  persistence::Wakeup wakeup_;
+  runtime::Wakeup wakeup_;
   std::mutex mutex_;
   std::shared_ptr<Request> request_;
   bool closed_ = false;
-  std::unique_ptr<md::StopThread> thread_;
+  std::unique_ptr<runtime::StopThread> thread_;
 };
 
 Bytes text_bytes(const std::string&);

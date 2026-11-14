@@ -5,8 +5,8 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "matching_engine/active_index.hpp"
-#include "matching_engine/backend.hpp"
+#include "matching_engine/core/active_index.hpp"
+#include "matching_engine/core/backend.hpp"
 #include "matching_engine/persistence/model.hpp"
 #include "matching_engine/persistence/order_dictionary.hpp"
 #include "shared_data/orders/config.hpp"

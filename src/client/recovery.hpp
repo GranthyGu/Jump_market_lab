@@ -1,5 +1,8 @@
 #pragma once
-#include "shared_data/market_data/transport.hpp"
+#include "shared_data/runtime/io.hpp"
+#include "shared_data/market_data/config.hpp"
+#include "shared_data/market_data/market_data.hpp"
+#include <functional>
 #include <optional>
 #include <set>
 #include <string_view>
@@ -33,15 +36,15 @@ class MarketRecovery {
   using Emit = std::function<void(std::string_view, std::uint16_t, const MarketView&)>;
   MarketRecovery(const std::map<std::uint16_t, std::string>& symbols,
                  RecoveryConfig config,
-                 Deadline now,
+                 runtime::Deadline now,
                  Emit emit = {});
-  void udp(const Message& message, Deadline now);
-  void invalid(std::optional<std::uint16_t> symbol, Deadline now);
-  void tick(Deadline now);
-  std::optional<SnapshotRequest> next_request(Deadline now);
+  void udp(const Message& message, runtime::Deadline now);
+  void invalid(std::optional<std::uint16_t> symbol, runtime::Deadline now);
+  void tick(runtime::Deadline now);
+  std::optional<SnapshotRequest> next_request(runtime::Deadline now);
   bool valid(const SnapshotRequest& request) const;
-  void complete(const SnapshotRequest& request, const Message& snapshot, Deadline now);
-  void failed(const SnapshotRequest& request, Deadline now);
+  void complete(const SnapshotRequest& request, const Message& snapshot, runtime::Deadline now);
+  void failed(const SnapshotRequest& request, runtime::Deadline now);
   const MarketView& view(std::uint16_t symbol) const;
 
   std::size_t buffered_bytes() const {
@@ -66,8 +69,8 @@ class MarketRecovery {
   struct State : MarketView {
     std::map<std::uint64_t, Pending> pending;
     std::optional<Message> last_delta;
-    std::optional<Deadline> gap_since;
-    Deadline advanced, retry_at;
+    std::optional<runtime::Deadline> gap_since;
+    runtime::Deadline advanced, retry_at;
     int retry_ms = 0;
     std::uint64_t token = 0;
     bool check_required = false;
@@ -85,14 +88,14 @@ class MarketRecovery {
   std::size_t buffered_bytes_ = 0;
   Emit emit_;
   void emit(std::string_view event, std::uint16_t id);
-  void refresh(std::uint16_t id, Deadline now);
+  void refresh(std::uint16_t id, runtime::Deadline now);
   void clear_pending(State& state);
-  void require_check(std::uint16_t id, Deadline now, std::string_view reason);
-  void commit(std::uint16_t id, Message snapshot, Deadline now, bool advanced);
-  bool apply(std::uint16_t id, const Message& delta, Deadline now);
-  void drain(std::uint16_t id, Deadline now);
-  void install(std::uint16_t id, const Message& snapshot, Deadline now, bool authoritative);
-  void confirm_epoch(const Epoch& epoch, Deadline now);
-  bool needs_query(const State& state, std::uint16_t id, Deadline now) const;
+  void require_check(std::uint16_t id, runtime::Deadline now, std::string_view reason);
+  void commit(std::uint16_t id, Message snapshot, runtime::Deadline now, bool advanced);
+  bool apply(std::uint16_t id, const Message& delta, runtime::Deadline now);
+  void drain(std::uint16_t id, runtime::Deadline now);
+  void install(std::uint16_t id, const Message& snapshot, runtime::Deadline now, bool authoritative);
+  void confirm_epoch(const Epoch& epoch, runtime::Deadline now);
+  bool needs_query(const State& state, std::uint16_t id, runtime::Deadline now) const;
 };
 }  // namespace marketlab::md

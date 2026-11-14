@@ -1,4 +1,5 @@
 #pragma once
+#include "shared_data/runtime/io.hpp"
 #include "harness.hpp"
 #include "shared_data/orders/engine_link.hpp"
 #include "shared_data/orders/config.hpp"
@@ -26,9 +27,9 @@ inline std::uint16_t bound_port(int fd) {
 }
 // Retain reservations until every deployment port has been allocated.
 class Ports {
-  std::vector<md::Fd> held_;
+  std::vector<marketlab::runtime::Fd> held_;
  public:
-  std::uint16_t take() { held_.push_back(md::listen_tcp("127.0.0.1",0)); return bound_port(held_.back().get()); }
+  std::uint16_t take() { held_.push_back(marketlab::runtime::listen_tcp("127.0.0.1",0)); return bound_port(held_.back().get()); }
   void release() { held_.clear(); }
 };
 class Child {
@@ -76,15 +77,15 @@ inline ml::CancelRequest cancel_record(ml::RequestId request,ml::OrderId order) 
 }
 class Trader {
  public:
-  md::Fd socket;
-  explicit Trader(od::Address endpoint):socket(md::connect_tcp(endpoint.host,endpoint.port,until())) {}
-  void bytes(std::span<const std::uint8_t> value) { md::send_all(socket.get(),value,until()); }
+  marketlab::runtime::Fd socket;
+  explicit Trader(od::Address endpoint):socket(marketlab::runtime::connect_tcp(endpoint.host,endpoint.port,until())) {}
+  void bytes(std::span<const std::uint8_t> value) { marketlab::runtime::send_all(socket.get(),value,until()); }
   template<class T> void send(const T& value) { bytes(od::record_bytes(value)); }
   od::Bytes receive() {
-    const auto end=until(); auto buffer=md::receive_exact(socket.get(),sizeof(ml::Header),end);
+    const auto end=until(); auto buffer=marketlab::runtime::receive_exact(socket.get(),sizeof(ml::Header),end);
     const auto h=od::copy_record<ml::Header>(buffer);
     require(h.messageLength>=sizeof(h) && h.messageLength<=od::max_client_frame,"Bad client frame length");
-    auto tail=md::receive_exact(socket.get(),h.messageLength-sizeof(h),end); buffer.insert(buffer.end(),tail.begin(),tail.end());
+    auto tail=marketlab::runtime::receive_exact(socket.get(),h.messageLength-sizeof(h),end); buffer.insert(buffer.end(),tail.begin(),tail.end());
     require(od::valid_client_record(buffer,false),"Bad response encoding");
     ml::Timestamp timestamp{}; std::memcpy(&timestamp,buffer.data()+sizeof(h),8);
     require(timestamp>1'600'000'000'000'000'000ULL,"Expected Unix nanoseconds"); return buffer;
@@ -171,12 +172,12 @@ inline void write_market(const md::Config& c,const fs::path& path) {
       << "\nmulticast_interface=127.0.0.1\nsnapshot_every=" << c.snapshot_every << '\n';
   require(out.good(),"Cannot write market config");
 }
-inline md::Message snapshot(const md::Endpoint& address,std::uint16_t id,md::Fd* reuse=nullptr) {
-  md::Fd local; if (!reuse) { local=md::connect_tcp(address.host,address.port,until()); reuse=&local; }
-  md::Bytes request; md::append_uint(request,id,2); md::send_all(reuse->get(),request,until());
-  auto prefix=md::receive_exact(reuse->get(),2,until()); std::size_t offset=0; auto n=md::read_uint(prefix,offset,2);
+inline md::Message snapshot(const md::Endpoint& address,std::uint16_t id,marketlab::runtime::Fd* reuse=nullptr) {
+  marketlab::runtime::Fd local; if (!reuse) { local=marketlab::runtime::connect_tcp(address.host,address.port,until()); reuse=&local; }
+  md::Bytes request; md::append_uint(request,id,2); marketlab::runtime::send_all(reuse->get(),request,until());
+  auto prefix=marketlab::runtime::receive_exact(reuse->get(),2,until()); std::size_t offset=0; auto n=md::read_uint(prefix,offset,2);
   require(n>=md::header_size && n<=md::max_snapshot_size,"Invalid snapshot size");
-  auto m=md::decode(md::receive_exact(reuse->get(),n,until()));
+  auto m=md::decode(marketlab::runtime::receive_exact(reuse->get(),n,until()));
   require(m.kind==md::Kind::Snapshot && m.symbol_id==id,"Snapshot identity mismatch"); return m;
 }
 inline void publisher_ready(const md::Config& c) {

@@ -9,7 +9,7 @@
 #include <set>
 #include <thread>
 #include <vector>
-#include "matching_engine/bpt/trade_index.hpp"
+#include "matching_engine/trade_history/index/trade_index.hpp"
 
 using namespace marketlab::orders::bpt;
 using Clock = std::chrono::steady_clock;

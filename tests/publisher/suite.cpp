@@ -1,3 +1,5 @@
+#include "shared_data/runtime/thread.hpp"
+#include "shared_data/runtime/io.hpp"
 #include "sources.hpp"
 #include <random>
 using namespace demo;
@@ -28,13 +30,13 @@ void publication(Suite& suite,const fs::path& bin,unsigned products,unsigned sha
   auto name=std::to_string(products)+"p_"+std::to_string(shards)+"s"; auto dir=suite.output/name;
   Sources sources(dir,products,shards); auto& c=sources.config; write_market(c,dir/"publisher.conf");
   constexpr unsigned receivers=3;
-  std::vector<md::Fd> sockets; for(unsigned r=0;r<receivers;++r) {
+  std::vector<marketlab::runtime::Fd> sockets; for(unsigned r=0;r<receivers;++r) {
     sockets.push_back(md::join_multicast(*c.multicast)); int size=4*1024*1024;
     setsockopt(sockets.back().get(),SOL_SOCKET,SO_RCVBUF,&size,sizeof(size));
   }
   std::vector<Observation> observations(receivers); std::mutex error_mutex; std::exception_ptr error;
-  std::vector<std::unique_ptr<md::StopThread>> collectors;
-  for(unsigned r=0;r<receivers;++r) collectors.push_back(std::make_unique<md::StopThread>([&,r](const auto& stop) {
+  std::vector<std::unique_ptr<marketlab::runtime::StopThread>> collectors;
+  for(unsigned r=0;r<receivers;++r) collectors.push_back(std::make_unique<marketlab::runtime::StopThread>([&,r](const auto& stop) {
     try { while(!stop.load()) {
       pollfd p{sockets[r].get(),POLLIN,0}; if(poll(&p,1,20)<=0) continue;
       auto m=datagram(sockets[r].get()); if(m.index>last) continue;
@@ -71,7 +73,7 @@ void publication(Suite& suite,const fs::path& bin,unsigned products,unsigned sha
   publisher_ready(c);
   std::vector<std::vector<double>> times(8); auto load_start=Clock::now();
   parallel(8,[&](unsigned worker) {
-    auto persistent=md::connect_tcp(c.query.host,c.query.port,until());
+    auto persistent=marketlab::runtime::connect_tcp(c.query.host,c.query.port,until());
     const auto end=Clock::now()+std::chrono::seconds(3*scale);
     unsigned sequence=0;
     do {

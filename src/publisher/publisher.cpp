@@ -1,5 +1,8 @@
+#include "shared_data/runtime/log.hpp"
+#include "shared_data/runtime/thread.hpp"
+#include "shared_data/runtime/io.hpp"
 #include "publisher/publisher.hpp"
-#include "shared_data/market_data/availability.hpp"
+#include "shared_data/runtime/availability.hpp"
 
 #include <algorithm>
 #include <future>
@@ -18,10 +21,10 @@ Publisher::Publisher(Config config)
 
 void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool& cancelled) {
   std::vector<Epoch> previous_sources;
-  AvailabilityNotice availability("PUBLISHER");
-  auto next = Clock::now();
+  runtime::AvailabilityNotice availability("PUBLISHER");
+  auto next = runtime::Clock::now();
   while (!stop.load() && !cancelled.load()) {
-    const auto round_started = Clock::now();
+    const auto round_started = runtime::Clock::now();
     try {
       const auto deadline = round_started + std::chrono::milliseconds(config_.source_timeout_ms);
       std::vector<std::future<ShardView>> pending;
@@ -85,14 +88,14 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
       previous_sources = std::move(epochs);
       const auto retries_before = sender_.submission_retries();
       const auto submission_deadline = std::min(round_started + publication_period,
-                                                Clock::now() + std::chrono::milliseconds(200));
+                                                runtime::Clock::now() + std::chrono::milliseconds(200));
       for (const auto& message : outgoing)
         sender_.send(message, submission_deadline);
       availability.recovered();
-      Log(std::cout) << console::cyan << "Published index=" << batch->index
+      runtime::Log(std::cout) << console::cyan << "Published index=" << batch->index
                      << " symbols=" << batch->books.size() << " packets=" << outgoing.size()
                      << console::reset << console::dim << " sample_us="
-                     << std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() -
+                     << std::chrono::duration_cast<std::chrono::microseconds>(runtime::Clock::now() -
                                                                               round_started)
                             .count()
                      << " udp_submission_retries=" << sender_.submission_retries() - retries_before
@@ -107,30 +110,30 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
                                e.what());
     }
     next += publication_period;
-    if (Clock::now() > next) {
+    if (runtime::Clock::now() > next) {
       if (!availability.active())
-        Log(std::cerr) << console::Label{"WARNING", console::yellow}
+        runtime::Log(std::cerr) << console::Label{"WARNING", console::yellow}
                        << " Publication deadline missed; no synthetic catch-up batches generated\n";
-      next = Clock::now() + publication_period;
+      next = runtime::Clock::now() + publication_period;
     }
-    sleep_until_or_stop(next, stop, cancelled);
+    runtime::sleep_until_or_stop(next, stop, cancelled);
   }
 }
 
 void Publisher::run(const std::atomic_bool& stop) {
-  auto listener = listen_tcp(config_.query.host, config_.query.port);
-  Log(std::cout) << "Snapshot TCP " << config_.query.host << ':' << config_.query.port << '\n';
+  auto listener = runtime::listen_tcp(config_.query.host, config_.query.port);
+  runtime::Log(std::cout) << "Snapshot TCP " << config_.query.host << ':' << config_.query.port << '\n';
   if (config_.multicast) {
     const auto& multicast = *config_.multicast;
-    Log(std::cout) << "Market data UDP multicast " << multicast.group.host << ':'
+    runtime::Log(std::cout) << "Market data UDP multicast " << multicast.group.host << ':'
                    << multicast.group.port
                    << " interface=" << multicast.interface << " ttl=" << multicast.ttl
                    << " loopback=" << multicast.loopback << " (one datagram per message)\n";
   }
-  StopThread sampler([&](const std::atomic_bool& cancelled) {
+  runtime::StopThread sampler([&](const std::atomic_bool& cancelled) {
     sample_loop(stop, cancelled);
   });
-  serve_requests(
+  runtime::serve_requests(
       std::move(listener),
       2,
       2 + max_snapshot_size,

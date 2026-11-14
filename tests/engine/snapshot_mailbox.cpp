@@ -1,6 +1,6 @@
 #include "harness.hpp"
-#include "matching_engine/engine.hpp"
-#include "matching_engine/snapshot_mailbox.hpp"
+#include "matching_engine/core/engine.hpp"
+#include "matching_engine/market_data/snapshot_mailbox.hpp"
 #include "shared_data/orders/tcp_reactor.hpp"
 #include <optional>
 #include <unistd.h>

@@ -4,12 +4,12 @@
 #include <deque>
 #include <thread>
 #include <unordered_map>
-#include "matching_engine/backend.hpp"
+#include "matching_engine/core/backend.hpp"
 #include "matching_engine/persistence/files.hpp"
 #include "shared_data/orders/config.hpp"
-#include "trade_index.hpp"
+#include "matching_engine/trade_history/index/trade_index.hpp"
 
-namespace marketlab::orders::bpt {
+namespace marketlab::orders::trade_history {
 
 // The log is authoritative. Only the matching owner publishes committed byte
 // boundaries; one index worker tails those bytes, while query workers use B+ tree
@@ -61,7 +61,7 @@ class HistoryStore {
   std::uint64_t fingerprint_ = 1469598103934665603ULL;
   std::unordered_map<std::string, std::uint32_t> users_;
   std::vector<std::string> names_;
-  std::unique_ptr<TradeIndex> index_;
+  std::unique_ptr<bpt::TradeIndex> index_;
   std::function<void()> wakeup_;
   std::size_t query_slots_;
   std::uint64_t checkpoint_bytes_;
@@ -84,4 +84,4 @@ class HistoryStore {
   void query_worker();
   void report_failure(std::exception_ptr);
 };
-}  // namespace marketlab::orders::bpt
+}  // namespace marketlab::orders::trade_history

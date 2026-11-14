@@ -1,9 +1,9 @@
+#include "shared_data/runtime/thread.hpp"
 #include <csignal>
 #include <filesystem>
 #include <iostream>
 
-#include "matching_engine/server.hpp"
-#include "shared_data/market_data/transport.hpp"
+#include "matching_engine/runtime/server.hpp"
 #include "shared_data/paths.hpp"
 
 namespace {
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
     auto config = load_order_config(path);
     config.trace = trace;
     std::atomic_bool stop{false};
-    md::StopThread signals([&](const std::atomic_bool& cancelled) {
+    runtime::StopThread signals([&](const std::atomic_bool& cancelled) {
       while (!cancelled.load() && !interrupted)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       if (interrupted)

@@ -1,3 +1,5 @@
+#include "shared_data/runtime/thread.hpp"
+#include "shared_data/runtime/io.hpp"
 #include "matching_engine/cluster/rpc.hpp"
 
 #include <sys/socket.h>
@@ -15,14 +17,14 @@ Bytes text_bytes(const std::string& text) {
 }
 
 RpcServer::RpcServer(std::uint16_t port) {
-  auto listener = md::listen_tcp("127.0.0.1", port);
+  auto listener = runtime::listen_tcp("127.0.0.1", port);
   thread_ =
-      std::make_unique<md::StopThread>([this, listener = std::move(listener)](const auto& stop) {
+      std::make_unique<runtime::StopThread>([this, listener = std::move(listener)](const auto& stop) {
         while (!stop.load()) {
           pollfd p{listener.get(), POLLIN, 0};
           if (::poll(&p, 1, 50) <= 0)
             continue;
-          md::Fd peer(::accept(listener.get(), nullptr, nullptr));
+          runtime::Fd peer(::accept(listener.get(), nullptr, nullptr));
           if (!peer)
             continue;
           const int one = 1;
@@ -33,14 +35,14 @@ RpcServer::RpcServer(std::uint16_t port) {
               pollfd readable{peer.get(), POLLIN, 0};
               if (::poll(&readable, 1, 50) <= 0)
                 continue;
-              const auto deadline = md::Clock::now() + std::chrono::seconds(30);
-              auto length = md::receive_exact(peer.get(), 4, deadline);
+              const auto deadline = runtime::Clock::now() + std::chrono::seconds(30);
+              auto length = runtime::receive_exact(peer.get(), 4, deadline);
               persistence::Reader r{length};
               const auto size = r.number(4);
               if (!size || size > 128 * 1024 * 1024)
                 throw std::runtime_error("Invalid management frame size");
               auto request = std::make_shared<Request>();
-              request->bytes = md::receive_exact(peer.get(), size, deadline);
+              request->bytes = runtime::receive_exact(peer.get(), size, deadline);
               auto reply = request->reply.get_future();
               {
                 std::lock_guard lock(mutex_);
@@ -56,8 +58,8 @@ RpcServer::RpcServer(std::uint16_t port) {
               auto bytes = reply.get();
               Bytes prefix;
               persistence::integer(prefix, bytes.size(), 4);
-              md::send_all(peer.get(), prefix, deadline);
-              md::send_all(peer.get(), bytes, deadline);
+              runtime::send_all(peer.get(), prefix, deadline);
+              runtime::send_all(peer.get(), bytes, deadline);
             }
           } catch (const std::exception&) {
             // Disconnects affect this management session, never the order stream.

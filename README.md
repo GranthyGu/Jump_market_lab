@@ -6,6 +6,14 @@ Implementation layout, file migration records, and independent component builds:
 
 [Build and run guide](docs/EXCHANGE_RUN.md), [network interfaces and port ownership](docs/NETWORK_INTERFACES.md).
 
+Runtime components live in `src/gateway/`, `src/matching_engine/`,
+`src/publisher/`, and `src/client/`. Shared I/O, thread, logging, and wakeup
+utilities live in `src/shared_data/runtime/`; order and market-data protocols
+remain in their respective shared directories. The matching engine groups its
+implementation into `core/`, `runtime/`, `market_data/`, `persistence/`,
+`recovery/`, `trade_history/` (with `index/`), and `cluster/`.
+See the [matching-engine module map](src/matching_engine/README.md).
+
 The default C++ deployment runs four independent matching-engine processes for
 1,000 symbols, with 250 symbols per shard. Symbol ID `n` belongs to shard
 `1 + (n - 1) % 4`. The gateway serves concurrent clients over one persistent

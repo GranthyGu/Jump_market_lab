@@ -1,6 +1,9 @@
 #pragma once
-#include "matching_engine/backend.hpp"
-#include "shared_data/market_data/transport.hpp"
+#include "shared_data/runtime/io.hpp"
+#include "matching_engine/core/backend.hpp"
+#include <array>
+#include <atomic>
+#include <memory>
 
 namespace marketlab::orders {
 // Bounded multi-reader/single-owner handoff. Payloads are ordinary memory:
@@ -13,7 +16,7 @@ class SnapshotMailbox {
   SnapshotMailbox(const SnapshotMailbox&) = delete;
   SnapshotMailbox& operator=(const SnapshotMailbox&) = delete;
   // Concurrent readers may call read(). Saturation, timeout and shutdown throw.
-  md::ShardView read(md::Deadline deadline);
+  md::ShardView read(runtime::Deadline deadline);
   // Sole engine owner; call between commands and on reactor wakeup. No waiting,
   // allocation, encoding, or network output. At most capacity copies per call.
   void service(EngineBackend& engine) noexcept;
@@ -34,7 +37,7 @@ class SnapshotMailbox {
     }
 
    private:
-    md::Fd read_, write_;
+    runtime::Fd read_, write_;
   };
 
   enum State : std::uint32_t {

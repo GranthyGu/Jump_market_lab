@@ -27,7 +27,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     work = args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
-    paths = list((repo / 'src/matching_engine/bpt').rglob('*'))
+    paths = list((repo / 'src/matching_engine/trade_history').rglob('*'))
     paths += [Path(__file__).resolve(), repo / 'tests/bpt/sqlite_benchmark.cpp',
               repo / 'tests/CMakeLists.txt']
     provenance = {
