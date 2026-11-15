@@ -16,10 +16,11 @@ ctest --test-dir build/persistence-check -R 'persistence_correctness|recovery_pr
 
 每次测试在 `recovery-results/` 下创建新的隔离目录，保留日志和持久化文件供检查，不使用日常数据目录。真实进程测试使用动态 loopback 端口，需允许本机 TCP/UDP。用例失败返回非零。
 
-## suite.cpp：13 个内部场景
+## suite.cpp：14 个内部场景
 
 | 场景 | 核对的业务和文件顺序 |
 | --- | --- |
+| appended_remote_products_preserve_recovery | 末尾追加其他分片品种后保留旧订单 ID、部分成交和提交边界；拒绝旧品种修改、重排、删除、账户重排和本片新增品种 |
 | trade_sync_before_notifications | 成交同步被卡住、订单侧完成：无业务通知，盘口不前进；两侧完成才发送 |
 | order_sync_before_notifications | 反向阻塞订单同步，检查相同屏障；Accepted 必须先于本批成交事件 |
 | restart_remaining_and_fifo | 部分成交后重建引擎，检查剩余量、FIFO、新订单/成交 ID 不复用 |

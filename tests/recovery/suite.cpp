@@ -106,6 +106,79 @@ void ask_quantity(p::DurableEngine& e, std::uint64_t quantity, std::uint64_t cou
               levels[0].num_orders == count,
           "Wrong committed/recovered market");
 }
+void appended_remote_products(const std::filesystem::path& root) {
+  const auto opt = options(root, "appended-remote-products");
+  auto original = config();
+  original.shards.push_back({2, {"127.0.0.1", 2}});
+  original.products.push_back({"REMOTE", 100, 2});
+  std::uint64_t maker = 0;
+  {
+    p::DurableEngine engine(original, 1, opt);
+    Events events;
+    add(engine, events, 2, 1, m::Side::Sell, 10);
+    engine.drain();
+    maker = events.accepted().order.orderId;
+    add(engine, events, 1, 2, m::Side::Buy, 4);
+    engine.drain();
+    engine.request_checkpoint();
+    engine.wait_checkpoint();
+  }
+
+  auto reject = [&](const o::OrderConfig& changed) {
+    bool failed = false;
+    try {
+      p::DurableEngine engine(changed, 1, opt);
+    } catch (const std::runtime_error& error) {
+      failed = std::string(error.what()) == "Persistence configuration/shard mismatch";
+    }
+    require(failed, "Incompatible config was accepted during shard expansion");
+  };
+  auto changed = original;
+  changed.products.push_back({"NEW_LOCAL", 100, 1});
+  reject(changed);
+  changed = original;
+  changed.products[0].previous_close = 101;
+  reject(changed);
+  changed = original;
+  changed.products[1].symbol = "RENAMED_REMOTE";
+  reject(changed);
+  changed = original;
+  changed.products[1].shard = 1;
+  reject(changed);
+  changed = original;
+  std::swap(changed.products[0], changed.products[1]);
+  reject(changed);
+  changed = original;
+  changed.products.pop_back();
+  reject(changed);
+  changed = original;
+  std::swap(changed.accounts[0], changed.accounts[1]);
+  reject(changed);
+
+  auto expanded = original;
+  expanded.shards.push_back({3, {"127.0.0.1", 3}});
+  expanded.products.push_back({"NEW_REMOTE", 120, 3});
+  {
+    p::DurableEngine engine(expanded, 1, opt);
+    ask_quantity(engine, 6, 1);
+    require(engine.boundary().seq == 2 && engine.boundary().trade_count == 1,
+            "Expansion lost the committed trade boundary");
+    Events events;
+    cancel(engine, events, 2, 3, maker);
+    engine.drain();
+    require(events.accepted().order.orderId == maker &&
+                events.accepted().order.status == m::OrderStatus::Canceled,
+            "Expansion changed the recovered order identity");
+    ask_quantity(engine, 0, 0);
+    engine.request_checkpoint();
+    engine.wait_checkpoint();
+  }
+  p::DurableEngine recovered(expanded, 1, opt);
+  require(recovered.boundary().seq == 3 && recovered.boundary().trade_count == 1,
+          "Expanded checkpoint did not recover");
+  ask_quantity(recovered, 0, 0);
+}
+
 void notification_barrier(const std::filesystem::path& root, bool block_trade) {
   Gate gate;
   std::atomic_bool other_synced = false;
@@ -527,6 +600,7 @@ int main(int argc, char** argv) {
     require(mkdtemp(temp.data()), "Cannot create test directory");
     root = temp;
     const std::vector<std::pair<std::string, std::function<void()>>> cases = {
+        {"appended_remote_products_preserve_recovery", [&] { appended_remote_products(root); }},
         {"trade_sync_before_notifications", [&] { notification_barrier(root, true); }},
         {"order_sync_before_notifications", [&] { notification_barrier(root, false); }},
         {"restart_remaining_and_fifo", [&] { restart_fifo(root); }},

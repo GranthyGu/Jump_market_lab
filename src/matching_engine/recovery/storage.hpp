@@ -37,7 +37,7 @@ class Storage {
   DirectoryLock lock_;
   Options options_;
   std::uint16_t shard_;
-  std::uint64_t fingerprint_;
+  const std::vector<std::uint64_t> fingerprints_;
   const OrderDictionary dictionary_;
   Recovered read_snapshot(const std::filesystem::path&) const;
 };

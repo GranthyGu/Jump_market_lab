@@ -71,8 +71,16 @@ class Cluster:
             self.state = json.loads(self.state_path.read_text())
             if self.state.get("transition"):
                 raise RuntimeError("unfinished promotion in cluster-state.json; inspect the transition before restart")
-            if set(self.state["shards"]) != set(self.shards):
-                raise ValueError("persisted shard set differs from cluster config")
+            if not set(self.state["shards"]).issubset(self.shards):
+                raise ValueError("cluster config cannot remove persisted shards")
+            added = [shard for shard in self.shards if shard not in self.state["shards"]]
+            if added:
+                # Keep existing active slots, replica roots and binaries intact.
+                for shard in added:
+                    self.state["shards"][shard] = {
+                        "active": "A", "root": str(self.root), "binary": binary}
+                self.save()
+                log("CLUSTER_EXPANDED", added=added, state=self.state_path)
         else:
             self.state = {"version": 1, "transition": None, "shards": {
                 shard: {"active": "A", "root": str(self.root), "binary": binary}

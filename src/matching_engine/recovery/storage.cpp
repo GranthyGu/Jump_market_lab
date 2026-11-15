@@ -1,11 +1,12 @@
 #include "matching_engine/recovery/storage.hpp"
 
+#include <algorithm>
 #include <map>
 #include <unordered_map>
 
 namespace marketlab::orders::persistence {
 namespace {
-std::uint64_t fingerprint(const OrderConfig& c, std::uint16_t shard) {
+std::vector<std::uint64_t> fingerprints(const OrderConfig& c, std::uint16_t shard) {
   std::uint64_t h = 1469598103934665603ULL;
   auto add = [&](const std::string& s) {
     for (unsigned char b : s) {
@@ -19,12 +20,18 @@ std::uint64_t fingerprint(const OrderConfig& c, std::uint16_t shard) {
   add(std::to_string(shard));
   for (const auto& u : c.accounts)
     add(u.name);
+  std::vector<std::uint64_t> values{h};
   for (const auto& p : c.products) {
     add(p.symbol);
     add(std::to_string(p.previous_close));
     add(std::to_string(p.shard));
+    // Only prefixes containing every local product are compatible. Appending
+    // other shards' products preserves existing IDs and this shard's books.
+    if (p.shard == shard)
+      values.clear();
+    values.push_back(h);
   }
-  return h;
+  return values;
 }
 
 std::uint32_t chain(std::uint32_t prev, std::uint32_t next) {
@@ -44,7 +51,7 @@ Storage::Storage(const Options& o, const OrderConfig& c, std::uint16_t shard)
       lock_(root_),
       options_(o),
       shard_(shard),
-      fingerprint_(fingerprint(c, shard)),
+      fingerprints_(fingerprints(c, shard)),
       dictionary_(c) {
   make_directory(root_ / "trades");
   make_directory(root_ / "orders");
@@ -68,7 +75,7 @@ void Storage::checkpoint(const Boundary& b, const FrozenPages& pages, bool prune
     file.append(scratch);
   };
   start_frame(scratch, Kind::SnapshotMeta, b, 0, 0);
-  integer(scratch, fingerprint_, 8);
+  integer(scratch, fingerprints_.back(), 8);
   integer(scratch, shard_, 2);
   integer(scratch, b.trade_end, 8);
   integer(scratch, b.trade_count, 8);
@@ -126,7 +133,9 @@ Recovered Storage::read_snapshot(const std::filesystem::path& path) const {
   if (!first || first->kind != Kind::SnapshotMeta)
     throw std::runtime_error("Missing snapshot metadata");
   Reader m{first->payload};
-  if (m.number(8) != fingerprint_ || m.number(2) != shard_)
+  const auto persisted_fingerprint = m.number(8);
+  if (std::find(fingerprints_.begin(), fingerprints_.end(), persisted_fingerprint) ==
+          fingerprints_.end() || m.number(2) != shard_)
     throw std::runtime_error("Persistence configuration/shard mismatch");
   out.boundary = first->boundary;
   out.boundary.trade_end = m.number(8);
