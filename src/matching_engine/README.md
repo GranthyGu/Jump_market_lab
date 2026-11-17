@@ -11,7 +11,7 @@
 | 快照与恢复 | [recovery/](recovery/) | 分页 COW 状态、快照发布、日志轮换、连续前缀恢复 |
 | 成交历史 | [trade_history/](trade_history/)：`history_store.*` | 已提交成交日志的异步索引、索引快照与恢复、有界分页查询 |
 | 历史索引实现 | [trade_history/index/](trade_history/index/)：`trade_index.hpp`、`page_file.*`、`cmu/` | 按用户与成交位置查找的 B+ 树、页文件、Buffer Pool、ARC；`cmu/` 保留 BusTub 来源与许可证 |
-| 计划重启 | [cluster/](cluster/)：`router.*`、`worker.*`、`rpc.*`、`run.py` | C++ 订单路由与引擎控制、基线和增量复制、排空与接管；Python 协调进程和维护步骤 |
+| 路由与计划重启 | [cluster/](cluster/)：`router.*`、`router_spreads.*`、`worker.*`、`rpc.*`、`run.py` | C++ 订单路由与引擎控制；`router_spreads.*` 是主 Router 内的价差组调度和发布模块；Python 协调复制、排空与接管 |
 | 跨片价差 | [spreads/](spreads/) | 固定三档/12 路推导、原 FIFO 上的执行计划、多轮 Session、Coordinator、peer 接入、组持久化发布和不可变行情候选 |
 
 `MatchingEngine` 保留纯内存接口，供原核心测试使用；`DurableEngine` 包装它并控制对外可见性。两个写线程只借用不可变结果，不访问工作订单簿。所有后台线程退出后才能销毁结果和快照页。

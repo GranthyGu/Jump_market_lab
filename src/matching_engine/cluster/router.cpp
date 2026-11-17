@@ -4,7 +4,7 @@
 #include "shared_data/market_data/transport.hpp"
 #include "matching_engine/cluster/rpc.hpp"
 #include "matching_engine/persistence/codec.hpp"
-#include "matching_engine/spreads/router.hpp"
+#include "matching_engine/cluster/router_spreads.hpp"
 #include "shared_data/orders/engine_connections.hpp"
 #include <deque>
 #include <fstream>

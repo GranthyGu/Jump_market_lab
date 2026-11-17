@@ -4,6 +4,8 @@
 #include "matching_engine/spreads/publication.hpp"
 
 namespace marketlab::orders::spreads {
+// Spread-group scheduling and publication inside the main Router process.
+// Uses the Router's reactor and existing shard business connections.
 class RouterGroup {
  public:
   struct Callbacks {

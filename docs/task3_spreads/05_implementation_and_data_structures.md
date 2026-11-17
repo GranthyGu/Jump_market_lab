@@ -14,7 +14,7 @@
 | 单命令状态 | `spreads/session.*` | 多轮命令、P2P 执行、来源同步与明细并行、一条完整 Result、短路径 |
 | Coordinator | `spreads/coordinator.*`、`coordinator_server.*`、`coordinator_main.cpp` | 纯状态机与独立 TCP 进程，来源/视图/内存完成确认 |
 | 接入 | `spreads/protocol.*`、`links.*`、`join.*`、`worker.*` | 组报文、实例和 epoch 校验、握手、重接入、业务/peer 适配 |
-| Router 与发布 | `spreads/router.*`、`publication.*` | 有界组请求 FIFO、MEM_DONE 放行、实际参与者持久化汇总、查询和行情可见边界 |
+| Router 与发布 | `cluster/router_spreads.*`、`spreads/publication.*` | 主 Router 内部的关联组模块；有界组请求 FIFO、MEM_DONE 放行、实际参与者持久化汇总、查询和行情可见边界 |
 | 行情 | `spreads/market.*`、`shared_data/market_data/`、`publisher/` | 合并真实与 implied 五档，V2 编码、快照/增量、显示 |
 | 持久化与历史 | `persistence/`、`trade_history/`、`shared_data/orders/protocol.h` | 混合类型成交帧、原样复制、B+ 树记录位置、类型化客户端查询 |
 | 维护 | `cluster/router.cpp`、`cluster/run.py` | 整组排空、单片替换、standby 准备、激活、恢复及干净关闭 |
