@@ -66,12 +66,32 @@ OrderConfig load_order_config(const std::string& path) {
       throw std::runtime_error("Expected key=value");
     const auto key = trim(line.substr(0, eq)), value = trim(line.substr(eq + 1));
     const auto f = split(value);
-    if (key != "user" && key != "symbol" && key != "shard" && !singles.insert(key).second)
+    if (key != "user" && key != "symbol" && key != "shard" && key != "spread_peer" &&
+        !singles.insert(key).second)
       throw std::runtime_error("Repeated config key");
     if (key == "routing") {
       if (value != "direct" && value != "router")
         throw std::runtime_error("routing must be direct or router");
       c.direct = value == "direct";
+    } else if (key == "spreads") {
+      if (value != "enabled" && value != "disabled")
+        throw std::runtime_error("spreads must be enabled or disabled");
+      c.spreads = value == "enabled";
+    } else if (key == "coordinator")
+      c.coordinator = address(f);
+    else if (key == "spread_symbols") {
+      if (f.size() != c.spread_symbols.size())
+        throw std::runtime_error("spread_symbols requires A,B,C,SP_AB,SP_AC");
+      std::copy(f.begin(), f.end(), c.spread_symbols.begin());
+    } else if (key == "spread_peer") {
+      if (f.size() != 3)
+        throw std::runtime_error("Invalid spread peer");
+      const auto id = static_cast<std::uint16_t>(number(f[0], 65535));
+      if (std::any_of(c.spread_peers.begin(), c.spread_peers.end(), [&](const auto& p) {
+            return p.id == id || (p.address.host == f[1] && p.address.port == number(f[2], 65535));
+          }))
+        throw std::runtime_error("Duplicate spread peer");
+      c.spread_peers.push_back({id, address(f, 1)});
     } else if (key == "gateway_listen")
       c.gateway_listen = address(f);
     else if (key == "router_listen")
@@ -131,5 +151,26 @@ OrderConfig load_order_config(const std::string& path) {
     if (!shard_ids.contains(p.shard))
       throw std::runtime_error("Unassigned product shard");
   return c;
+}
+
+PriceLimits product_limits(const OrderConfig& c, std::size_t index) {
+  const auto& p = c.products.at(index);
+  auto outright = [](const Product& product) {
+    return PriceLimits{std::int64_t(product.previous_close) * 90 / 100,
+                       std::int64_t(product.previous_close) * 110 / 100};
+  };
+  if (!c.spreads || (p.symbol != c.spread_symbols[3] && p.symbol != c.spread_symbols[4]))
+    return outright(p);
+  auto find = [&](std::size_t slot) -> const Product& {
+    const auto it = std::find_if(c.products.begin(), c.products.end(), [&](const auto& product) {
+      return product.symbol == c.spread_symbols[slot];
+    });
+    if (it == c.products.end())
+      throw std::runtime_error("Missing spread leg: " + c.spread_symbols[slot]);
+    return *it;
+  };
+  const auto a = outright(find(0));
+  const auto x = outright(find(p.symbol == c.spread_symbols[3] ? 1 : 2));
+  return {a.lower - x.upper, a.upper - x.lower};
 }
 }  // namespace marketlab::orders

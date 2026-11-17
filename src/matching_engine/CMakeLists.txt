@@ -10,6 +10,7 @@ add_library(marketlab_matching_core STATIC core/engine.cpp market_data/snapshot_
   persistence/order_dictionary.cpp
   recovery/state.cpp recovery/storage.cpp)
 target_sources(marketlab_matching_core PRIVATE trade_history/history_store.cpp)
+target_sources(marketlab_matching_core PRIVATE spreads/depth.cpp)
 target_link_libraries(marketlab_matching_core PUBLIC marketlab_bpt)
 target_link_libraries(marketlab_matching_core PUBLIC marketlab_order_link marketlab_market_data_link)
 add_library(marketlab_matching_runtime STATIC runtime/server.cpp cluster/rpc.cpp cluster/worker.cpp)

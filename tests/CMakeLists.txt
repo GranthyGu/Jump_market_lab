@@ -113,3 +113,13 @@ add_test(NAME client_reconnect_process
 set_tests_properties(client_reconnect_process PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE
   LABELS "client;publisher;integration;correctness")
 add_dependencies(demo_tests gateway_client)
+
+add_executable(spread_depth_tests spreads/depth.cpp)
+target_include_directories(spread_depth_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_depth_tests PRIVATE marketlab_matching_core)
+target_compile_options(spread_depth_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_depth_correctness_stress
+  COMMAND spread_depth_tests "${CMAKE_BINARY_DIR}/spread-results/depth")
+set_tests_properties(spread_depth_correctness_stress PROPERTIES TIMEOUT 60
+  LABELS "spreads;correctness;cornercase;performance")
+add_dependencies(demo_tests spread_depth_tests)

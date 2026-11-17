@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,10 @@ struct OrderConfig {
   std::vector<Account> accounts;
   std::vector<EngineShard> shards;
   std::vector<Product> products;
+  bool spreads = false;
+  Address coordinator{"127.0.0.1", 7120};
+  std::array<std::string, 5> spread_symbols{"A", "B", "C", "SP_AB", "SP_AC"};
+  std::vector<EngineShard> spread_peers;
   std::size_t max_connections = 4096;
   std::size_t max_pending = 65536;
   std::size_t max_pending_per_client = 1024;
@@ -47,4 +52,10 @@ struct OrderConfig {
 };
 
 OrderConfig load_order_config(const std::string& path);
+
+struct PriceLimits {
+  std::int64_t lower, upper;
+};
+
+PriceLimits product_limits(const OrderConfig&, std::size_t product);
 }  // namespace marketlab::orders
