@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shared_data/orders/protocol.h"
+#include "shared_data/orders/group_header.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -29,7 +30,8 @@ enum class LinkKind : std::uint16_t {
   Drain = 30,
   Drained = 31,
   MaintenanceBegin = 32,
-  MaintenanceEnd = 33
+  MaintenanceEnd = 33,
+  Group = 40
 };
 #pragma pack(push, 1)
 
@@ -58,7 +60,7 @@ struct LinkHeader {
 LinkHeader decode_link_header(std::span<const std::uint8_t> bytes);
 inline constexpr std::array<std::uint8_t, 8> link_version{'M', 'L', 'G', 'W', 2, 0, 0, 0};
 inline constexpr std::size_t max_client_frame = sizeof(SpreadExecutionHistory);
-inline constexpr std::size_t max_link_frame = link_header_size + max_client_frame;
+inline constexpr std::size_t max_link_frame = link_header_size + group::maximum_frame;
 
 std::uint64_t unix_ns();
 std::uint64_t random_token_seed();

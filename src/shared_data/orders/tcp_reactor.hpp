@@ -12,7 +12,8 @@ namespace marketlab::orders {
 using Clock = std::chrono::steady_clock;
 enum class Framing {
   Client,
-  Internal
+  Internal,
+  Group
 };
 
 // Single-owner nonblocking reactor. No socket operation waits for a peer.
@@ -68,10 +69,16 @@ class TcpReactor {
   void receive(const std::shared_ptr<Peer>& p);
   std::size_t max_buffer_;
   int partial_timeout_ms_;
-  int listener_ = -1, poller_ = -1;
+  int poller_ = -1;
+
+  struct Listener {
+    int fd;
+    Framing framing;
+  };
+
+  std::vector<Listener> listeners_;
   std::vector<std::pair<int, std::function<void()>>> wakeups_;
-  Framing listen_framing_ = Framing::Client;
-  std::size_t connection_limit_ = 4096;
+  std::size_t connection_limit_ = 0;
   ConnectionId next_id_ = 1;
   std::unordered_map<ConnectionId, std::shared_ptr<Peer>> peers_;
   std::vector<std::pair<ConnectionId, short>> ready_events_;

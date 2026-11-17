@@ -39,6 +39,7 @@ void setup(int fd) {
 
 constexpr std::size_t io_budget = 256 * 1024;
 constexpr ConnectionId wakeup_event = std::numeric_limits<ConnectionId>::max();
+constexpr ConnectionId listener_event = wakeup_event - 16;
 }
 
 TcpReactor::TcpReactor(std::size_t max_buffer, int partial_timeout_ms)
@@ -58,35 +59,39 @@ TcpReactor::~TcpReactor() {
     if (p->fd >= 0)
       ::close(p->fd);
   }
-  if (listener_ >= 0)
-    ::close(listener_);
+  for (const auto& listener : listeners_)
+    ::close(listener.fd);
   if (poller_ >= 0)
     ::close(poller_);
 }
 
 void TcpReactor::listen(const Address& address, Framing framing, std::size_t limit) {
-  if (listener_ >= 0)
-    throw std::runtime_error("Listener already configured");
-  listener_ = socket(AF_INET, SOCK_STREAM, 0);
-  if (listener_ < 0)
+  if (listeners_.size() >= 16 || !limit || limit > SIZE_MAX - connection_limit_)
+    throw std::runtime_error("Invalid listener limit");
+  const int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0)
     throw std::runtime_error("socket listener");
-  setup(listener_);
-  int yes = 1;
-  setsockopt(listener_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-  const auto a = socket_address(address);
-  if (bind(listener_, reinterpret_cast<const sockaddr*>(&a), sizeof(a)) < 0 ||
-      ::listen(listener_, 1024) < 0)
-    throw std::runtime_error("Cannot bind/listen " + address.host + ':' +
-                             std::to_string(address.port));
-  listen_framing_ = framing;
-  connection_limit_ = limit;
+  try {
+    setup(fd);
+    int yes = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    const auto a = socket_address(address);
+    if (bind(fd, reinterpret_cast<const sockaddr*>(&a), sizeof(a)) < 0 || ::listen(fd, 1024) < 0)
+      throw std::runtime_error("Cannot bind/listen " + address.host + ':' +
+                               std::to_string(address.port));
 #ifdef __linux__
-  epoll_event event{};
-  event.events = EPOLLIN;
-  event.data.u64 = 0;
-  if (epoll_ctl(poller_, EPOLL_CTL_ADD, listener_, &event) < 0)
-    throw std::runtime_error("epoll listener");
+    epoll_event event{};
+    event.events = EPOLLIN;
+    event.data.u64 = listener_event - listeners_.size();
+    if (epoll_ctl(poller_, EPOLL_CTL_ADD, fd, &event) < 0)
+      throw std::runtime_error("epoll listener");
 #endif
+    listeners_.push_back({fd, framing});
+    connection_limit_ += limit;
+  } catch (...) {
+    ::close(fd);
+    throw;
+  }
 }
 
 void TcpReactor::watch(const Peer& p, bool add) {
@@ -136,6 +141,10 @@ ConnectionId TcpReactor::connect(const Address& address, Framing framing) {
   if (result < 0 && errno != EINPROGRESS) {
     ::close(fd);
     return 0;
+  }
+  if (next_id_ >= listener_event - 16) {
+    ::close(fd);
+    throw std::runtime_error("Reactor connection IDs exhausted");
   }
   const auto id = next_id_++;
   auto p = std::make_shared<Peer>();
@@ -249,8 +258,12 @@ void TcpReactor::receive(const std::shared_ptr<Peer>& p) {
       return;
     }
     p->input.insert(p->input.end(), buffer.begin(), buffer.begin() + n);
-    const auto prefix_size = p->framing == Framing::Client ? sizeof(Header) : link_header_size;
-    const auto max_frame = p->framing == Framing::Client ? max_client_frame : max_link_frame;
+    const auto prefix_size = p->framing == Framing::Client  ? sizeof(Header)
+                             : p->framing == Framing::Group ? group::header_size
+                                                            : link_header_size;
+    const auto max_frame = p->framing == Framing::Client  ? max_client_frame
+                           : p->framing == Framing::Group ? group::maximum_frame
+                                                          : max_link_frame;
     while (p->input.size() - p->consumed >= prefix_size) {
       std::uint32_t length{};
       const auto offset = p->framing == Framing::Client ? 2U : 0U;
@@ -306,11 +319,11 @@ void TcpReactor::step(int timeout_ms) {
   fds.clear();
   auto& ids = poll_ids_;
   ids.clear();
-  fds.reserve(peers_.size() + 1 + wakeups_.size());
-  ids.reserve(peers_.size() + 1 + wakeups_.size());
-  if (listener_ >= 0) {
-    fds.push_back({listener_, POLLIN, 0});
-    ids.push_back(0);
+  fds.reserve(peers_.size() + listeners_.size() + wakeups_.size());
+  ids.reserve(peers_.size() + listeners_.size() + wakeups_.size());
+  for (std::size_t i = 0; i < listeners_.size(); ++i) {
+    fds.push_back({listeners_[i].fd, POLLIN, 0});
+    ids.push_back(listener_event - i);
   }
   for (std::size_t i = 0; i < wakeups_.size(); ++i) {
     fds.push_back({wakeups_[i].first, POLLIN, 0});
@@ -335,12 +348,13 @@ void TcpReactor::step(int timeout_ms) {
         wakeups_[wakeup_event - id].second();
       continue;
     }
-    if (!id) {
+    if (id <= listener_event && listener_event - id < listeners_.size()) {
+      const auto& listener = listeners_[listener_event - id];
       for (unsigned i = 0; i < 64; ++i) {
-        const int fd = accept(listener_, nullptr, nullptr);
+        const int fd = accept(listener.fd, nullptr, nullptr);
         if (fd < 0)
           break;
-        if (peers_.size() >= connection_limit_) {
+        if (peers_.size() >= connection_limit_ || next_id_ >= listener_event - 16) {
           ::close(fd);
           continue;
         }
@@ -353,7 +367,7 @@ void TcpReactor::step(int timeout_ms) {
         auto p = std::make_shared<Peer>();
         p->id = next_id_++;
         p->fd = fd;
-        p->framing = listen_framing_;
+        p->framing = listener.framing;
         peers_.emplace(p->id, p);
         watch(*p, true);
         ++accepted;

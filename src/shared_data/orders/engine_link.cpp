@@ -90,6 +90,8 @@ bool valid_link_record(std::span<const std::uint8_t> bytes) {
     return false;
   const auto payload = bytes.subspan(link_header_size);
   switch (h.kind) {
+    case LinkKind::Group:
+      return group::valid_frame(payload);
     case LinkKind::Hello:
     case LinkKind::Ready:
       return payload.size() == link_version.size() &&

@@ -153,3 +153,13 @@ add_test(NAME spread_market_correctness
 set_tests_properties(spread_market_correctness PROPERTIES TIMEOUT 60
   LABELS "spreads;publisher;client;correctness;cornercase")
 add_dependencies(demo_tests spread_market_tests)
+
+add_executable(spread_network_tests spreads/network.cpp)
+target_include_directories(spread_network_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_network_tests PRIVATE marketlab_matching_core)
+target_compile_options(spread_network_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_network_correctness
+  COMMAND spread_network_tests "${CMAKE_BINARY_DIR}/spread-results/network")
+set_tests_properties(spread_network_correctness PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE
+  LABELS "spreads;network;correctness;cornercase")
+add_dependencies(demo_tests spread_network_tests)
