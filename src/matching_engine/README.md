@@ -17,7 +17,7 @@
 
 `MatchingEngine` 保留纯内存接口，供原核心测试使用；`DurableEngine` 包装它并控制对外可见性。两个写线程只借用不可变结果，不访问工作订单簿。所有后台线程退出后才能销毁结果和快照页。
 
-Task 3 继续调用同一个 `MatchingEngine`，`core/group_execution.cpp` 只提供组内执行所需的原簿操作。Shard 1—4 使用原普通路径；Shard 5—8 在启用 spreads 后使用 Session，每条命令每个实际参与者只封闭一次 Batch，MEM_DONE 与 fsync 分离。代码构造、缓存大小、报文和恢复边界见 [Task 3 实现说明](../../docs/task3_spreads/05_implementation_and_data_structures.md)，测试入口见 [spreads 测试](../../tests/spreads/README.md)。
+Task 3 继续调用同一个 `MatchingEngine`，`core/group_execution.cpp` 只提供组内执行所需的原簿操作。Shard 1—4 使用原普通路径；Shard 5—8 在启用 spreads 后使用 Session，每条命令每个实际参与者只封闭一次 Batch，MEM_DONE 与 fsync 分离。代码构造、缓存大小、报文和恢复边界见 [Task 3 实现说明](../../docs/task3_spreads/05_implementation_and_data_structures.md)，运行时检查与意外中断处理见 [工程补充](../../docs/task3_spreads/07_implementation_guards_and_interruptions.md)，测试入口见 [spreads 测试](../../tests/spreads/README.md)。
 
 `trade_history/index/` 是成交历史的可重建派生索引；成交事实仍由 `trades.log` 保存。历史查询捕获每片的提交边界，等索引追齐后分页返回，索引写入不阻塞成交通知。具体见 [历史索引设计](../../docs/task2_recovery/bpt_trade_history/01_bpt_design_and_performance.md) 与 [查询 API](../../docs/task2_recovery/bpt_trade_history/02_history_api_and_client.md)。
 

@@ -1,6 +1,6 @@
 # Task 3：代码构造与低延迟数据结构
 
-实现日期：2026-11-17。交易语义以 [01](01_peer_updates_and_durable_publication.md)、[03](03_restart_shutdown_recovery_and_trade_records.md)、[04](04_matching_priority.md) 为准；实测数据见 [06 测试报告](06_validation_results.md)。
+实现日期：2026-11-17。交易语义以 [01](01_peer_updates_and_durable_publication.md)、[03](03_restart_shutdown_recovery_and_trade_records.md)、[04](04_matching_priority.md) 为准；实测数据见 [06 测试报告](06_validation_results.md)，运行时检查、意外中断处理及恢复限制见 [07 工程补充](07_implementation_guards_and_interruptions.md)。
 
 ## 1. 在原引擎上增加的部分
 
