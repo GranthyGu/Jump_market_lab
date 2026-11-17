@@ -236,6 +236,13 @@ class Server {
     const auto& h = message.header;
     if (h.epoch != epoch_ || (h.round && h.kind == MessageKind::Recovered))
       throw std::runtime_error("Wrong coordinator epoch/join metadata");
+    const bool join_message = h.kind == MessageKind::Recovered ||
+                              h.kind == MessageKind::PeersReady ||
+                              h.kind == MessageKind::InitialDepth || h.flags == group::initial_view;
+    // An explicit maintenance fence can overtake replies on other connections.
+    // Those replies belong to the retired join and cannot contribute to a new one.
+    if (join_message && (h.seq < join_ || (h.seq == join_ && !joining_)))
+      return;
     if (h.kind == MessageKind::Pause) {
       pause(
           std::string_view(reinterpret_cast<const char*>(message.body.data()), message.body.size()),
@@ -248,6 +255,7 @@ class Server {
             !message.body.empty())
           throw std::runtime_error("Group fence before memory completion");
         maintenance_ = true;
+        failed_ = false;
         pause("planned maintenance", false);
         links_.send(router_, {MessageKind::Fenced, epoch_, core_.completed()});
         return;

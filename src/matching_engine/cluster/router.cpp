@@ -203,6 +203,8 @@ class Router {
     std::uint16_t next_market = 0;
     std::uint16_t group_port = 0;
     bool resume_when_prepared = false;
+    std::optional<Address> restore_address;
+    std::uint16_t restore_market = 0, restore_peer = 0;
   };
 
   struct Captured {
@@ -280,6 +282,21 @@ class Router {
     if (!group)
       return;
     for (auto& shard : shards) {
+      if (shard.stage == "restoring" && group->fenced()) {
+        const auto member = group_member[&shard - shards.data()];
+        const auto old = shard.connection;
+        backend.erase(old);
+        io.close(old);
+        shard.connection = 0;
+        shard.address = *shard.restore_address;
+        shard.next_market = shard.restore_market;
+        shard.group_port = shard.restore_peer;
+        shard.restore_address.reset();
+        shard.reconnect = {};
+        group->replace(member, {shard.address.host, shard.group_port});
+        shard.resume_when_prepared = true;
+        shard.stage = "preparing";
+      }
       if (shard.stage == "group-draining" && group->settled() && group_queries_done()) {
         group->fence();
         if (group->fenced()) {
@@ -292,6 +309,8 @@ class Router {
         shard.stage = "prepared";
         if (shard.resume_when_prepared) {
           group->resume();
+          if (shard.market && shard.next_market)
+            shard.market->port.store(shard.next_market);
           shard.resume_when_prepared = false;
           shard.stage = "flushing";
         }
@@ -369,6 +388,8 @@ class Router {
       std::string op;
       unsigned id = 0;
       input >> op;
+      if (op == "group-status")
+        return cluster::text_bytes(group ? group->status() : "DISABLED");
       if (op == "status") {
         std::ostringstream out;
         for (std::size_t i = 0; i < shards.size(); ++i)
@@ -402,13 +423,30 @@ class Router {
         return cluster::text_bytes("STARTED");
       }
       if (op == "barrier") {
-        if (shard.stage != "drained")
+        if (shard.stage != "drained" && shard.stage != "preparing" && shard.stage != "prepared" &&
+            shard.stage != "restoring")
           return cluster::text_bytes("WAIT");
         persistence::Reader r{shard.boundary};
         std::ostringstream out;
         for (int i = 0; i < 5; ++i)
           out << (i ? " " : "") << r.number(8);
         return cluster::text_bytes(out.str());
+      }
+      if (op == "restore") {
+        const auto member = group_member[shard_index.at(id)];
+        std::string host;
+        unsigned port, market, peer;
+        if (member >= 4 || (shard.stage != "preparing" && shard.stage != "prepared") ||
+            !(input >> host >> port >> market >> peer) || host != "127.0.0.1" || !port ||
+            port > 65535 || !market || market > 65535 || !peer || peer > 65535)
+          throw std::runtime_error(
+              "Restore requires a non-promoted group candidate and valid ports");
+        group->restart_prepare();
+        shard.restore_address = Address{host, static_cast<std::uint16_t>(port)};
+        shard.restore_market = market;
+        shard.restore_peer = peer;
+        shard.stage = "restoring";
+        return cluster::text_bytes("RESTORING");
       }
       if (op == "route") {
         unsigned port, market;

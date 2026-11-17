@@ -101,6 +101,8 @@ class Cluster:
         if set(order_shards) != set(self.shards):
             raise ValueError("cluster config must prepare both instances for every configured shard")
         settings = {key: value for key, value in exchange if key != "shard"}
+        self.group_enabled = settings.get("spreads") == ["enabled"]
+        self.group_shards = set()
         if settings.get("routing") != ["router"]:
             raise ValueError("planned restart requires routing=router in the exchange config")
         if settings["router_listen"] != settings["engine_endpoint"]:
@@ -108,6 +110,16 @@ class Cluster:
         ports = [int(settings["gateway_listen"][1]), int(settings["router_listen"][1]),
                  self.topology["router_admin_port"], self.topology["supervisor_port"]]
         products = [value for key, value in exchange if key == "symbol"]
+        if self.group_enabled:
+            names = settings.get("spread_symbols", ["A", "B", "C", "SP_AB", "SP_AC"])
+            owners = {product[0]: product[2] for product in products}
+            self.group_shards = {owners[name] for name in names}
+            if len(self.group_shards) != 4:
+                raise ValueError("spread group requires four distinct shard owners")
+            configured = settings.get("coordinator", ["127.0.0.1", "7120"])
+            if configured != ["127.0.0.1", str(self.topology.get("coordinator_port"))]:
+                raise ValueError("exchange/cluster Coordinator endpoint differs")
+            ports.append(self.topology["coordinator_port"])
         market = list(entries(self.args.market_config))
         market_names = {int(item.split(":", 1)[0]): item.split(":", 1)[1]
                         for key, values in market if key == "symbols" for item in values}
@@ -134,9 +146,14 @@ class Cluster:
             ports.append(config["market"])
             for slot in ("A", "B"):
                 ports.extend(config[slot][key] for key in ("order", "control", "market"))
+                if shard in self.group_shards:
+                    ports.append(config[slot]["peer"])
         if any(type(port) is not int or not 0 < port < 65536 for port in ports) or len(set(ports)) != len(ports):
             raise ValueError("all cluster ports must be distinct integers in 1..65535")
-        for name in ("market_matching_engine", "market_engine_router"):
+        binaries = ["market_matching_engine", "market_engine_router"]
+        if self.group_enabled:
+            binaries.append("market_group_coordinator")
+        for name in binaries:
             if not os.access(self.args.build_dir / name, os.X_OK):
                 raise ValueError(f"missing executable {name}; run src/scripts/build.sh")
 
@@ -149,6 +166,9 @@ class Cluster:
             if raw.strip().startswith("shard="):
                 shard = raw.split("=", 1)[1].split(",", 1)[0].strip()
                 raw = f"shard={shard},127.0.0.1,{self.shards[shard][slots[shard]]['order']}"
+            elif raw.strip().startswith("spread_peer=") and self.group_enabled:
+                shard = raw.split("=", 1)[1].split(",", 1)[0].strip()
+                raw = f"spread_peer={shard},127.0.0.1,{self.shards[shard][slots[shard]]['peer']}"
             lines.append(raw)
         path = self.logs / f"{name}.conf"
         path.write_text("\n".join(lines) + "\n")
@@ -203,17 +223,27 @@ class Cluster:
         for shard, state in self.state["shards"].items():
             self.launch_worker(shard, state["active"], state["root"], state["binary"])
         config = self.config("router", {key: state["active"] for key, state in self.state["shards"].items()})
+        if self.group_enabled:
+            arguments = [self.args.build_dir / "market_group_coordinator", "--config", config,
+                         "--stats", self.logs / "coordinator-stats.json"]
+            if self.args.trace:
+                arguments.append("--trace")
+            self.spawn("coordinator", arguments)
         market = self.logs / "market-routes.txt"
         market.write_text("".join(f"{key} {ports['market']} {ports[self.state['shards'][key]['active']]['market']}\n"
                                   for key, ports in self.shards.items()))
-        self.spawn("router", [self.args.build_dir / "market_engine_router", "--config", config,
-                              "--admin-port", self.topology["router_admin_port"], "--market-routes", market])
+        arguments = [self.args.build_dir / "market_engine_router", "--config", config,
+                     "--admin-port", self.topology["router_admin_port"], "--market-routes", market]
+        if self.args.trace:
+            arguments.append("--trace")
+        self.spawn("router", arguments)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             try:
                 with Rpc(self.topology["router_admin_port"], timeout=1) as rpc:
                     rows = rpc.call("status").decode().splitlines()
-                    if len(rows) == len(self.shards) and all(row.split()[-1] == "1" for row in rows):
+                    group_ready = not self.group_enabled or rpc.call("group-status").startswith(b"READY ")
+                    if group_ready and len(rows) == len(self.shards) and all(row.split()[-1] == "1" for row in rows):
                         log("CLUSTER_READY", logs=self.logs, state=self.state_path)
                         for shard, ports in self.shards.items():
                             log("PORTS", shard=shard, public_market=ports["market"], A=ports["A"], B=ports["B"])
@@ -286,6 +316,7 @@ class Cluster:
         begun = time.monotonic()
         cut = False
         activated = False
+        routed = False
         source = destination = router = None
         try:
             source = Rpc(ports[origin]["control"])
@@ -369,11 +400,23 @@ class Cluster:
                                          "boundary": marker}
             self.save()
             self.phases[shard] = "promoting"
+            if shard in self.group_shards:
+                self.phases[shard] = "group_preparing"
+                prepare_at = time.monotonic()
+                router.call(f"route {shard} 127.0.0.1 {ports[target]['order']} {ports[target]['market']} {ports[target]['peer']}")
+                routed = True
+                self.wait_route(router, shard, ports[target]["order"], cut_deadline, "prepared")
+                metric["group_prepare_ms"] = (time.monotonic() - prepare_at) * 1000
+                log("GROUP_REPLACEMENT_PREPARED", shard=shard, peer_port=ports[target]["peer"], boundary=marker)
+                self.phases[shard] = "promoting"
             # Once a promotion request is sent its outcome can be uncertain.
             # Even a lost reply must never cause automatic reactivation of A.
             activated = True
             destination.call("activate " + marker)
-            router.call(f"route {shard} 127.0.0.1 {ports[target]['order']} {ports[target]['market']}")
+            if shard in self.group_shards:
+                router.call(f"resume {shard}")
+            else:
+                router.call(f"route {shard} 127.0.0.1 {ports[target]['order']} {ports[target]['market']}")
             self.wait_route(router, shard, ports[target]["order"], cut_deadline)
             metric["cut_ms"] = (time.monotonic() - cut_at) * 1000
             peaks = list(map(int, router.call(f"metrics {shard}").split()))
@@ -405,7 +448,7 @@ class Cluster:
                     if router:
                         router.close()
                         router = None
-                    self.resume_source(shard, origin, cut)
+                    self.resume_source(shard, origin, cut, routed)
                     self.state["transition"] = None
                     self.save()
                     self.phases[shard] = "active"
@@ -422,7 +465,7 @@ class Cluster:
                     rpc.close()
             self.operation.release()
 
-    def resume_source(self, shard, origin, cut):
+    def resume_source(self, shard, origin, cut, routed=False):
         ports = self.shards[shard][origin]
         deadline = time.monotonic() + 5
         with Rpc(ports["control"], timeout=5) as source, Rpc(self.topology["router_admin_port"], timeout=5) as router:
@@ -438,7 +481,10 @@ class Cluster:
                 marker = router.call(f"barrier {shard}").decode()
                 if marker != "WAIT":
                     source.call("activate " + marker)
-                    router.call(f"resume {shard}")
+                    if routed:
+                        router.call(f"restore {shard} 127.0.0.1 {ports['order']} {ports['market']} {ports['peer']}")
+                    else:
+                        router.call(f"resume {shard}")
                     self.wait_route(router, shard, ports["order"], deadline)
                     return
                 if time.monotonic() >= deadline:
@@ -446,10 +492,10 @@ class Cluster:
                 time.sleep(.01)
 
     @staticmethod
-    def wait_route(router, shard, port, deadline):
+    def wait_route(router, shard, port, deadline, stage="active"):
         while time.monotonic() < deadline:
             rows = {row.split()[0]: row.split()[1:] for row in router.call("status").decode().splitlines()}
-            if rows[shard] == [str(port), "active", "0", "1"]:
+            if rows[shard] == [str(port), stage, "0", "1"]:
                 return
             time.sleep(0.005)
         raise TimeoutError("router did not resume")
@@ -469,6 +515,19 @@ class Cluster:
         self.stop.set()
         # Let an already-started cut complete or abort before stopping workers.
         with self.operation:
+            if self.group_enabled and "router" in self.processes:
+                try:
+                    shard = min(self.group_shards, key=int)
+                    with Rpc(self.topology["router_admin_port"], timeout=5) as router:
+                        router.call(f"cut {shard} {time.time_ns()}")
+                        deadline = time.monotonic() + 20
+                        while router.call(f"barrier {shard}") == b"WAIT":
+                            if time.monotonic() >= deadline:
+                                raise TimeoutError("group shutdown drain timed out")
+                            time.sleep(.01)
+                    log("GROUP_SHUTDOWN_DRAINED", shard=shard)
+                except Exception as error:
+                    log("GROUP_SHUTDOWN_UNRESOLVED", error=repr(error))
             self.stop_process("router")
             for key in list(self.processes):
                 self.stop_process(key)

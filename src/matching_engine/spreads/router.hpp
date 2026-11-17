@@ -73,6 +73,8 @@ class RouterGroup {
 
   void replace(std::uint8_t, const Address&);
   void resume();
+  void restart_prepare();
+  std::string status() const;
   void pause(std::string_view reason);
 
  private:

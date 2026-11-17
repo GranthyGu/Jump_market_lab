@@ -1,6 +1,7 @@
 #include "matching_engine/spreads/router.hpp"
 #include <bit>
 #include <iostream>
+#include <sstream>
 
 namespace marketlab::orders::spreads {
 using persistence::integer;
@@ -250,6 +251,23 @@ void RouterGroup::resume() {
   maintenance_ = fence_sent_ = fenced_ = false;
   ready_ = true;
   initial_publication();
+}
+
+void RouterGroup::restart_prepare() {
+  if (!maintenance_ || !settled())
+    throw std::runtime_error("Cannot abort unresolved group work");
+  ready_ = prepared_ = fence_sent_ = fenced_ = false;
+  failed_ = false;
+  recovering_ = requested_ = 0;
+  fence();
+}
+
+std::string RouterGroup::status() const {
+  std::ostringstream out;
+  out << (ready_ ? "READY" : "PAUSED") << ' ' << epoch_ << ' ' << join_ << ' '
+      << publication_.dispatched() << ' ' << publication_.completed() << ' '
+      << publication_.published() << ' ' << queued_.size();
+  return out.str();
 }
 
 void RouterGroup::poll() {

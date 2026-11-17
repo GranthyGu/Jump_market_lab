@@ -55,10 +55,10 @@ cmake -S "$repo_root/src" -B "$build_root/cmake" \
   -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$build_root/lib" \
   2>&1 | tee "$build_root/logs/build/configure.log"
 cmake --build "$build_root/cmake" --parallel "$jobs" \
-  --target market_gateway market_matching_engine market_engine_router market_broadcast gateway_client \
+  --target market_gateway market_matching_engine market_engine_router market_group_coordinator market_broadcast gateway_client \
   2>&1 | tee "$build_root/logs/build/compile.log"
 ln -sfn cmake/compile_commands.json "$build_root/compile_commands.json"
 echo 'BUILD_COMPLETE: runtime binaries only (tests OFF; build demo suites with tests/build.sh)'
 printf '%s\n' "$build_root/bin/market_gateway" "$build_root/bin/market_matching_engine" \
-  "$build_root/bin/market_engine_router" \
+  "$build_root/bin/market_engine_router" "$build_root/bin/market_group_coordinator" \
   "$build_root/bin/market_broadcast" "$build_root/bin/gateway_client"

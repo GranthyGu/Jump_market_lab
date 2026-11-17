@@ -204,3 +204,9 @@ set_tests_properties(spread_native_process PROPERTIES TIMEOUT 180 RUN_SERIAL TRU
   LABELS "spreads;integration;correctness;cornercase;performance")
 add_dependencies(spread_process_tests market_matching_engine market_engine_router market_group_coordinator market_gateway)
 add_dependencies(demo_tests spread_process_tests)
+
+add_test(NAME spread_lifecycle_process
+  COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/spreads/lifecycle.py"
+    "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/spread-results/lifecycle")
+set_tests_properties(spread_lifecycle_process PROPERTIES TIMEOUT 150 RUN_SERIAL TRUE
+  LABELS "spreads;recovery;integration;correctness;cornercase")
