@@ -14,6 +14,7 @@ target_sources(marketlab_matching_core PRIVATE spreads/depth.cpp spreads/executi
 target_sources(marketlab_matching_core PRIVATE spreads/protocol.cpp spreads/links.cpp)
 target_sources(marketlab_matching_core PRIVATE spreads/coordinator.cpp)
 target_sources(marketlab_matching_core PRIVATE spreads/session.cpp)
+target_sources(marketlab_matching_core PRIVATE spreads/publication.cpp)
 target_link_libraries(marketlab_matching_core PUBLIC marketlab_bpt)
 target_link_libraries(marketlab_matching_core PUBLIC marketlab_order_link marketlab_market_data_link)
 add_library(marketlab_matching_runtime STATIC runtime/server.cpp cluster/rpc.cpp cluster/worker.cpp)

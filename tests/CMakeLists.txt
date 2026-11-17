@@ -183,3 +183,13 @@ add_test(NAME spread_session_correctness_stress
 set_tests_properties(spread_session_correctness_stress PROPERTIES TIMEOUT 120
   LABELS "spreads;recovery;correctness;cornercase;performance")
 add_dependencies(demo_tests spread_session_tests)
+
+add_executable(spread_publication_tests spreads/publication.cpp)
+target_include_directories(spread_publication_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_publication_tests PRIVATE marketlab_matching_core)
+target_compile_options(spread_publication_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_publication_correctness
+  COMMAND spread_publication_tests "${CMAKE_BINARY_DIR}/spread-results/publication")
+set_tests_properties(spread_publication_correctness PROPERTIES TIMEOUT 30
+  LABELS "spreads;correctness;cornercase")
+add_dependencies(demo_tests spread_publication_tests)
