@@ -1,6 +1,6 @@
 # Matching engine 模块
 
-运行程序默认采用方案 2 持久化；当前提交、快照与恢复路径见 [订单状态与双日志一致性](../../docs/task2_recovery/11_orderbook_delta_snapshot_consistency.md)。默认启动脚本由 `cluster/run.py` 管理 Router 与各 shard 的 A/B 进程，正常交易路径由 C++ 执行。
+运行程序默认采用方案 2 持久化；当前提交、快照与恢复路径见 [订单状态与双日志一致性](../../docs/task2_recovery/11_orderbook_delta_snapshot_consistency.md)。默认启动脚本由 `cluster/run.py` 管理 Router、独立 GroupCoordinator 与各 shard 的 A/B 进程，正常交易路径由 C++ 执行。
 
 | 分组 | 文件 | 职责 |
 | --- | --- | --- |
@@ -12,8 +12,11 @@
 | 成交历史 | [trade_history/](trade_history/)：`history_store.*` | 已提交成交日志的异步索引、索引快照与恢复、有界分页查询 |
 | 历史索引实现 | [trade_history/index/](trade_history/index/)：`trade_index.hpp`、`page_file.*`、`cmu/` | 按用户与成交位置查找的 B+ 树、页文件、Buffer Pool、ARC；`cmu/` 保留 BusTub 来源与许可证 |
 | 计划重启 | [cluster/](cluster/)：`router.*`、`worker.*`、`rpc.*`、`run.py` | C++ 订单路由与引擎控制、基线和增量复制、排空与接管；Python 协调进程和维护步骤 |
+| 跨片价差 | [spreads/](spreads/) | 固定三档/12 路推导、原 FIFO 上的执行计划、多轮 Session、Coordinator、peer 接入、组持久化发布和不可变行情候选 |
 
 `MatchingEngine` 保留纯内存接口，供原核心测试使用；`DurableEngine` 包装它并控制对外可见性。两个写线程只借用不可变结果，不访问工作订单簿。所有后台线程退出后才能销毁结果和快照页。
+
+Task 3 继续调用同一个 `MatchingEngine`，`core/group_execution.cpp` 只提供组内执行所需的原簿操作。Shard 1—4 使用原普通路径；Shard 5—8 在启用 spreads 后使用 Session，每条命令每个实际参与者只封闭一次 Batch，MEM_DONE 与 fsync 分离。代码构造、缓存大小、报文和恢复边界见 [Task 3 实现说明](../../docs/task3_spreads/05_implementation_and_data_structures.md)，测试入口见 [spreads 测试](../../tests/spreads/README.md)。
 
 `trade_history/index/` 是成交历史的可重建派生索引；成交事实仍由 `trades.log` 保存。历史查询捕获每片的提交边界，等索引追齐后分页返回，索引写入不阻塞成交通知。具体见 [历史索引设计](../../docs/task2_recovery/bpt_trade_history/01_bpt_design_and_performance.md) 与 [查询 API](../../docs/task2_recovery/bpt_trade_history/02_history_api_and_client.md)。
 
