@@ -57,6 +57,14 @@ class DurableEngine final : public EngineBackend {
   }
 
   bool has_capacity() const;
+  // Group queries carry an explicit public log prefix; zero means empty.
+  void public_history(const LinkHeader&,
+                      const TradeHistoryRequest&,
+                      std::uint64_t visible_end,
+                      const Emit&);
+  // Capture at a complete memory boundary without blocking the network owner
+  // when the existing query budget is full.
+  bool capture_group(const LinkHeader&, const Header&, const Emit&);
 
   std::size_t symbol_count() const noexcept override {
     return committed_.symbol_count();

@@ -24,7 +24,9 @@ class Coordinator {
   using Send =
       std::function<void(std::uint8_t destination, const Header&, std::span<const std::uint8_t>)>;
   Coordinator(std::uint64_t epoch, Send);
-  void initialize(const Sources&, const std::array<std::uint64_t, 4>& local_batches);
+  void initialize(const Sources&,
+                  const std::array<std::uint64_t, 4>& local_batches,
+                  std::uint8_t reinstall_targets = 31);
   void receive(std::uint8_t member, const Header&, std::span<const std::uint8_t>);
   void pause(std::string_view reason);
 
@@ -67,7 +69,8 @@ class Coordinator {
   std::uint8_t initiator_ = no_slot, expected_ = 0, done_ = 0, participants_ = 0, ended_ = 0,
                market_members_ = 0, awaiting_views_ = 0;
   std::uint16_t dirty_ = 0;
-  bool ready_ = false, initializing_ = false, declared_ = false, round_ready_ = false;
+  bool ready_ = false, initializing_ = false, initialized_ = false, declared_ = false,
+       round_ready_ = false;
   Sources sources_{};
   Views views_{};
   std::array<std::uint64_t, 4> batches_{};

@@ -19,6 +19,7 @@ class Session {
 
   Session(persistence::DurableEngine&, const OrderConfig&, std::uint16_t shard, Callbacks);
   void epoch(std::uint64_t);
+  void recover_sources();
   // False means persistence backpressure, before accepting/mutating the command.
   bool run(const Header&, const LinkHeader&, std::span<const std::uint8_t>);
   bool peer(std::uint8_t from, const Header&, std::span<const std::uint8_t>);

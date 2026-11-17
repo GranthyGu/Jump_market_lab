@@ -348,6 +348,35 @@ bool DurableEngine::has_capacity() const {
          pending_bytes_ <= options_.pending_bytes - options_.command_bytes;
 }
 
+void DurableEngine::public_history(const LinkHeader& context,
+                                   const TradeHistoryRequest& request,
+                                   std::uint64_t visible_end,
+                                   const Emit& emit) {
+  poll();
+  if (visible_end > boundary_.trade_end)
+    throw std::runtime_error("Public history prefix exceeds local durability");
+  auto query = request;
+  if (!query.throughOffset)
+    query.throughOffset = visible_end;
+  history_->request(context, query, visible_end, emit, true);
+}
+
+bool DurableEngine::capture_group(const LinkHeader& context,
+                                  const Header& request,
+                                  const Emit& emit) {
+  poll();
+  if (group_batch_)
+    throw std::runtime_error("Group query at a partial memory boundary");
+  const auto count = working_.active_order_count(context.user);
+  if (count > options_.query_bytes / sizeof(OrderState))
+    throw std::runtime_error("Single order query exceeds query buffer budget");
+  if (queries_.size() >= options_.query_slots ||
+      count * sizeof(OrderState) > options_.query_bytes - query_bytes_)
+    return false;
+  capture_query(context, request, emit);
+  return true;
+}
+
 std::unique_ptr<DurableEngine::Batch> DurableEngine::acquire_batch() {
   if (executed_ == UINT64_MAX)
     throw std::runtime_error("Persistence sequence exhausted");

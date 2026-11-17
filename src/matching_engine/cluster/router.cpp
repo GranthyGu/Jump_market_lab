@@ -4,6 +4,7 @@
 #include "shared_data/market_data/transport.hpp"
 #include "matching_engine/cluster/rpc.hpp"
 #include "matching_engine/persistence/codec.hpp"
+#include "matching_engine/spreads/router.hpp"
 #include "shared_data/orders/engine_connections.hpp"
 #include <deque>
 #include <fstream>
@@ -26,18 +27,52 @@ class Router {
     }
     for (const auto& p : c.products)
       products.emplace(p.symbol, shard_index.at(p.shard));
+    group_member.resize(shards.size(), spreads::no_slot);
+    if (c.spreads) {
+      const spreads::Topology topology(c);
+      const auto peers = spreads::directory(c, topology);
+      for (unsigned i = 0; i < 4; ++i) {
+        group_index[i] = shard_index.at(topology.shards[i]);
+        group_member[group_index[i]] = i;
+        shards[group_index[i]].group_port = peers[i].address.port;
+      }
+      group = std::make_unique<spreads::RouterGroup>(
+          c,
+          io,
+          spreads::RouterGroup::Callbacks{
+              [&](auto member, const auto& h, auto bytes) {
+                return links.send(
+                    shards[group_index[member]].connection, LinkKind::Group, h, bytes);
+              },
+              [&](auto member, const auto& event) {
+                result(shards[group_index[member]].connection,
+                       event.context,
+                       {event.payload.data(), event.size});
+              },
+              [&](auto token, auto sequence) {
+                const auto it = pending.find(token);
+                if (it != pending.end())
+                  it->second.capture_sequence = sequence;
+              }});
+    }
     pending.reserve(c.max_pending);
     io.on_accept = [&](auto id) {
       links.incoming(id);
     };
     io.on_connect = [&](auto id) {
-      links.connected(id);
+      if (group && group->contains(id))
+        group->connected(id);
+      else
+        links.connected(id);
     };
     io.on_close = [&](auto id) {
       closed(id);
     };
     io.on_frame = [&](auto id, auto bytes) {
-      links.receive(id, bytes);
+      if (group && group->contains(id))
+        group->receive(id, bytes);
+      else
+        links.receive(id, bytes);
     };
     links.allow_ready = [&](auto id) {
       if (backend.contains(id))
@@ -45,6 +80,8 @@ class Router {
       for (const auto& shard : shards)
         if (!links.ready(shard.connection))
           return false;
+      if (group && !group->ready())
+        return false;
       return true;
     };
     links.on_ready = [&](auto id) {
@@ -100,11 +137,17 @@ class Router {
         }
       }
       io.step(10);
+      if (group)
+        group->poll();
+      flush_group_queries();
+      service_group_maintenance();
       service_admin();
       for (auto& shard : shards)
         flush_queued(shard);
       if (now - tick >= std::chrono::milliseconds(50)) {
         links.tick();
+        if (group)
+          group->tick();
         io.expire();
         bool expired = false;
         for (const auto& [token, p] : pending) {
@@ -112,7 +155,7 @@ class Router {
           const bool paused = std::any_of(shards.begin(), shards.end(), [](const auto& s) {
             return s.stage != "active";
           });
-          if (!paused && now > p.deadline) {
+          if (!paused && (!group || !group->paused()) && now > p.deadline) {
             expired = true;
             break;
           }
@@ -158,6 +201,14 @@ class Router {
     std::size_t peak_queued = 0, peak_bytes = 0;
     std::shared_ptr<MarketRoute> market;
     std::uint16_t next_market = 0;
+    std::uint16_t group_port = 0;
+    bool resume_when_prepared = false;
+  };
+
+  struct Captured {
+    std::size_t shard;
+    LinkHeader header;
+    Bytes bytes;
   };
 
   struct Pending {
@@ -167,11 +218,17 @@ class Router {
     std::size_t target;
     std::vector<bool> completed;
     Clock::time_point deadline;
+    std::uint64_t capture_sequence = UINT64_MAX;
+    std::vector<Captured> captured{};
   };
 
   const OrderConfig& c;
   TcpReactor io;
   EngineLinks links;
+  std::unique_ptr<spreads::RouterGroup> group;
+  std::array<std::size_t, 4> group_index{};
+  std::vector<std::uint8_t> group_member;
+  std::size_t captured_bytes = 0;
   std::unique_ptr<cluster::RpcServer> admin;
   ConnectionId front = 0;
   std::vector<Shard> shards;
@@ -180,6 +237,67 @@ class Router {
   std::unordered_map<std::string, std::size_t> products;
   std::unordered_map<std::uint64_t, Pending> pending;
   std::uint64_t commands = 0, events = 0, snapshot_ends = 0;
+
+  bool group_queries_done() const {
+    if (!group)
+      return true;
+    for (const auto& [token, request] : pending) {
+      (void)token;
+      if (request.context.kind != LinkKind::Snapshot && request.context.kind != LinkKind::History)
+        continue;
+      if (request.completed.empty()) {
+        if (group_member[request.target] < 4)
+          return false;
+      } else
+        for (const auto index : group_index)
+          if (!request.completed[index])
+            return false;
+    }
+    return true;
+  }
+
+  void flush_group_queries() {
+    if (!group || !captured_bytes)
+      return;
+    std::vector<std::uint64_t> ready;
+    for (const auto& [token, request] : pending)
+      if (!request.captured.empty() && request.capture_sequence <= group->published())
+        ready.push_back(token);
+    for (const auto token : ready) {
+      const auto it = pending.find(token);
+      if (it == pending.end())
+        continue;
+      auto records = std::move(it->second.captured);
+      it->second.captured.clear();
+      for (const auto& record : records) {
+        captured_bytes -= record.bytes.size();
+        result(shards[record.shard].connection, record.header, record.bytes);
+      }
+    }
+  }
+
+  void service_group_maintenance() {
+    if (!group)
+      return;
+    for (auto& shard : shards) {
+      if (shard.stage == "group-draining" && group->settled() && group_queries_done()) {
+        group->fence();
+        if (group->fenced()) {
+          if (!links.send(shard.connection, LinkKind::Drain, {0, {}, shard.cut_token, 0, 0}, {}))
+            throw std::runtime_error("Cannot drain fenced group worker");
+          shard.stage = "draining";
+        }
+      }
+      if (shard.stage == "preparing" && group->prepared() && links.ready(shard.connection)) {
+        shard.stage = "prepared";
+        if (shard.resume_when_prepared) {
+          group->resume();
+          shard.resume_when_prepared = false;
+          shard.stage = "flushing";
+        }
+      }
+    }
+  }
 
   void start_market(const std::string& path) {
     if (path.empty())
@@ -218,8 +336,8 @@ class Router {
                         connected = port;
                       }
                       try {
-                        auto view =
-                            connection->read(runtime::Clock::now() + std::chrono::milliseconds(700));
+                        auto view = connection->read(runtime::Clock::now() +
+                                                     std::chrono::milliseconds(700));
                         if (state->port.load() == port) {
                           // The logical shard history continues through a planned
                           // cut. Publisher epochs change only on router restart.
@@ -269,13 +387,16 @@ class Router {
           throw std::runtime_error("Shard is not ready for a cut");
         if (!(input >> shard.cut_token) || !shard.cut_token)
           throw std::runtime_error("Missing cut token");
-        shard.stage = "draining";
+        const auto member = group_member[shard_index.at(id)];
+        if (member < 4)
+          group->maintenance();
+        shard.stage = member < 4 ? "group-draining" : "draining";
         shard.peak_queued = shard.peak_bytes = 0;
         shard.boundary.clear();
         const LinkHeader context{0, {}, shard.cut_token, 0, 0};
         if (front)
           links.send(front, LinkKind::MaintenanceBegin, context, {});
-        if (!links.send(shard.connection, LinkKind::Drain, context, {}))
+        if (member >= 4 && !links.send(shard.connection, LinkKind::Drain, context, {}))
           throw std::runtime_error("Cannot send drain marker");
         std::cout << "ROUTER_CUT shard=" << id << " token=" << shard.cut_token << std::endl;
         return cluster::text_bytes("STARTED");
@@ -295,20 +416,41 @@ class Router {
         if (shard.stage != "drained" || !(input >> host >> port >> market) || host != "127.0.0.1" ||
             !port || port > 65535 || market > 65535)
           throw std::runtime_error("Route requires a drained shard and valid loopback ports");
+        const auto member = group_member[shard_index.at(id)];
+        unsigned peer_port = 0;
+        if (member < 4 && (!(input >> peer_port) || !peer_port || peer_port > 65535))
+          throw std::runtime_error("Group replacement requires its peer/control endpoint");
         const auto old = shard.connection;
         backend.erase(old);  // Planned retirement must not close gateway sessions.
         io.close(old);
         shard.connection = 0;
         shard.address = {host, static_cast<std::uint16_t>(port)};
         shard.next_market = market;
-        shard.stage = "connecting";
+        shard.stage = member < 4 ? "preparing" : "connecting";
+        if (member < 4) {
+          shard.group_port = peer_port;
+          group->replace(member, {host, static_cast<std::uint16_t>(peer_port)});
+        }
         shard.reconnect = {};
         return cluster::text_bytes("CONNECTING");
       }
       if (op == "resume") {
+        const auto member = group_member[shard_index.at(id)];
+        if (member < 4 && shard.stage == "prepared") {
+          group->resume();
+          if (shard.market)
+            shard.market->port.store(shard.next_market);
+          shard.stage = "flushing";
+          return cluster::text_bytes("RESUMING");
+        }
         if (shard.stage != "drained" || !links.ready(shard.connection))
           throw std::runtime_error("Resume requires a drained connected source");
-        shard.stage = "flushing";
+        if (member < 4) {
+          group->replace(member, {shard.address.host, shard.group_port});
+          shard.stage = "preparing";
+          shard.resume_when_prepared = true;
+        } else
+          shard.stage = "flushing";
         return cluster::text_bytes("RESUMING");
       }
       throw std::runtime_error("Unknown router command");
@@ -316,6 +458,9 @@ class Router {
   }
 
   bool dispatch(Shard& shard, const LinkHeader& h, std::span<const std::uint8_t> bytes) {
+    const auto member = group_member[&shard - shards.data()];
+    if (member < 4)
+      return group->enqueue(member, h, bytes);
     if (shard.stage == "active")
       return links.send(shard.connection, h.kind, h, bytes);
     if (shard.queued.size() >= c.max_pending ||
@@ -351,10 +496,17 @@ class Router {
   }
 
   void closed(ConnectionId id) {
+    if (group && group->contains(id)) {
+      group->lost(id);
+      return;
+    }
     links.lost(id);
     if (id == front) {
       front = 0;
       pending.clear();
+      captured_bytes = 0;
+      if (group)
+        group->discard_queued();
       for (auto& shard : shards) {
         shard.queued.clear();
         shard.queued_bytes = 0;
@@ -362,6 +514,8 @@ class Router {
     }
     const auto it = backend.find(id);
     if (it != backend.end()) {
+      if (group_member[it->second] < 4)
+        group->worker_lost();
       shards[it->second].connection = 0;
       backend.erase(it);
       if (front)
@@ -440,6 +594,15 @@ class Router {
   }
 
   void result(ConnectionId id, const LinkHeader& h, std::span<const std::uint8_t> bytes) {
+    if (h.kind == LinkKind::Group) {
+      const auto member = group_member[backend.at(id)];
+      if (member >= 4) {
+        io.close(id);
+        return;
+      }
+      group->result(member, h, bytes);
+      return;
+    }
     if (h.kind == LinkKind::Drained) {
       auto& shard = shards[backend.at(id)];
       if (shard.stage != "draining" || h.token != shard.cut_token) {
@@ -490,6 +653,13 @@ class Router {
       const auto index = backend.at(id);
       if (wire.messageType != MessageType::ActiveOrderSnapshot || p.completed[index]) {
         io.close(id);
+        return;
+      }
+      if (group_member[index] < 4 && p.capture_sequence > group->published()) {
+        if (bytes.size() > 64 * 1024 * 1024 - captured_bytes)
+          throw std::runtime_error("Router captured-query byte budget exhausted");
+        p.captured.push_back({index, h, {bytes.begin(), bytes.end()}});
+        captured_bytes += bytes.size();
         return;
       }
       const auto snapshot = copy_record<ActiveOrderSnapshot>(bytes);

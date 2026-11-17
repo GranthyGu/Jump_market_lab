@@ -8,6 +8,7 @@
 #include "matching_engine/cluster/worker.hpp"
 #include "matching_engine/persistence/durable_engine.hpp"
 #include "matching_engine/market_data/snapshot_mailbox.hpp"
+#include "matching_engine/spreads/worker.hpp"
 #include "shared_data/market_data/transport.hpp"
 #include "shared_data/orders/engine_connections.hpp"
 
@@ -40,29 +41,71 @@ void serve_order_engine(EngineBackend& book,
   } else if (standby) {
     throw std::runtime_error("Standby requires a control port");
   }
+  ConnectionId router = 0;
+  std::unique_ptr<spreads::Worker> group;
+  if (c.spreads && spreads::Topology(c).member(shard) < 4) {
+    auto* durable = dynamic_cast<persistence::DurableEngine*>(&book);
+    if (!durable)
+      throw std::runtime_error("Group execution requires the existing durable backend");
+    group = std::make_unique<spreads::Worker>(
+        *durable,
+        c,
+        shard,
+        io,
+        [&](const auto& h, auto bytes) {
+          return links.send(router, LinkKind::Group, h, bytes);
+        },
+        [&](auto kind, const auto& h, auto bytes) {
+          links.send(router, kind, h, bytes);
+        },
+        [&] {
+          return !control || control->active();
+        });
+  }
+  EngineBackend& public_book = group ? static_cast<EngineBackend&>(*group) : book;
   SnapshotMailbox snapshots(book.symbol_count());
   io.watch_wakeup(snapshots.request_fd(), [&] {
     snapshots.drain_requests();
-    snapshots.service(book);
+    snapshots.service(public_book);
   });
   if (book.notification_fd() >= 0)
     io.watch_wakeup(book.notification_fd(), [&] {
       book.poll();
-      snapshots.service(book);
+      if (group)
+        group->poll();
+      snapshots.service(public_book);
     });
-  ConnectionId router = 0;
   std::optional<LinkHeader> drain;
   std::uint64_t commands = 0, events = 0;
   io.on_accept = [&](auto id) {
-    links.incoming(id);
+    if (group && io.peer(id)->framing == Framing::Group)
+      group->incoming(id);
+    else
+      links.incoming(id);
+  };
+  io.on_connect = [&](auto id) {
+    if (group && group->contains(id))
+      group->connected(id);
+    else
+      links.connected(id);
   };
   io.on_close = [&](auto id) {
+    if (group && group->contains(id)) {
+      group->lost(id);
+      return;
+    }
     links.lost(id);
-    if (router == id)
+    if (router == id) {
       router = 0;
+      if (group)
+        group->business_lost();
+    }
   };
   io.on_frame = [&](auto id, auto bytes) {
-    links.receive(id, bytes);
+    if (group && group->contains(id))
+      group->receive(id, bytes);
+    else
+      links.receive(id, bytes);
   };
   links.on_ready = [&](auto id) {
     if (router && router != id)
@@ -71,15 +114,22 @@ void serve_order_engine(EngineBackend& book,
   };
   links.on_message = [&](auto id, const auto& h, auto bytes) {
     if (id == router && h.kind == LinkKind::Drain && control && control->active()) {
+      if (group)
+        group->fence();
       control->begin_drain();
       drain = h;
+      return;
+    }
+    if (id == router && group && h.kind == LinkKind::Group) {
+      ++commands;
+      group->business(h, bytes);
       return;
     }
     if (control && !control->active()) {
       io.close(id);  // Standby/fenced instances never accept business commands.
       return;
     }
-    if (id != router || h.user > c.accounts.size() ||
+    if (group || id != router || h.user > c.accounts.size() ||
         (h.kind != LinkKind::NewOrder && h.kind != LinkKind::Cancel &&
          h.kind != LinkKind::Snapshot && h.kind != LinkKind::History)) {
       io.close(id);
@@ -91,7 +141,7 @@ void serve_order_engine(EngineBackend& book,
       ++events;
     });
     // Also service reads in a busy TCP receive batch, not only between polls.
-    snapshots.service(book);
+    snapshots.service(public_book);
   };
   io.listen(found->address, Framing::Internal, 4);
   // Publisher samples the same live order state through the existing IPC.
@@ -109,32 +159,35 @@ void serve_order_engine(EngineBackend& book,
 
   if (market_port) {
     auto listener = runtime::listen_tcp(found->address.host, market_port);
-    market_tcp = std::make_unique<runtime::StopThread>(
-        [&, listener = std::move(listener)](const auto& cancelled) mutable {
-          try {
-            md::serve_shard(
-                std::move(listener),
-                [&] {
-                  return snapshots.read(runtime::Clock::now() +
-                                        std::chrono::milliseconds(c.request_timeout_ms));
-                },
-                cancelled,
-                c.request_timeout_ms,
-                128);
-          } catch (const std::exception& e) {
-            std::cerr << "Market adapter failed: " << e.what() << '\n';
-            market_failed.store(true);
-          }
-        });
+    market_tcp = std::make_unique<runtime::StopThread>([&, listener = std::move(listener)](
+                                                           const auto& cancelled) mutable {
+      try {
+        md::serve_shard(
+            std::move(listener),
+            [&] {
+              if (group && !group->market_ready())
+                throw std::runtime_error("Group market is waiting for a confirmed public boundary");
+              return snapshots.read(runtime::Clock::now() +
+                                    std::chrono::milliseconds(c.request_timeout_ms));
+            },
+            cancelled,
+            c.request_timeout_ms,
+            128);
+      } catch (const std::exception& e) {
+        std::cerr << "Market adapter failed: " << e.what() << '\n';
+        market_failed.store(true);
+      }
+    });
   }
   if (!mmap_path.empty()) {
     auto writer = std::make_unique<md::SharedViewWriter>(mmap_path, book.symbol_count());
-    market_shared =
-        std::make_unique<runtime::StopThread>([&, writer = std::move(writer)](const auto& cancelled) {
+    market_shared = std::make_unique<runtime::StopThread>(
+        [&, writer = std::move(writer)](const auto& cancelled) {
           try {
             while (!cancelled.load()) {
-              writer->publish(snapshots.read(runtime::Clock::now() +
-                                             std::chrono::milliseconds(c.request_timeout_ms)));
+              if (!group || group->market_ready())
+                writer->publish(snapshots.read(runtime::Clock::now() +
+                                               std::chrono::milliseconds(c.request_timeout_ms)));
               runtime::sleep_until_or_stop(
                   runtime::Clock::now() + std::chrono::milliseconds(100), cancelled, cancelled);
             }
@@ -153,6 +206,8 @@ void serve_order_engine(EngineBackend& book,
   while (!stop.load() && !market_failed.load()) {
     io.step(10);
     book.poll();
+    if (group)
+      group->poll();
     if (control) {
       control->poll();
       if (drain && control->finish_drain()) {
@@ -160,14 +215,19 @@ void serve_order_engine(EngineBackend& book,
         drain.reset();
       }
     }
-    snapshots.service(book);
+    snapshots.service(public_book);
     const auto now = Clock::now();
     if (now - tick >= std::chrono::milliseconds(50)) {
       links.tick();
+      if (group)
+        group->tick();
       io.expire();
       tick = now;
     }
   }
+  if (group && group->unresolved())
+    std::cerr << "GROUP_UNRESOLVED_SHUTDOWN shard=" << shard
+              << " recovery_requires_complete_group_boundary=1" << std::endl;
   book.drain();
   if (!stats_path.empty()) {
     std::ofstream out(stats_path);

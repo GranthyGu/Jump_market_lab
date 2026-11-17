@@ -193,3 +193,14 @@ add_test(NAME spread_publication_correctness
 set_tests_properties(spread_publication_correctness PROPERTIES TIMEOUT 30
   LABELS "spreads;correctness;cornercase")
 add_dependencies(demo_tests spread_publication_tests)
+
+add_executable(spread_process_tests spreads/process.cpp)
+target_include_directories(spread_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_process_tests PRIVATE marketlab_matching_runtime)
+target_compile_options(spread_process_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_native_process
+  COMMAND spread_process_tests "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/spread-results/process")
+set_tests_properties(spread_native_process PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE
+  LABELS "spreads;integration;correctness;cornercase;performance")
+add_dependencies(spread_process_tests market_matching_engine market_engine_router market_group_coordinator market_gateway)
+add_dependencies(demo_tests spread_process_tests)

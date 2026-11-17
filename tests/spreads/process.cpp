@@ -1,0 +1,307 @@
+#include "fixtures.hpp"
+#include "network.hpp"
+#include <array>
+
+using namespace spread_test;
+namespace md = m::md;
+namespace {
+struct Deployment {
+  std::filesystem::path root, binary;
+  o::Address gateway;
+  std::array<unsigned, 8> orders{}, markets{}, controls{};
+  std::array<demo::Child, 8> engines;
+  demo::Child coordinator, router, front;
+  unsigned request = 10;
+  std::unique_ptr<demo::Trader> client;
+  Deployment(const std::filesystem::path &binaries,
+             const std::filesystem::path &path)
+      : root(path), binary(binaries) {
+    std::filesystem::create_directories(root);
+    demo::Ports ports;
+    gateway = {"127.0.0.1", ports.take()};
+    const auto router_port = ports.take(), coordinator_port = ports.take(),
+               admin = ports.take();
+    std::array<unsigned, 4> peers{};
+    for (unsigned i = 0; i < 8; ++i) {
+      orders[i] = ports.take();
+      markets[i] = ports.take();
+      controls[i] = ports.take();
+    }
+    for (auto &peer : peers)
+      peer = ports.take();
+    const auto path_config = root / "exchange.conf";
+    std::ofstream config(path_config);
+    config << "routing=router\nspreads=enabled\ngateway_listen=127.0.0.1,"
+           << gateway.port << "\nrouter_listen=127.0.0.1," << router_port
+           << "\nengine_endpoint=127.0.0.1," << router_port
+           << "\ncoordinator=127.0.0.1," << coordinator_port
+           << "\nuser=Alice,demo\nuser=Bob,demo\nuser=Carol,demo\nrequest_"
+              "timeout_ms=30000\nmax_pending_per_client=20000\n";
+    for (unsigned i = 0; i < 8; ++i)
+      config << "shard=" << i + 1 << ",127.0.0.1," << orders[i] << '\n';
+    for (unsigned i = 0; i < 4; ++i) {
+      config << "symbol=ITEM" << i + 1 << ",100," << i + 1 << '\n';
+      config << "spread_peer=" << i + 5 << ",127.0.0.1," << peers[i] << '\n';
+    }
+    config << "symbol=A,120,6\nsymbol=B,110,7\nsymbol=C,105,8\n"
+              "symbol=SP_AB,10,5\nsymbol=SP_AC,15,5\nsymbol=BF_ABC,5,5\n";
+    config.close();
+    ports.release();
+    for (unsigned i = 0; i < 8; ++i)
+      engines[i].launch(binary / "market_matching_engine",
+                        {"--config", path_config.string(), "--shard",
+                         std::to_string(i + 1), "--data-dir",
+                         (root / "data").string(), "--market-port",
+                         std::to_string(markets[i]), "--control-port",
+                         std::to_string(controls[i]), "--trace"},
+                        root / ("shard-" + std::to_string(i + 1) + ".log"));
+    coordinator.launch(binary / "market_group_coordinator",
+                       {"--config", path_config.string(), "--stats",
+                        (root / "coordinator.json").string(), "--trace"},
+                       root / "coordinator.log");
+    router.launch(binary / "market_engine_router",
+                  {"--config", path_config.string(), "--admin-port",
+                   std::to_string(admin), "--trace"},
+                  root / "router.log");
+    front.launch(binary / "market_gateway",
+                 {"gateway", "--config", path_config.string()},
+                 root / "gateway.log");
+    demo::eventually(
+        [&] {
+          try {
+            auto probe = std::make_unique<demo::Trader>(gateway);
+            require(probe->login("Alice").empty(), "Fresh login is not empty");
+            client = std::move(probe);
+            return true;
+          } catch (...) {
+            return false;
+          }
+        },
+        "Group startup/login timed out; logs: " + root.string(), 16000);
+  }
+  ~Deployment() {
+    client.reset();
+    front.stop();
+    router.stop();
+    coordinator.stop();
+    for (auto &engine : engines)
+      engine.stop();
+  }
+  m::OrderId add(const char *symbol, m::Side side, int price, int quantity) {
+    return client->add(++request, symbol, side, price, quantity).order.orderId;
+  }
+  std::vector<m::Trade> fills(unsigned count) {
+    std::vector<m::Trade> trades;
+    for (unsigned i = 0; i < count; ++i) {
+      auto trade = client->get<m::Trade>(m::MessageType::Trade);
+      auto update = client->get<m::OrderUpdate>(m::MessageType::OrderUpdate);
+      require(trade.header.requestId == 0 && update.header.requestId == 0 &&
+                  trade.orderId == update.order.orderId &&
+                  trade.timestamp == update.timestamp,
+              "Trade/update identity, order, or shared timestamp changed "
+              "through Gateway");
+      trades.push_back(trade);
+    }
+    return trades;
+  }
+  std::vector<o::Bytes> history() {
+    m::TradeHistoryRequest query{
+        {m::MessageType::TradeHistoryRequest, sizeof(query), ++request},
+        0,
+        256,
+        0,
+        0};
+    client->send(query);
+    std::vector<o::Bytes> records;
+    unsigned ends = 0;
+    for (;;) {
+      auto bytes = client->receive();
+      m::Header header{};
+      std::memcpy(&header, bytes.data(), sizeof(header));
+      require(header.requestId == request,
+              "History request correlation changed");
+      if (header.messageType == m::MessageType::TradeHistoryEnd) {
+        const auto end = o::copy_record<m::TradeHistoryEnd>(bytes);
+        if (!end.shard) {
+          require(ends == 8 && end.flags == m::history_all_shards,
+                  "Wrong all-shard history termination");
+          return records;
+        }
+        require(!(end.flags & m::history_more),
+                "Unexpected history pagination in small test");
+        ++ends;
+      } else {
+        require(m::is_history_record(header.messageType),
+                "Typed history was rejected by network path");
+        records.push_back(std::move(bytes));
+      }
+    }
+  }
+  md::ShardView market(unsigned shard) {
+    std::vector<std::uint16_t> symbols;
+    if (shard <= 4)
+      symbols = {static_cast<std::uint16_t>(shard)};
+    else if (shard == 5)
+      symbols = {8, 9, 10};
+    else
+      symbols = {static_cast<std::uint16_t>(shard - 1)};
+    auto source = md::make_source(
+        {"s", "tcp", "127.0.0.1",
+         static_cast<std::uint16_t>(markets[shard - 1]), "", symbols},
+        10000);
+    return source->read(demo::until());
+  }
+};
+
+void baseline(Deployment &d) {
+  for (unsigned i = 1; i <= 4; ++i) {
+    const auto symbol = "ITEM" + std::to_string(i);
+    const auto order = d.add(symbol.c_str(), m::Side::Buy, 100, 2);
+    require(order >> 48 == i, "Ordinary shard routing changed");
+    d.client->cancel(++d.request, order);
+  }
+  const auto bf = d.add("BF_ABC", m::Side::Buy, 5, 2);
+  d.client->cancel(++d.request, bf);
+}
+
+void implied(Deployment &d) {
+  d.add("A", m::Side::Sell, 120, 4);
+  d.add("B", m::Side::Buy, 110, 4);
+  demo::eventually(
+      [&] {
+        const auto view = d.market(5).books.at(8);
+        return view.levels.size() == 1 && view.levels[0].quantity == 0 &&
+               view.levels[0].implied_quantity == 4 &&
+               view.levels[0].num_orders == 1;
+      },
+      "Public implied quote was not installed");
+  const auto incoming = d.add("SP_AB", m::Side::Buy, 10, 4);
+  const auto trades = d.fills(3);
+  require(trades[0].orderId == incoming && trades[0].price == 10 &&
+              trades[1].price == 120 && trades[2].price == 110,
+          "IN execution returned incorrect owned prices");
+  const auto history = d.history();
+  require(history.size() == 3,
+          "Self-trade typed history duplicated or lost an execution");
+  unsigned legs = 0, spread = 0;
+  for (const auto &bytes : history) {
+    m::Header header{};
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    if (header.messageType == m::MessageType::ImpliedLegHistory) {
+      const auto leg = o::copy_record<m::ImpliedLegHistory>(bytes);
+      require(leg.aggressorOrderId == incoming && leg.fillNo == 1 &&
+                  leg.trade.quantity == 4,
+              "Leg history lost common execution identity");
+      ++legs;
+    } else {
+      const auto execution = o::copy_record<m::SpreadExecutionHistory>(bytes);
+      require(execution.aggressorOrderId == incoming &&
+                  execution.orderId == incoming && execution.fillNo == 1 &&
+                  execution.a.price == 120 && execution.x.price == 110,
+              "Spread history lost real counterparties");
+      ++spread;
+    }
+  }
+  require(legs == 2 && spread == 1, "Wrong typed records by owning shard");
+}
+
+void signed_and_direct(Deployment &d) {
+  for (const int price : {-1, 0}) {
+    d.add("A", m::Side::Sell, 110 + price, 1);
+    d.add("B", m::Side::Buy, 110, 1);
+    d.add("SP_AB", m::Side::Buy, price, 1);
+    require(d.fills(3)[0].price == price,
+            "Signed group price failed native TCP path");
+  }
+  d.add("SP_AB", m::Side::Buy, 0, 1);
+  d.add("SP_AB", m::Side::Sell, -1, 1);
+  const auto trades = d.fills(2);
+  require(trades[0].price == 0 && trades[1].price == 0,
+          "Signed direct book did not use maker price");
+  require(d.history().size() == 10,
+          "Mixed direct/typed history failed full fanout");
+}
+
+void rolling(Deployment &d) {
+  for (unsigned i = 0; i < 5; ++i) {
+    d.add("A", m::Side::Sell, 120 + i, 1);
+    d.add("B", m::Side::Buy, 110 - i, 1);
+  }
+  const auto incoming = d.add("SP_AB", m::Side::Buy, 18, 5);
+  const auto trades = d.fills(15);
+  std::vector<int> spread_prices;
+  for (const auto &trade : trades)
+    if (trade.orderId == incoming)
+      spread_prices.push_back(trade.price);
+  require(spread_prices == std::vector<int>{10, 12, 14, 16, 18},
+          "Native rolling depth skipped a source level");
+  demo::Trader reconnect(d.gateway);
+  require(reconnect.login("Alice", ++d.request).empty(),
+          "Public active-order capture retained consumed orders");
+  d.client = std::make_unique<demo::Trader>(d.gateway);
+  require(d.client->login("Alice", ++d.request).empty(),
+          "Repeated capture changed group state");
+}
+
+void stress(Deployment &d, demo::Suite &suite) {
+  constexpr unsigned count = 5000;
+  d.add("B", m::Side::Buy, 110, count);
+  std::vector<demo::Clock::time_point> started;
+  started.reserve(count);
+  const auto first_request = d.request + 1;
+  const auto start = demo::Clock::now();
+  for (unsigned i = 0; i < count; ++i) {
+    started.push_back(demo::Clock::now());
+    d.client->send(demo::order_record(++d.request, "A", m::Side::Sell, 120, 1));
+  }
+  std::vector<double> samples;
+  for (unsigned i = 0; i < count; ++i) {
+    const auto update =
+        d.client->get<m::OrderUpdate>(m::MessageType::OrderUpdate);
+    require(update.header.requestId == first_request + i &&
+                update.order.status == m::OrderStatus::Accepted,
+            "Pipelined group requests lost FIFO acceptance");
+    samples.push_back(demo::us(started[i]));
+  }
+  suite.metric("native-group-pipelined-acceptance", samples,
+               demo::us(start) / 1e6, count,
+               "Gateway TCP request to durable Accepted; one pipelined client, "
+               "includes group queue and fsync");
+  const auto trade_start = demo::Clock::now();
+  const auto incoming = d.add("SP_AB", m::Side::Buy, 10, count);
+  const auto trades = d.fills(3 * count);
+  unsigned quantity = 0;
+  for (const auto &trade : trades)
+    if (trade.orderId == incoming)
+      quantity += trade.quantity;
+  require(quantity == count, "Multipart native execution lost spread quantity");
+  suite.metric("native-five-thousand-piece-command", {demo::us(trade_start)},
+               demo::us(trade_start) / 1e6, count,
+               "One native TCP command through all shard fsyncs and delivery "
+               "of all 15000 owned fills; not per-order percentiles");
+}
+} // namespace
+
+int main(int argc, char **argv) {
+  require(argc >= 3, "Expected binary and result directories");
+  demo::Suite suite(argv[2]);
+  const auto root = suite.output / ("run-" + std::to_string(::getpid()) + "-" +
+                                    std::to_string(o::unix_ns()));
+  std::unique_ptr<Deployment> deployment;
+  suite.test("native-eight-shards-coordinator-router-gateway-bootstrap",
+             [&] { deployment = std::make_unique<Deployment>(argv[1], root); });
+  if (deployment) {
+    suite.test("ordinary-shards-and-butterfly-reuse-original-path",
+               [&] { baseline(*deployment); });
+    suite.test("native-implied-market-trades-and-typed-history",
+               [&] { implied(*deployment); });
+    suite.test("negative-zero-and-direct-spread-native-execution",
+               [&] { signed_and_direct(*deployment); });
+    suite.test("native-multi-round-window-and-complete-order-capture",
+               [&] { rolling(*deployment); });
+    suite.test("native-pipeline-and-five-thousand-piece-multipart-stress",
+               [&] { stress(*deployment, suite); });
+  }
+  deployment.reset();
+  return suite.finish();
+}

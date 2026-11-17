@@ -63,6 +63,13 @@ Header Session::message(MessageKind kind, std::uint8_t flags) const {
   return {kind, epoch_, current_.seq, current_.round, flags};
 }
 
+void Session::recover_sources() {
+  if (active())
+    throw std::runtime_error("Cannot rebuild sources across unresolved execution");
+  sources_ = {};
+  sources_ = real_sources();
+}
+
 std::size_t Session::buffer_bytes() const {
   auto bytes = scratch_.capacity() + direct_.capacity() * sizeof(FillPiece);
   for (const auto& v : local_)

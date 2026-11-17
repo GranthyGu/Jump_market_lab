@@ -13,18 +13,24 @@ Coordinator::Coordinator(std::uint64_t epoch, Send send)
   scratch_.reserve(1024);
 }
 
-void Coordinator::initialize(const Sources& sources, const std::array<std::uint64_t, 4>& batches) {
+void Coordinator::initialize(const Sources& sources,
+                             const std::array<std::uint64_t, 4>& batches,
+                             std::uint8_t reinstall_targets) {
   if (active_seq_ || ready_ || initializing_)
     throw std::runtime_error("Cannot rebuild views across unresolved group work");
-  if (completed_ && batches != batches_)
+  if (initialized_ && batches != batches_)
     throw std::runtime_error("Recovered local batches differ from completed group boundary");
   for (unsigned i = 0; i < sources.size(); ++i)
     validate(sources[i], static_cast<BookSide>(i % 2));
   sources_ = sources;
   batches_ = batches;
-  recompute(sources_, 1023, views_);
+  const auto changed = recompute(sources_, 1023, views_);
+  if (reinstall_targets & ~31U)
+    throw std::runtime_error("Invalid initial view target mask");
   initializing_ = true;
-  install(31, true);
+  initialized_ = true;
+  install(reinstall_targets | changed, true);
+  finish_views();
 }
 
 void Coordinator::pause(std::string_view reason) {
