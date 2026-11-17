@@ -9,6 +9,7 @@ namespace marketlab::orders {
 struct MarketBookSnapshot {
   std::uint16_t symbol_id = 0;
   std::uint8_t count = 0;
+  bool extended = false;
   std::array<md::Level, 2 * md::depth> levels{};
 };
 
@@ -25,9 +26,10 @@ struct MarketSnapshot {
   md::ShardView materialize() const {
     md::ShardView result{epoch, {}};
     for (const auto& book : books)
-      result.books.emplace(
-          book.symbol_id,
-          md::Book{book.symbol_id, {book.levels.begin(), book.levels.begin() + book.count}});
+      result.books.emplace(book.symbol_id,
+                           md::Book{book.symbol_id,
+                                    {book.levels.begin(), book.levels.begin() + book.count},
+                                    book.extended});
     return result;
   }
 };

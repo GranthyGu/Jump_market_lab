@@ -66,18 +66,23 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
       batch->books = std::move(books);
       std::vector<Bytes> outgoing;
       for (const auto& [id, book] : batch->books) {
-        auto snapshot =
-            encode({Kind::Snapshot, batch->epoch, id, batch->index, batch->timestamp, book.levels});
+        auto snapshot = encode({book.extended ? Kind::SnapshotV2 : Kind::Snapshot,
+                                batch->epoch,
+                                id,
+                                batch->index,
+                                batch->timestamp,
+                                book.levels});
         batch->snapshots.emplace(id, snapshot);
         if (reset || batch->index % config_.snapshot_every == 0) {
           outgoing.push_back(std::move(snapshot));
         } else {
-          auto delta = encode({Kind::Delta,
-                               batch->epoch,
-                               id,
-                               batch->index,
-                               batch->timestamp,
-                               difference(before->books.at(id), book)});
+          auto delta =
+              encode({book.extended || before->books.at(id).extended ? Kind::DeltaV2 : Kind::Delta,
+                      batch->epoch,
+                      id,
+                      batch->index,
+                      batch->timestamp,
+                      difference(before->books.at(id), book)});
           // Send exactly one record per symbol. Keep equal-size and empty deltas.
           outgoing.push_back(delta.size() > snapshot.size() ? std::move(snapshot)
                                                             : std::move(delta));
@@ -87,19 +92,22 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
       set_latest(batch);
       previous_sources = std::move(epochs);
       const auto retries_before = sender_.submission_retries();
-      const auto submission_deadline = std::min(round_started + publication_period,
-                                                runtime::Clock::now() + std::chrono::milliseconds(200));
+      const auto submission_deadline =
+          std::min(round_started + publication_period,
+                   runtime::Clock::now() + std::chrono::milliseconds(200));
       for (const auto& message : outgoing)
         sender_.send(message, submission_deadline);
       availability.recovered();
       runtime::Log(std::cout) << console::cyan << "Published index=" << batch->index
-                     << " symbols=" << batch->books.size() << " packets=" << outgoing.size()
-                     << console::reset << console::dim << " sample_us="
-                     << std::chrono::duration_cast<std::chrono::microseconds>(runtime::Clock::now() -
-                                                                              round_started)
-                            .count()
-                     << " udp_submission_retries=" << sender_.submission_retries() - retries_before
-                     << console::reset << '\n';
+                              << " symbols=" << batch->books.size()
+                              << " packets=" << outgoing.size() << console::reset << console::dim
+                              << " sample_us="
+                              << std::chrono::duration_cast<std::chrono::microseconds>(
+                                     runtime::Clock::now() - round_started)
+                                     .count()
+                              << " udp_submission_retries="
+                              << sender_.submission_retries() - retries_before << console::reset
+                              << '\n';
     } catch (const std::exception& e) {
       set_latest(nullptr);
       previous_sources.clear();
@@ -112,8 +120,9 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
     next += publication_period;
     if (runtime::Clock::now() > next) {
       if (!availability.active())
-        runtime::Log(std::cerr) << console::Label{"WARNING", console::yellow}
-                       << " Publication deadline missed; no synthetic catch-up batches generated\n";
+        runtime::Log(std::cerr)
+            << console::Label{"WARNING", console::yellow}
+            << " Publication deadline missed; no synthetic catch-up batches generated\n";
       next = runtime::Clock::now() + publication_period;
     }
     runtime::sleep_until_or_stop(next, stop, cancelled);
@@ -122,13 +131,15 @@ void Publisher::sample_loop(const std::atomic_bool& stop, const std::atomic_bool
 
 void Publisher::run(const std::atomic_bool& stop) {
   auto listener = runtime::listen_tcp(config_.query.host, config_.query.port);
-  runtime::Log(std::cout) << "Snapshot TCP " << config_.query.host << ':' << config_.query.port << '\n';
+  runtime::Log(std::cout) << "Snapshot TCP " << config_.query.host << ':' << config_.query.port
+                          << '\n';
   if (config_.multicast) {
     const auto& multicast = *config_.multicast;
     runtime::Log(std::cout) << "Market data UDP multicast " << multicast.group.host << ':'
-                   << multicast.group.port
-                   << " interface=" << multicast.interface << " ttl=" << multicast.ttl
-                   << " loopback=" << multicast.loopback << " (one datagram per message)\n";
+                            << multicast.group.port
+                            << " interface=" << multicast.interface << " ttl=" << multicast.ttl
+                            << " loopback=" << multicast.loopback
+                            << " (one datagram per message)\n";
   }
   runtime::StopThread sampler([&](const std::atomic_bool& cancelled) {
     sample_loop(stop, cancelled);

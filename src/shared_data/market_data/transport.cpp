@@ -18,7 +18,7 @@
 namespace marketlab::md {
 namespace {
 constexpr std::size_t shm_header_size = 16;
-constexpr std::array<std::uint8_t, 4> shm_magic{'M', 'D', 'S', '1'};
+constexpr std::array<std::uint8_t, 4> shm_magic{'M', 'D', 'S', '2'};
 
 std::runtime_error system_error(const std::string& what) {
   return std::runtime_error(what + ": " + std::strerror(errno));

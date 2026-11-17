@@ -45,6 +45,7 @@ class CommittedState {
   struct Book {
     std::uint16_t id = 0;
     std::map<Price, Level> bids, asks;
+    bool extended = false;
   };
 
   std::vector<std::shared_ptr<Page>> pages_;

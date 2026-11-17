@@ -72,7 +72,7 @@ Message query_snapshot(const Endpoint& endpoint, std::uint16_t symbol, int timeo
   if (length < header_size || length > max_snapshot_size)
     throw std::runtime_error("Invalid snapshot length");
   auto message = decode(runtime::receive_exact(fd.get(), length, deadline));
-  if (message.kind != Kind::Snapshot || message.symbol_id != symbol)
+  if (!is_snapshot(message.kind) || message.symbol_id != symbol)
     throw std::runtime_error("Unexpected snapshot");
   return message;
 }
@@ -166,13 +166,9 @@ void print_view(std::string_view event, std::uint16_t id, const MarketView& view
     std::cout << console::cyan << "BOOK symbol=" << id << " index=" << m.index
               << " time=" << console::time(m.timestamp) << " epoch=" << epoch_text(m.epoch)
               << " state=" << status_name(view.status) << " entries=" << m.levels.size()
-              << console::reset << '\n';
+              << console::reset << "  D=direct I=implied\n";
     for (const auto& level : m.levels)
-      std::cout << "  "
-                << console::Label{level.side == Side::Buy ? "BUY " : "SELL",
-                                  level.side == Side::Buy ? console::green : console::yellow}
-                << " price=" << level.price << " quantity=" << level.quantity
-                << " numOfOrders=" << level.num_orders << '\n';
+      print_level(level);
   }
   std::cout << std::flush;
 }

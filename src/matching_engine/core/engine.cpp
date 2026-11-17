@@ -442,6 +442,7 @@ void MatchingEngine::copy_market(MarketSnapshot& view) noexcept {
     auto& top = view.books[index++];
     top.symbol_id = book.symbol_id;
     top.count = 0;
+    top.extended = book.signed_price;
     auto copy = [&](auto begin, auto end, md::Side side) {
       for (unsigned count = 0; begin != end && count < md::depth; ++begin, ++count)
         top.levels[top.count++] = {side, begin->first, begin->second.quantity, begin->second.count};

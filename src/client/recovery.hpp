@@ -60,6 +60,7 @@ class MarketRecovery {
     std::uint64_t index, timestamp;
     std::array<Level, 4 * depth> levels{};
     std::size_t count;
+    Kind kind;
     explicit Pending(const Message& message);
     Message message(std::uint16_t symbol) const;
   };

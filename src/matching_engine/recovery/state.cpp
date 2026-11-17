@@ -10,7 +10,11 @@ CommittedState::CommittedState(const OrderConfig& c, std::uint16_t shard)
   for (std::size_t i = 0; i < c.products.size(); ++i) {
     if (c.products[i].shard == shard) {
       symbol_books_[i + 1] = books_.size();
-      books_.push_back({static_cast<std::uint16_t>(i + 1), {}, {}});
+      books_.push_back({static_cast<std::uint16_t>(i + 1),
+                        {},
+                        {},
+                        c.spreads && (c.products[i].symbol == c.spread_symbols[3] ||
+                                      c.products[i].symbol == c.spread_symbols[4])});
     }
   }
 }
@@ -116,6 +120,7 @@ void CommittedState::market(MarketSnapshot& view) const noexcept {
     auto& top = view.books[i];
     top.symbol_id = book.id;
     top.count = 0;
+    top.extended = book.extended;
     auto copy = [&](auto begin, auto end, md::Side side) {
       for (unsigned n = 0; begin != end && n < md::depth; ++begin, ++n)
         top.levels[top.count++] = {side, begin->first, begin->second.quantity, begin->second.count};

@@ -39,12 +39,13 @@ MarketRecovery::Pending::Pending(const Message& m)
     : epoch(m.epoch),
       index(m.index),
       timestamp(m.timestamp),
-      count(m.levels.size()) {
+      count(m.levels.size()),
+      kind(m.kind) {
   std::copy(m.levels.begin(), m.levels.end(), levels.begin());
 }
 
 Message MarketRecovery::Pending::message(std::uint16_t id) const {
-  return {Kind::Delta, epoch, id, index, timestamp, {levels.begin(), levels.begin() + count}};
+  return {kind, epoch, id, index, timestamp, {levels.begin(), levels.begin() + count}};
 }
 
 MarketRecovery::MarketRecovery(const std::map<std::uint16_t, std::string>& symbols,
@@ -108,7 +109,9 @@ void MarketRecovery::refresh(std::uint16_t id, runtime::Deadline now) {
   }
 }
 
-void MarketRecovery::require_check(std::uint16_t id, runtime::Deadline now, std::string_view reason) {
+void MarketRecovery::require_check(std::uint16_t id,
+                                   runtime::Deadline now,
+                                   std::string_view reason) {
   auto& s = states_.at(id);
   clear_pending(s);
   if (!s.check_required) {
@@ -132,9 +135,12 @@ void MarketRecovery::invalid(std::optional<std::uint16_t> id, runtime::Deadline 
   }
 }
 
-void MarketRecovery::commit(std::uint16_t id, Message snapshot, runtime::Deadline now, bool advanced) {
+void MarketRecovery::commit(std::uint16_t id,
+                            Message snapshot,
+                            runtime::Deadline now,
+                            bool advanced) {
   auto& s = states_.at(id);
-  snapshot.kind = Kind::Snapshot;
+  snapshot.kind = is_v2(snapshot.kind) ? Kind::SnapshotV2 : Kind::Snapshot;
   s.snapshot = std::move(snapshot);
   if (advanced) {
     s.advanced = now;
@@ -147,16 +153,18 @@ void MarketRecovery::commit(std::uint16_t id, Message snapshot, runtime::Deadlin
 bool MarketRecovery::apply(std::uint16_t id, const Message& delta, runtime::Deadline now) {
   auto& s = states_.at(id);
   auto result = *s.snapshot;
+  if (is_v2(delta.kind))
+    result.kind = Kind::SnapshotV2;
   for (const auto& change : delta.levels) {
     std::erase_if(result.levels, [&](const Level& level) {
       return level.side == change.side && level.price == change.price;
     });
-    if (change.quantity)
+    if (change.quantity || change.implied_quantity)
       result.levels.push_back(change);
   }
   std::sort(result.levels.begin(), result.levels.end(), ordered);
   try {
-    validate_book({id, result.levels});
+    validate_book({id, result.levels, is_v2(result.kind)});
   } catch (...) {
     require_check(id, now, "INVALID_RESULT");
     return false;
@@ -252,7 +260,7 @@ void MarketRecovery::udp(const Message& message, runtime::Deadline now) {
     return;  // TCP confirms epochs; unknown UDP cannot replace the baseline.
   }
   s.highest_seen = std::max(s.highest_seen, message.index);
-  if (message.kind == Kind::Snapshot) {
+  if (is_snapshot(message.kind)) {
     install(id, message, now, false);
     refresh(id, now);
     return;
@@ -361,7 +369,7 @@ void MarketRecovery::complete(const SnapshotRequest& request,
                               runtime::Deadline now) {
   if (!valid(request))
     return;
-  if (snapshot.kind != Kind::Snapshot || snapshot.symbol_id != request.symbol) {
+  if (!is_snapshot(snapshot.kind) || snapshot.symbol_id != request.symbol) {
     failed(request, now);
     return;
   }

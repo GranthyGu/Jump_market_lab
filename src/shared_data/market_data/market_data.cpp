@@ -2,6 +2,7 @@
 #include "shared_data/console.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -18,30 +19,38 @@ bool ordered(const Level& a, const Level& b) {
   return a.side == Side::Buy ? a.price > b.price : a.price < b.price;
 }
 
-void append_levels(Bytes& out, const std::vector<Level>& levels) {
+void append_levels(Bytes& out, const std::vector<Level>& levels, bool extended) {
   for (const auto& x : levels) {
     append_uint(out, static_cast<std::uint8_t>(x.side), 1);
     append_uint(out, static_cast<std::uint32_t>(x.price), 4);
     append_uint(out, x.quantity, 8);
+    if (extended)
+      append_uint(out, x.implied_quantity, 8);
     append_uint(out, x.num_orders, 8);
   }
 }
 
 std::vector<Level> read_levels(std::span<const std::uint8_t> data,
                                std::size_t& offset,
-                               std::size_t n) {
-  if (offset > data.size() || n > (data.size() - offset) / level_size)
+                               std::size_t n,
+                               bool extended) {
+  if (offset > data.size() || n > (data.size() - offset) / (extended ? level_v2_size : level_size))
     throw std::runtime_error("Truncated price levels");
   std::vector<Level> out;
   out.reserve(n);
   for (std::size_t i = 0; i < n; ++i) {
     const auto side = static_cast<Side>(read_uint(data, offset, 1));
     const auto price = read_uint(data, offset, 4);
-    if (price > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()))
+    if (!extended && price > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()))
       throw std::runtime_error("Price exceeds int32");
     const auto quantity = read_uint(data, offset, 8);
+    const auto implied = extended ? read_uint(data, offset, 8) : 0;
     const auto orders = read_uint(data, offset, 8);
-    out.push_back({side, static_cast<std::int32_t>(price), quantity, orders});
+    out.push_back({side,
+                   std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(price)),
+                   quantity,
+                   orders,
+                   implied});
   }
   return out;
 }
@@ -70,15 +79,17 @@ std::uint64_t read_uint(std::span<const std::uint8_t> data, std::size_t& offset,
   return value;
 }
 
-void validate_levels(const std::vector<Level>& levels, bool delta) {
+void validate_levels(const std::vector<Level>& levels, bool delta, bool extended) {
   if (levels.size() > (delta ? 4 : 2) * depth)
     throw std::runtime_error("Too many levels");
   std::size_t buys = 0, sells = 0;
   for (std::size_t i = 0; i < levels.size(); ++i) {
     const auto& x = levels[i];
-    if ((x.side != Side::Buy && x.side != Side::Sell) || x.price <= 0)
+    if ((x.side != Side::Buy && x.side != Side::Sell) || (!extended && x.price <= 0))
       throw std::runtime_error("Invalid side or price");
-    if (!((x.quantity > 0 && x.num_orders > 0) || (delta && x.quantity == 0 && x.num_orders == 0)))
+    if ((!extended && x.implied_quantity) || (bool(x.quantity) != bool(x.num_orders)) ||
+        (!delta && !x.quantity && !x.implied_quantity) ||
+        x.implied_quantity > UINT64_MAX - x.quantity)
       throw std::runtime_error("Invalid aggregate values");
     if (i != 0) {
       const auto& previous = levels[i - 1];
@@ -96,7 +107,7 @@ void validate_levels(const std::vector<Level>& levels, bool delta) {
 void validate_book(const Book& book) {
   if (book.symbol_id == 0)
     throw std::runtime_error("Symbol zero is reserved");
-  validate_levels(book.levels, false);
+  validate_levels(book.levels, false, book.extended);
 }
 
 std::vector<Level> difference(const Book& before, const Book& after) {
@@ -137,32 +148,37 @@ std::vector<Level> difference(const Book& before, const Book& after) {
 }
 
 Bytes encode(const Message& m) {
-  if ((m.kind != Kind::Delta && m.kind != Kind::Snapshot) || !m.symbol_id || !m.timestamp ||
-      (m.kind == Kind::Delta && m.index == 0))
+  if ((!is_delta(m.kind) && !is_snapshot(m.kind)) || !m.symbol_id || !m.timestamp ||
+      (is_delta(m.kind) && m.index == 0))
     throw std::runtime_error("Invalid message metadata");
-  validate_levels(m.levels, m.kind == Kind::Delta);
+  const bool extended = is_v2(m.kind);
+  validate_levels(m.levels, is_delta(m.kind), extended);
   Bytes out;
-  out.reserve(header_size + m.levels.size() * level_size);
+  out.reserve(header_size + m.levels.size() * (extended ? level_v2_size : level_size));
   append_uint(out, static_cast<std::uint8_t>(m.kind), 1);
   out.insert(out.end(), m.epoch.begin(), m.epoch.end());
   append_uint(out, m.symbol_id, 2);
   append_uint(out, m.index, 8);
   append_uint(out, m.timestamp, 8);
-  append_levels(out, m.levels);
+  append_levels(out, m.levels, extended);
   return out;
 }
 
 Message decode(std::span<const std::uint8_t> data) {
-  if (data.size() < header_size || (data.size() - header_size) % level_size)
+  if (data.size() < header_size)
     throw std::runtime_error("Invalid message length");
   std::size_t offset = 0;
   Message m{};
   m.kind = static_cast<Kind>(read_uint(data, offset, 1));
+  const bool extended = is_v2(m.kind);
+  const auto stride = extended ? level_v2_size : level_size;
+  if ((data.size() - header_size) % stride)
+    throw std::runtime_error("Invalid message level length");
   m.epoch = read_epoch(data, offset);
   m.symbol_id = static_cast<std::uint16_t>(read_uint(data, offset, 2));
   m.index = read_uint(data, offset, 8);
   m.timestamp = read_uint(data, offset, 8);
-  m.levels = read_levels(data, offset, (data.size() - header_size) / level_size);
+  m.levels = read_levels(data, offset, (data.size() - header_size) / stride, extended);
   // Reuse the encoder's validation to keep both directions identical.
   (void)encode(m);
   return m;
@@ -172,6 +188,14 @@ Bytes encode_shard(const ShardView& view) {
   if (view.books.size() > 65535)
     throw std::runtime_error("Too many symbols");
   Bytes out(view.epoch.begin(), view.epoch.end());
+  const bool extended = view.books.size() == 65535 ||
+                        std::any_of(view.books.begin(), view.books.end(), [](const auto& entry) {
+                          return entry.second.extended;
+                        });
+  if (extended) {
+    append_uint(out, 65535, 2);  // Versioned shard envelope, distinct from legacy count.
+    append_uint(out, 2, 1);
+  }
   append_uint(out, view.books.size(), 2);
   for (const auto& [id, book] : view.books) {
     validate_book(book);
@@ -179,7 +203,7 @@ Bytes encode_shard(const ShardView& view) {
       throw std::runtime_error("Book key mismatch");
     append_uint(out, id, 2);
     append_uint(out, book.levels.size(), 1);
-    append_levels(out, book.levels);
+    append_levels(out, book.levels, extended);
   }
   return out;
 }
@@ -188,7 +212,13 @@ ShardView decode_shard(std::span<const std::uint8_t> data,
                        const std::vector<std::uint16_t>& expected) {
   std::size_t offset = 0;
   ShardView view{read_epoch(data, offset), {}};
-  const auto count = read_uint(data, offset, 2);
+  auto count = read_uint(data, offset, 2);
+  const bool extended = count == 65535;
+  if (extended) {
+    if (read_uint(data, offset, 1) != 2)
+      throw std::runtime_error("Unsupported shard snapshot version");
+    count = read_uint(data, offset, 2);
+  }
   if (count != expected.size())
     throw std::runtime_error("Missing shard symbols");
   for (std::size_t i = 0; i < count; ++i) {
@@ -196,7 +226,7 @@ ShardView decode_shard(std::span<const std::uint8_t> data,
     const auto n = read_uint(data, offset, 1);
     if (n > 2 * depth || std::find(expected.begin(), expected.end(), id) == expected.end())
       throw std::runtime_error("Unexpected symbol or depth");
-    Book book{id, read_levels(data, offset, n)};
+    Book book{id, read_levels(data, offset, n, extended), extended};
     validate_book(book);
     if (!view.books.emplace(id, std::move(book)).second)
       throw std::runtime_error("Duplicate symbol");
@@ -207,7 +237,7 @@ ShardView decode_shard(std::span<const std::uint8_t> data,
 }
 
 std::size_t max_shard_size(std::size_t symbols) {
-  return 18 + symbols * (3 + 2 * depth * level_size);
+  return 21 + symbols * (3 + 2 * depth * level_v2_size);
 }
 
 Epoch new_epoch() {
@@ -232,16 +262,21 @@ std::uint64_t unix_ns() {
 }
 
 void print_message(const Message& m) {
-  std::cout << console::cyan << (m.kind == Kind::Snapshot ? "SNAPSHOT" : "DELTA")
+  std::cout << console::cyan << (is_snapshot(m.kind) ? "SNAPSHOT" : "DELTA")
             << " symbol=" << m.symbol_id << " index=" << m.index << " timestamp=" << m.timestamp
             << " epoch=" << epoch_text(m.epoch) << " entries=" << m.levels.size() << console::reset
-            << '\n';
+            << "  D=direct I=implied\n";
   for (const auto& x : m.levels)
-    std::cout << "  "
-              << console::Label{x.side == Side::Buy ? "BUY " : "SELL",
-                                x.side == Side::Buy ? console::green : console::yellow}
-              << " price=" << x.price << " quantity=" << x.quantity
-              << " numOfOrders=" << x.num_orders << '\n';
+    print_level(x);
   std::cout << std::flush;
+}
+
+void print_level(const Level& x) {
+  std::cout << "  "
+            << console::Label{x.side == Side::Buy ? "BUY " : "SELL",
+                              x.side == Side::Buy ? console::green : console::yellow}
+            << " price=" << x.price << " quantity=" << x.quantity + x.implied_quantity
+            << " numOfOrders=" << x.num_orders << " D=" << x.quantity << ' '
+            << console::magenta << "I=" << x.implied_quantity << console::reset << '\n';
 }
 }  // namespace marketlab::md
