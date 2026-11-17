@@ -1,4 +1,5 @@
 #include "fixtures.hpp"
+#include "matching_engine/spreads/depth.hpp"
 #include "network.hpp"
 #include <array>
 
@@ -12,6 +13,7 @@ struct Deployment {
   std::array<demo::Child, 8> engines;
   demo::Child coordinator, router, front;
   unsigned request = 10;
+  unsigned admin_port = 0;
   std::unique_ptr<demo::Trader> client;
   Deployment(const std::filesystem::path &binaries,
              const std::filesystem::path &path)
@@ -21,6 +23,7 @@ struct Deployment {
     gateway = {"127.0.0.1", ports.take()};
     const auto router_port = ports.take(), coordinator_port = ports.take(),
                admin = ports.take();
+    admin_port = admin;
     std::array<unsigned, 4> peers{};
     for (unsigned i = 0; i < 8; ++i) {
       orders[i] = ports.take();
@@ -48,13 +51,7 @@ struct Deployment {
     config.close();
     ports.release();
     for (unsigned i = 0; i < 8; ++i)
-      engines[i].launch(binary / "market_matching_engine",
-                        {"--config", path_config.string(), "--shard",
-                         std::to_string(i + 1), "--data-dir",
-                         (root / "data").string(), "--market-port",
-                         std::to_string(markets[i]), "--control-port",
-                         std::to_string(controls[i]), "--trace"},
-                        root / ("shard-" + std::to_string(i + 1) + ".log"));
+      start_engine(i);
     coordinator.launch(binary / "market_group_coordinator",
                        {"--config", path_config.string(), "--stats",
                         (root / "coordinator.json").string(), "--trace"},
@@ -86,6 +83,28 @@ struct Deployment {
     coordinator.stop();
     for (auto &engine : engines)
       engine.stop();
+  }
+  void start_engine(unsigned index, std::string suffix = "") {
+    engines[index].launch(
+        binary / "market_matching_engine",
+        {"--config", (root / "exchange.conf").string(), "--shard",
+         std::to_string(index + 1), "--data-dir", (root / "data").string(),
+         "--market-port", std::to_string(markets[index]), "--control-port",
+         std::to_string(controls[index]), "--trace"},
+        root / ("shard-" + std::to_string(index + 1) + suffix + ".log"));
+  }
+  std::string admin(std::string_view command) {
+    namespace rt = m::runtime;
+    auto socket = rt::connect_tcp("127.0.0.1", admin_port, demo::until());
+    o::Bytes bytes;
+    p::integer(bytes, command.size(), 4);
+    bytes.insert(bytes.end(), command.begin(), command.end());
+    rt::send_all(socket.get(), bytes, demo::until());
+    bytes = rt::receive_exact(socket.get(), 4, demo::until());
+    p::Reader reader{bytes};
+    bytes = rt::receive_exact(socket.get(), reader.number(4), demo::until());
+    require(!bytes.empty() && !bytes[0], "Router admin failed");
+    return {bytes.begin() + 1, bytes.end()};
   }
   m::OrderId add(const char *symbol, m::Side side, int price, int quantity) {
     return client->add(++request, symbol, side, price, quantity).order.orderId;
@@ -243,6 +262,164 @@ void rolling(Deployment &d) {
           "Repeated capture changed group state");
 }
 
+void idle_recovery(Deployment &d) {
+  d.add("A", m::Side::Sell, 120, 2);
+  d.add("B", m::Side::Buy, 110, 2);
+  const auto before = d.history();
+  d.engines[5].crash();
+  demo::eventually(
+      [&] { return d.admin("group-status").starts_with("PAUSED "); },
+      "Idle member loss did not pause the group");
+  const auto queued_request = ++d.request;
+  d.client->send(demo::order_record(queued_request, "C", m::Side::Buy, 100, 1));
+  demo::eventually([&] { return d.admin("group-status").ends_with(" 1"); },
+                   "Unexecuted request was not retained during group pause");
+  d.start_engine(5, "-recovered");
+  const auto queued =
+      d.client->get<m::OrderUpdate>(m::MessageType::OrderUpdate);
+  require(queued.header.requestId == queued_request &&
+              queued.order.status == m::OrderStatus::Accepted,
+          "Retained group request did not resume exactly once");
+  d.client->cancel(++d.request, queued.order.orderId);
+  demo::eventually(
+      [&] { return d.admin("group-status").starts_with("READY "); },
+      "Complete durable member failed to rejoin", 10000);
+  demo::eventually(
+      [&] {
+        try {
+          auto client = std::make_unique<demo::Trader>(d.gateway);
+          require(client->login("Alice", ++d.request).size() == 2,
+                  "Recovered active orders differ");
+          d.client = std::move(client);
+          return true;
+        } catch (...) {
+          return false;
+        }
+      },
+      "Gateway did not reconnect after group recovery", 10000);
+  auto after = d.history();
+  require(before.size() == after.size(), "Recovered history size changed");
+  auto economic = [](auto records) {
+    for (auto &record : records)
+      record.erase(record.begin(), record.begin() + sizeof(m::Header));
+    std::sort(records.begin(), records.end());
+    return records;
+  };
+  require(economic(before) == economic(after),
+          "Recovered typed history bytes changed");
+  const auto view = d.market(5).books.at(8);
+  require(view.levels.size() == 1 && view.levels[0].implied_quantity == 2,
+          "Recovered real sources did not rebuild implied depth");
+  d.add("SP_AB", m::Side::Buy, 10, 2);
+  require(d.fills(3)[0].quantity == 2, "Rejoined group cannot execute");
+}
+
+void routes(Deployment &d) {
+  namespace s = o::spreads;
+  constexpr std::array<const char *, 5> names{"A", "B", "C", "SP_AB", "SP_AC"};
+  constexpr std::array<int, 5> price{120, 110, 105, 10, 15};
+  for (const auto &route : s::routes) {
+    for (auto source : {route.first, route.second})
+      d.add(names[source / 2],
+            source % 2 == s::Bid ? m::Side::Buy : m::Side::Sell,
+            price[source / 2], 2);
+    const auto incoming =
+        d.add(names[route.target],
+              route.side == s::Ask ? m::Side::Buy : m::Side::Sell,
+              price[route.target], 2);
+    const auto fills = d.fills(3);
+    require(fills[0].orderId == incoming &&
+                fills[0].price == price[route.target] && fills[0].quantity == 2,
+            "Native IN/OUT route lost incoming price or quantity");
+  }
+}
+
+void latency(Deployment &d, demo::Suite &suite) {
+  constexpr unsigned count = 100;
+  std::vector<double> local, implied;
+  // Four stable levels keep top-three and hasMore unchanged for the fifth
+  // level.
+  std::vector<m::OrderId> anchors;
+  for (int price = 109; price < 113; ++price)
+    anchors.push_back(d.add("C", m::Side::Sell, price, 1));
+  for (unsigned i = 0; i < count; ++i) {
+    const auto start = demo::Clock::now();
+    const auto id = d.add("C", m::Side::Sell, 113, 1);
+    local.push_back(demo::us(start));
+    d.client->cancel(++d.request, id);
+  }
+  for (auto id : anchors)
+    d.client->cancel(++d.request, id);
+  d.add("A", m::Side::Sell, 120, count);
+  d.add("B", m::Side::Buy, 110, count);
+  for (unsigned i = 0; i < count; ++i) {
+    const auto start = demo::Clock::now();
+    d.add("SP_AB", m::Side::Buy, 10, 1);
+    require(d.fills(3).size() == 3, "Single-outstanding implied fills lost");
+    implied.push_back(demo::us(start));
+  }
+  const auto seconds = [](const auto &values) {
+    double total = 0;
+    for (auto value : values)
+      total += value;
+    return total / 1e6;
+  };
+  suite.metric("native-local-short-path", local, seconds(local), count,
+               "Single outstanding Gateway TCP request to durable Accepted; "
+               "unchanged top3/hasMore");
+  suite.metric("native-implied-single-outstanding", implied, seconds(implied),
+               count,
+               "Single outstanding Gateway TCP request through all three shard "
+               "fsyncs and all owned fills");
+}
+
+void unresolved_crash(Deployment &d) {
+  d.add("A", m::Side::Sell, 120, 1);
+  d.add("B", m::Side::Buy, 110, 1);
+  std::istringstream before(d.admin("group-status"));
+  std::string state;
+  std::uint64_t epoch, join, dispatched, memory, published, queued;
+  before >> state >> epoch >> join >> dispatched >> memory >> published >>
+      queued;
+  require(state == "READY" && dispatched == memory && memory == published,
+          "Fault test did not start at a complete public boundary");
+  d.engines[5].suspend();
+  d.client->send(demo::order_record(++d.request, "SP_AB", m::Side::Buy, 10, 1));
+  demo::eventually(
+      [&] {
+        const auto log = demo::read_text(d.root / "shard-7.log");
+        return log.find("type=SOURCE_DONE epoch=" + std::to_string(epoch) +
+                        " seq=" + std::to_string(dispatched + 1)) !=
+               std::string::npos;
+      },
+      "B did not modify its real source while A was suspended");
+  d.engines[5].crash();
+  demo::eventually(
+      [&] { return d.admin("group-status").starts_with("PAUSED "); },
+      "Unresolved memory tail did not pause group");
+  d.start_engine(5, "-unresolved");
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  std::istringstream after(d.admin("group-status"));
+  std::uint64_t next_epoch, next_join, next_dispatch, next_memory, next_public,
+      next_queued;
+  after >> state >> next_epoch >> next_join >> next_dispatch >> next_memory >>
+      next_public >> next_queued;
+  require(state == "PAUSED" && next_epoch == epoch &&
+              next_dispatch == dispatched + 1 && next_memory == memory &&
+              next_public == published,
+          "Reconnection incorrectly released partial execution state");
+  std::uint8_t unexpected = 0;
+  require(::recv(d.client->socket.get(), &unexpected, 1,
+                 MSG_PEEK | MSG_DONTWAIT) < 0 &&
+              (errno == EAGAIN || errno == EWOULDBLOCK),
+          "Partial command emitted an acceptance or trade");
+  const auto ordinary = d.add("ITEM1", m::Side::Buy, 100, 1);
+  d.client->cancel(++d.request, ordinary);
+  require(demo::read_text(d.root / "coordinator.log").find("unresolved=1") !=
+              std::string::npos,
+          "Coordinator did not retain the unresolved command");
+}
+
 void stress(Deployment &d, demo::Suite &suite) {
   constexpr unsigned count = 5000;
   d.add("B", m::Side::Buy, 110, count);
@@ -299,8 +476,16 @@ int main(int argc, char **argv) {
                [&] { signed_and_direct(*deployment); });
     suite.test("native-multi-round-window-and-complete-order-capture",
                [&] { rolling(*deployment); });
+    suite.test("idle-crashed-member-recovers-exact-boundary-and-rejoins",
+               [&] { idle_recovery(*deployment); });
+    suite.test("all-twelve-in-out-routes-across-real-peer-connections",
+               [&] { routes(*deployment); });
+    suite.test("single-outstanding-short-path-and-implied-latency",
+               [&] { latency(*deployment, suite); });
     suite.test("native-pipeline-and-five-thousand-piece-multipart-stress",
                [&] { stress(*deployment, suite); });
+    suite.test("partial-memory-crash-stays-paused-after-worker-reconnection",
+               [&] { unresolved_crash(*deployment); });
   }
   deployment.reset();
   return suite.finish();

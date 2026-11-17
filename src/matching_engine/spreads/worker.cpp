@@ -275,22 +275,25 @@ void Worker::defer(std::uint8_t peer,
   deferred_ = Deferred{peer, h, context, {body.begin(), body.end()}};
 }
 
-bool Worker::apply(const Deferred& item) {
+bool Worker::apply(std::uint8_t peer,
+                   const Header& h,
+                   const LinkHeader& context,
+                   std::span<const std::uint8_t> body) {
   if (!ready_)
     return false;
   if (!active_())
     throw std::runtime_error("Group command to fenced/standby worker");
-  if (item.peer != no_slot)
-    return session_.peer(item.peer, item.header, item.body);
-  if (item.header.kind == MessageKind::Run)
-    return session_.run(item.header, item.context, item.body);
-  if (item.header.kind != MessageKind::Capture || session_.active())
+  if (peer != no_slot)
+    return session_.peer(peer, h, body);
+  if (h.kind == MessageKind::Run)
+    return session_.run(h, context, body);
+  if (h.kind != MessageKind::Capture || session_.active())
     throw std::runtime_error("Query outside a complete group memory boundary");
-  if (!durable_.capture_group(item.context, copy_record<marketlab::Header>(item.body), emit_))
+  if (!durable_.capture_group(context, copy_record<marketlab::Header>(body), emit_))
     return false;
-  auto ack = item.header;
+  auto ack = h;
   ack.flags = group::final_part;
-  send_business(ack, {}, item.context);
+  send_business(ack, {}, context);
   return true;
 }
 
@@ -298,8 +301,7 @@ void Worker::peer(std::uint8_t from, const FrameView& message) {
   if (from >= 4 || message.header.epoch != epoch_ || failed_ || !active_())
     throw std::runtime_error("Peer command to inactive/stale instance");
   if (message.header.kind == MessageKind::ExecutePrefix) {
-    const Deferred item{from, message.header, {}, {message.body.begin(), message.body.end()}};
-    if (!apply(item))
+    if (!apply(from, message.header, {}, message.body))
       defer(from, message.header, {}, message.body);
   } else {
     if (!ready_ || deferred_)
@@ -374,8 +376,7 @@ void Worker::business(const LinkHeader& context, std::span<const std::uint8_t> b
       else
         throw std::runtime_error("Invalid RUN mutation kind");
     }
-    const Deferred item{no_slot, h, command, {message.body.begin(), message.body.end()}};
-    if (!apply(item))
+    if (!apply(no_slot, h, command, message.body))
       defer(no_slot, h, command, message.body);
     progress_ = Clock::now();
   } catch (const std::exception& error) {
@@ -385,7 +386,7 @@ void Worker::business(const LinkHeader& context, std::span<const std::uint8_t> b
   }
 }
 
-void Worker::poll() {
+void Worker::poll() try {
   if (failed_)
     return;
   recover();
@@ -406,12 +407,15 @@ void Worker::poll() {
     initial_permit_.reset();
     market_ready_.store(true);
   }
-  if (deferred_ && apply(*deferred_))
+  if (deferred_ && apply(deferred_->peer, deferred_->header, deferred_->context, deferred_->body))
     deferred_.reset();
   if ((session_.active() || deferred_) &&
       now - progress_ > std::chrono::milliseconds(config_.request_timeout_ms)) {
     failed_ = true;
     pause("group execution progress timeout");
   }
+} catch (const std::exception& error) {
+  failed_ = true;
+  pause(error.what());
 }
 }  // namespace marketlab::orders::spreads

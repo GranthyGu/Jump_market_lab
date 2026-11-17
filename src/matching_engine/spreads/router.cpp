@@ -88,6 +88,10 @@ bool RouterGroup::enqueue(std::uint8_t member,
     return false;
   queued_.push_back({std::uint8_t(1U << member), h, {bytes.begin(), bytes.end()}});
   queued_bytes_ += bytes.size();
+  if (maintenance_) {
+    peak_queued_ = std::max(peak_queued_, queued_.size());
+    peak_bytes_ = std::max(peak_bytes_, queued_bytes_);
+  }
   return true;
 }
 
@@ -218,6 +222,8 @@ void RouterGroup::maintenance() {
   if (!ready_ || maintenance_)
     throw std::runtime_error("Group is not available for maintenance");
   maintenance_ = true;
+  peak_queued_ = queued_.size();
+  peak_bytes_ = queued_bytes_;
   ready_ = false;
   prepared_ = false;
   fence_sent_ = fenced_ = false;
@@ -270,7 +276,7 @@ std::string RouterGroup::status() const {
   return out.str();
 }
 
-void RouterGroup::poll() {
+void RouterGroup::poll() try {
   const auto now = Clock::now();
   if (!coordinator_ && !failed_ && now >= reconnect_) {
     coordinator_ = io_.connect(config_.coordinator, Framing::Group);
@@ -279,6 +285,9 @@ void RouterGroup::poll() {
     reconnect_ = now + std::chrono::milliseconds(config_.reconnect_ms);
   }
   recovery_progress();
+  if (!failed_ && !settled() &&
+      now - progress_ > std::chrono::milliseconds(config_.request_timeout_ms))
+    throw std::runtime_error("Group memory/publication progress timeout");
   if (!ready_ || maintenance_ || failed_ || capture_mask_)
     return;
   for (unsigned count = 0; count < 64 && !queued_.empty(); ++count) {
@@ -322,5 +331,12 @@ void RouterGroup::poll() {
     if (capture_mask_)
       return;
   }
+} catch (const std::exception& error) {
+  failed_ = true;
+  pause(error.what());
+  const std::string_view reason = "Router group dispatch/publication failed";
+  links_.send(coordinator_,
+              {MessageKind::Pause, epoch_, publication_.dispatched()},
+              {reinterpret_cast<const std::uint8_t*>(reason.data()), reason.size()});
 }
 }  // namespace marketlab::orders::spreads

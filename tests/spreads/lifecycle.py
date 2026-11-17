@@ -263,6 +263,20 @@ def run(binary, output):
         client.close()
         client = None
         deployment.stop()
+        # Emulate the durable launcher marker left by an interrupted group.
+        # No process is running and no trade files are altered by this check.
+        state_path = root / "data/cluster-state.json"
+        clean_state = state_path.read_text()
+        state = json.loads(clean_state)
+        check(state["group_clean_shutdown"], "clean stop did not persist lifecycle boundary")
+        state["group_clean_shutdown"] = False
+        state_path.write_text(json.dumps(state))
+        refused = subprocess.run(list(map(str, deployment.cluster_args)), stdin=subprocess.DEVNULL,
+                                 capture_output=True, text=True, timeout=5)
+        check(refused.returncode != 0 and "shutdown was not confirmed" in refused.stdout,
+              "fresh Router/Coordinator accepted an unconfirmed shutdown")
+        state_path.write_text(clean_state)
+        results["unclean_start_refused"] = True
         results.update(passed=True, elapsed_ms=(time.monotonic() - started) * 1000)
         (output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
         print(json.dumps(results, indent=2))

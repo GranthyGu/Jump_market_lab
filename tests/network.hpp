@@ -52,6 +52,7 @@ class Child {
     if(!pid_) return;
     kill(pid_,SIGKILL); int status=0; while(waitpid(pid_,&status,0)<0 && errno==EINTR) {} pid_=0;
   }
+  void suspend() { require(pid_ && kill(pid_,SIGSTOP)==0,"Cannot suspend child"); }
   void stop() {
     if (!pid_) return;
     kill(pid_,SIGTERM); int status=0; auto end=until(3000);

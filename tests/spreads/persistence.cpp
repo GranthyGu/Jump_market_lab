@@ -11,7 +11,8 @@ struct Page {
 };
 
 Page query(p::DurableEngine &engine, unsigned user, std::uint64_t after = 0,
-           std::uint64_t through = 0, unsigned limit = 256) {
+           std::uint64_t through = 0, unsigned limit = 256,
+           std::optional<std::uint64_t> visible_end = {}) {
   Page page;
   bool done = false;
   m::TradeHistoryRequest q{
@@ -22,19 +23,21 @@ Page query(p::DurableEngine &engine, unsigned user, std::uint64_t after = 0,
       through};
   auto h = context(9000, user);
   h.kind = o::LinkKind::History;
-  engine.command(h, o::record_bytes(q),
-                 [&](auto kind, const auto &, auto bytes) {
-                   if (kind == o::LinkKind::HistoryEnd) {
-                     page.end = o::copy_record<m::TradeHistoryEnd>(bytes);
-                     done = true;
-                   } else {
-                     m::Header header{};
-                     std::memcpy(&header, bytes.data(), sizeof(header));
-                     require(m::is_history_record(header.messageType),
-                             "History query failed");
-                     page.records.emplace_back(bytes.begin(), bytes.end());
-                   }
-                 });
+  auto emit = [&](auto kind, const auto &, auto bytes) {
+    if (kind == o::LinkKind::HistoryEnd) {
+      page.end = o::copy_record<m::TradeHistoryEnd>(bytes);
+      done = true;
+    } else {
+      m::Header header{};
+      std::memcpy(&header, bytes.data(), sizeof(header));
+      require(m::is_history_record(header.messageType), "History query failed");
+      page.records.emplace_back(bytes.begin(), bytes.end());
+    }
+  };
+  if (visible_end)
+    engine.public_history(h, q, *visible_end, emit);
+  else
+    engine.command(h, o::record_bytes(q), emit);
   demo::eventually(
       [&] {
         engine.poll();
@@ -73,7 +76,7 @@ void codec() {
                             m::Side::Buy,
                             {id(6, 1), name("Bob"), 110},
                             {id(7, 1), name("Carol"), 110}};
-  for (const p::ExecutionRecord& record :
+  for (const p::ExecutionRecord &record :
        {p::ExecutionRecord(direct), p::ExecutionRecord(leg),
         p::ExecutionRecord(spread)}) {
     o::Bytes bytes;
@@ -163,6 +166,12 @@ void mixed_batch(const std::filesystem::path &root) {
     require(engine.seal_group() == 2, "Wrong local batch sequence");
     engine.drain();
     require(durable && !engine.group_open(), "Sealed group did not complete");
+    const auto hidden = query(engine, 1, 0, 0, 256, 0);
+    require(hidden.records.empty() && hidden.end.throughOffset == 0,
+            "Explicit public boundary zero exposed locally durable trades");
+    require(query(engine, 1, 0, 0, 256, engine.boundary().trade_end)
+                    .records.size() == 2,
+            "Public history did not advance at the exact permitted boundary");
     const auto first = query(engine, 1, 0, 0, 1);
     require(first.end.flags & m::history_more,
             "Mixed record pagination lost tail");

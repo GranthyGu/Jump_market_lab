@@ -64,6 +64,10 @@ class RouterGroup {
     return queued_.size();
   }
 
+  std::pair<std::size_t, std::size_t> queue_peaks() const {
+    return {peak_queued_, peak_bytes_};
+  }
+
   void maintenance();
   void fence();
 
@@ -100,6 +104,7 @@ class RouterGroup {
   std::uint64_t capture_token_ = 0, capture_sequence_ = 0;
   std::deque<Queued> queued_;
   std::size_t queued_bytes_ = 0;
+  std::size_t peak_queued_ = 0, peak_bytes_ = 0;
   Bytes scratch_;
   void control(const FrameView&);
   bool send(std::uint8_t, const Header&, const LinkHeader&, std::span<const std::uint8_t>);

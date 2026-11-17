@@ -71,6 +71,9 @@ class Cluster:
             self.state = json.loads(self.state_path.read_text())
             if self.state.get("transition"):
                 raise RuntimeError("unfinished promotion in cluster-state.json; inspect the transition before restart")
+            if self.group_enabled and not self.state.get("group_clean_shutdown", True):
+                raise RuntimeError("previous spread group shutdown was not confirmed; inspect all participant "
+                                   "boundaries before restarting Router/Coordinator")
             if not set(self.state["shards"]).issubset(self.shards):
                 raise ValueError("cluster config cannot remove persisted shards")
             added = [shard for shard in self.shards if shard not in self.state["shards"]]
@@ -220,6 +223,11 @@ class Cluster:
         raise TimeoutError("worker recovery timed out")
 
     def start(self):
+        if self.group_enabled:
+            # A lifecycle fence, not a transaction log: a fresh Router cannot
+            # infer missing cross-shard results after an unclean group stop.
+            self.state["group_clean_shutdown"] = False
+            self.save()
         for shard, state in self.state["shards"].items():
             self.launch_worker(shard, state["active"], state["root"], state["binary"])
         config = self.config("router", {key: state["active"] for key, state in self.state["shards"].items()})
@@ -515,6 +523,7 @@ class Cluster:
         self.stop.set()
         # Let an already-started cut complete or abort before stopping workers.
         with self.operation:
+            group_drained = False
             if self.group_enabled and "router" in self.processes:
                 try:
                     shard = min(self.group_shards, key=int)
@@ -526,11 +535,15 @@ class Cluster:
                                 raise TimeoutError("group shutdown drain timed out")
                             time.sleep(.01)
                     log("GROUP_SHUTDOWN_DRAINED", shard=shard)
+                    group_drained = True
                 except Exception as error:
                     log("GROUP_SHUTDOWN_UNRESOLVED", error=repr(error))
             self.stop_process("router")
             for key in list(self.processes):
                 self.stop_process(key)
+            if self.group_enabled and group_drained:
+                self.state["group_clean_shutdown"] = True
+                self.save()
         self.lock_file.close()
 
 
@@ -606,7 +619,7 @@ def main():
         while not cluster.stop.wait(0.2):
             with cluster.process_lock:
                 for key, process in cluster.processes.items():
-                    if process.poll() is not None and (key == "router" or any(
+                    if process.poll() is not None and (key in ("router", "coordinator") or any(
                             key == f"shard-{shard}-{state['active']}" and cluster.phases[shard] == "active"
                             for shard, state in cluster.state["shards"].items())):
                         raise RuntimeError(f"active process {key} exited {process.returncode}")

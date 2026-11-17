@@ -105,7 +105,7 @@ class Worker final : public EngineBackend {
   void send_control(const Header&, std::span<const std::uint8_t> = {});
   void send_peer(std::uint8_t, const Header&, std::span<const std::uint8_t>);
   void send_business(const Header&, std::span<const std::uint8_t>, const LinkHeader& context = {});
-  bool apply(const Deferred&);
+  bool apply(std::uint8_t, const Header&, const LinkHeader&, std::span<const std::uint8_t>);
   void defer(std::uint8_t, const Header&, const LinkHeader&, std::span<const std::uint8_t>);
   void join_progress();
   void recover();

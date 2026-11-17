@@ -400,9 +400,14 @@ class Router {
       if (!(input >> id) || !shard_index.contains(id))
         throw std::runtime_error("Unknown shard");
       auto& shard = shards[shard_index.at(id)];
-      if (op == "metrics")
+      if (op == "metrics") {
+        if (group_member[shard_index.at(id)] < 4) {
+          const auto [requests, bytes] = group->queue_peaks();
+          return cluster::text_bytes(std::to_string(requests) + " " + std::to_string(bytes));
+        }
         return cluster::text_bytes(std::to_string(shard.peak_queued) + " " +
                                    std::to_string(shard.peak_bytes));
+      }
       if (op == "cut") {
         if (shard.stage != "active" || !links.ready(shard.connection))
           throw std::runtime_error("Shard is not ready for a cut");
@@ -552,11 +557,14 @@ class Router {
     }
     const auto it = backend.find(id);
     if (it != backend.end()) {
-      if (group_member[it->second] < 4)
+      const bool group_loss = group_member[it->second] < 4;
+      if (group_loss)
         group->worker_lost();
       shards[it->second].connection = 0;
       backend.erase(it);
-      if (front)
+      // Keep unexecuted group requests and their Gateway correlation while
+      // the member rejoins. Unrelated shards can continue on the same link.
+      if (front && !group_loss)
         io.close(front);
     }
   }
