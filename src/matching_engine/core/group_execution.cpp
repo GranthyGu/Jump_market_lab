@@ -69,7 +69,8 @@ void MatchingEngine::take_prefix(std::uint16_t symbol,
                                  Side side,
                                  Quantity quantity,
                                  std::vector<FillPiece>& pieces,
-                                 persistence::Result& result) {
+                                 persistence::Result& result,
+                                 std::size_t piece_limit) {
   if (quantity <= 0 || (side != Side::Buy && side != Side::Sell))
     throw std::runtime_error("Invalid real quantity prefix");
   Capture capture(*this, result);
@@ -85,6 +86,10 @@ void MatchingEngine::take_prefix(std::uint16_t symbol,
   if (available < std::uint64_t(quantity))
     throw std::runtime_error("Real prefix is unavailable");
   while (quantity) {
+    if (pieces.size() == piece_limit)
+      throw std::runtime_error("Group FIFO details exceed command buffer budget");
+    if (pieces.size() == pieces.capacity())
+      pieces.reserve(std::min(piece_limit, std::max<std::size_t>(8, pieces.capacity() * 2)));
     auto best = side == Side::Buy ? std::prev(levels.end()) : levels.begin();
     auto* order = best->second.head;
     const auto amount = std::min(quantity, Quantity(order->state.remainingQuantity));

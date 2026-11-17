@@ -34,6 +34,8 @@ struct SourcePiece {
 // arrived in a different order. It never retains pointers into mutable orders.
 class PieceCursor {
  public:
+  PieceCursor() = default;
+
   explicit PieceCursor(std::span<const SourcePiece> pieces)
       : pieces_(pieces) {
   }

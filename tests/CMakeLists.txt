@@ -173,3 +173,13 @@ add_test(NAME spread_coordinator_correctness_stress
 set_tests_properties(spread_coordinator_correctness_stress PROPERTIES TIMEOUT 60
   LABELS "spreads;correctness;cornercase;performance")
 add_dependencies(demo_tests spread_coordinator_tests)
+
+add_executable(spread_session_tests spreads/session.cpp)
+target_include_directories(spread_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_session_tests PRIVATE marketlab_matching_core)
+target_compile_options(spread_session_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_session_correctness_stress
+  COMMAND spread_session_tests "${CMAKE_BINARY_DIR}/spread-results/session")
+set_tests_properties(spread_session_correctness_stress PROPERTIES TIMEOUT 120
+  LABELS "spreads;recovery;correctness;cornercase;performance")
+add_dependencies(demo_tests spread_session_tests)

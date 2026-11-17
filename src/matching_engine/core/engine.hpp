@@ -49,6 +49,7 @@ class MatchingEngine final : public EngineBackend {
   struct FillPiece {
     persistence::CompactOrder after;
     Quantity quantity = 0;
+    Quantity allocated = 0;
   };
 
   std::optional<persistence::CompactOrder> begin_group(const LinkHeader&,
@@ -59,7 +60,8 @@ class MatchingEngine final : public EngineBackend {
                    Side resting_side,
                    Quantity,
                    std::vector<FillPiece>&,
-                   persistence::Result&);
+                   persistence::Result&,
+                   std::size_t piece_limit = SIZE_MAX);
   void fill_events(
       const persistence::CompactOrder&, TradeId, Price, Quantity, Timestamp, persistence::Result&);
   TradeId allocate_trade();
