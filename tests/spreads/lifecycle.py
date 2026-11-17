@@ -3,8 +3,11 @@
 import argparse
 import importlib.util
 import json
+import os
+import re
 from pathlib import Path
 import socket
+import signal
 import struct
 import subprocess
 import sys
@@ -69,7 +72,7 @@ class Trader(base.Trader):
                 records.append((kind, payload))
 
 
-def market(port):
+def read_market(port):
     with socket.create_connection(("127.0.0.1", port), timeout=3) as connection:
         connection.sendall(b"\x01")
         data = exact(connection, struct.unpack("<I", exact(connection, 4))[0])
@@ -85,6 +88,26 @@ def market(port):
     return books
 
 
+def market(port):
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            return read_market(port)
+        except (OSError, EOFError):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(.01)
+
+
+def published(port, symbol):
+    with socket.create_connection(("127.0.0.1", port), timeout=3) as connection:
+        connection.sendall(struct.pack("<H", symbol))
+        data = exact(connection, struct.unpack("<H", exact(connection, 2))[0])
+    check(data[0] == 4 and struct.unpack_from("<H", data, 17)[0] == symbol, "Publisher V2 snapshot")
+    check((len(data) - 35) % 29 == 0, "Publisher V2 level width")
+    return [struct.unpack_from("<BiQQQ", data, i) for i in range(35, len(data), 29)]
+
+
 class Deployment:
     def __init__(self, binary, root):
         self.root, self.bin = root, binary
@@ -93,6 +116,7 @@ class Deployment:
             sock.bind(("127.0.0.1", 0))
         ports = iter(sock.getsockname()[1] for sock in held)
         self.gateway, router, admin, self.control, coordinator, query, self.bad_peer = [next(ports) for _ in range(7)]
+        self.query = query
         self.topology = {"router_admin_port": admin, "supervisor_port": self.control,
                          "coordinator_port": coordinator, "shards": {}}
         lines = ["routing=router", "spreads=enabled", "request_timeout_ms=30000",
@@ -115,9 +139,13 @@ class Deployment:
         self.config = root / "exchange.conf"
         self.config.write_text("\n".join(lines) + "\n")
         publisher = root / "publisher.conf"
+        self.publisher_config = publisher
+        self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp.bind(("127.0.0.1", 0))
         names = ",".join(f"{i+1}:{p[0]}" for i, p in enumerate(products))
         publisher.write_text(f"symbols={names}\n" + "\n".join(sources) +
-                             f"\nquery_host=127.0.0.1\nquery_port={query}\n")
+                             f"\nudp_receiver=127.0.0.1,{self.udp.getsockname()[1]}\n"
+                             f"query_host=127.0.0.1\nquery_port={query}\n")
         topology = root / "cluster.json"
         topology.write_text(json.dumps(self.topology))
         for sock in held:
@@ -142,6 +170,8 @@ class Deployment:
         self.cluster = self.launch(self.cluster_args, f"cluster-{self.generation}.log")
         self.front = self.launch([self.bin / "market_gateway", "gateway", "--config", self.config],
                                  f"gateway-{self.generation}.log")
+        self.publisher = self.launch([self.bin / "market_broadcast", "publish", "--config", self.publisher_config],
+                                     f"publisher-{self.generation}.log")
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             check(self.cluster.poll() is None, f"cluster exited; see {self.root}")
@@ -157,7 +187,7 @@ class Deployment:
         raise TimeoutError(f"group startup timed out; see {self.root}")
 
     def stop(self):
-        for process in (self.front, self.cluster):
+        for process in (self.publisher, self.front, self.cluster):
             if process.poll() is None:
                 process.terminate()
                 process.wait(timeout=40)
@@ -176,6 +206,7 @@ class Deployment:
                     child.wait()
         for stream in self.streams:
             stream.close()
+        self.udp.close()
 
     def status(self):
         reply = command(self.control, "status")
@@ -184,6 +215,17 @@ class Deployment:
 
     def views(self):
         return {sid: market(config["market"]) for sid, config in self.topology["shards"].items()}
+
+    def published_view(self, expected):
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                if published(self.query, 4) == expected:
+                    return
+            except (OSError, EOFError):
+                pass
+            check(time.monotonic() < deadline, "Publisher did not propagate the merged V2 spread book")
+            time.sleep(.05)
 
     def broken_replacement(self):
         """Real standby recovers, but advertises an unreachable control/peer port."""
@@ -215,6 +257,27 @@ def run(binary, output):
         client.order("SP_AC", 1, 1, 2)
         client.order("BF_ABC", 1, 5, 2)
         check(len(client.history()) == 3, "seed typed history")
+        before = deployment.status()
+        snapshot, history, views = client.snapshot(), client.history(), deployment.views()
+        deployment.published_view(views["5"][4])
+        recovery_at = time.monotonic()
+        lost = before["processes"]["shard-6-A"]["pid"]
+        os.kill(lost, signal.SIGKILL)
+        deadline = time.monotonic() + 10
+        while True:
+            after = deployment.status()
+            if (after["shards"]["6"]["phase"] == "active" and
+                    after["processes"]["shard-6-A"]["pid"] != lost):
+                break
+            check(time.monotonic() < deadline, "supervisor did not rejoin the idle crashed member")
+            time.sleep(.02)
+        for key in ("router", "coordinator"):
+            check(before["processes"][key]["pid"] == after["processes"][key]["pid"],
+                  "supervisor discarded surviving control state")
+        check(client.snapshot() == snapshot and client.history() == history and deployment.views() == views,
+              "supervised member recovery changed public state")
+        results["supervised_member_recovery_ms"] = (time.monotonic() - recovery_at) * 1000
+        print("PASS supervisor restarted only the lost member and retained control state", flush=True)
         for shard in (5, 6, 7, 8, 5):
             before = deployment.status()
             snapshot, history, views = client.snapshot(), client.history(), deployment.views()
@@ -257,11 +320,26 @@ def run(binary, output):
         client = Trader(deployment.gateway, "Alice")
         check(client.snapshot() == snapshot and client.history() == history and deployment.views() == views,
               "clean group restart lost durable state or initial implied views")
+        deployment.published_view(views["5"][4])
         client.order("SP_AB", 1, 10)
         client.fills(3)
         results["clean_recovery_ms"] = (time.monotonic() - recovered_at) * 1000
+        client.order("SP_AB", 2, -1)
+        client.fills(2)
+        expected_history = client.history()
         client.close()
         client = None
+        cli = subprocess.run([str(binary / "gateway_client"), "--host", "127.0.0.1",
+                              "--port", str(deployment.gateway), "--user", "Alice", "--password", "demo"],
+                             input="trades\nquit\n", text=True, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, timeout=10)
+        (root / "client-typed-history.log").write_text(cli.stdout)
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", cli.stdout)
+        rows = re.findall(r"^(TRADE|LEG|SPREAD)\s+\d+\s", plain, re.MULTILINE)
+        check(cli.returncode == 0 and len(rows) == len(expected_history)
+              and "LEG" in rows and "SPREAD" in rows and "TRADE" in rows and "execution=" in plain,
+              "CLI did not render every mixed typed execution")
+        results["publisher_v2_and_typed_cli"] = True
         deployment.stop()
         # Emulate the durable launcher marker left by an interrupted group.
         # No process is running and no trade files are altered by this check.

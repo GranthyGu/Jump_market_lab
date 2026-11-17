@@ -281,6 +281,58 @@ class Cluster:
                 process.wait()
             log("PROCESS_RETIRED", component=key, pid=process.pid)
 
+    def recover_member(self, shard):
+        """Restart one crashed member without discarding Router/Coordinator state."""
+        with self.operation:
+            if self.stop.is_set():
+                return
+            state = self.state["shards"][shard]
+            key = f"shard-{shard}-{state['active']}"
+            try:
+                self.stop_process(key)
+                self.launch_worker(shard, state["active"], state["root"], state["binary"],
+                                   deadline=time.monotonic() + 10)
+                self.phases[shard] = "rejoining"
+                log("GROUP_MEMBER_RECOVERED", shard=shard,
+                    note="awaiting Router/Coordinator boundary and view approval")
+            except Exception as error:
+                self.phases[shard] = "failed"
+                log("GROUP_MEMBER_RECOVERY_FAILED", shard=shard, error=repr(error))
+
+    def monitor(self):
+        recovering = []
+        with self.process_lock:
+            for key, process in self.processes.items():
+                if process.poll() is None:
+                    continue
+                if key in ("router", "coordinator"):
+                    raise RuntimeError(f"active process {key} exited {process.returncode}")
+                for shard, state in self.state["shards"].items():
+                    if key != f"shard-{shard}-{state['active']}":
+                        continue
+                    if self.phases[shard] == "rejoining":
+                        self.phases[shard] = "failed"
+                        log("GROUP_MEMBER_RECOVERY_FAILED", shard=shard, exit=process.returncode)
+                    elif self.phases[shard] == "active":
+                        if shard not in self.group_shards:
+                            raise RuntimeError(f"active process {key} exited {process.returncode}")
+                        self.phases[shard] = "recovering"
+                        recovering.append(shard)
+                        log("GROUP_MEMBER_LOST", shard=shard, exit=process.returncode)
+        for shard in recovering:
+            self.recover_member(shard)
+        if "rejoining" in self.phases.values():
+            try:
+                with Rpc(self.topology["router_admin_port"], timeout=1) as router:
+                    ready = router.call("group-status").startswith(b"READY ")
+                if ready:
+                    for shard, phase in self.phases.items():
+                        if phase == "rejoining":
+                            self.phases[shard] = "active"
+                            log("GROUP_MEMBER_RESUMED", shard=shard)
+            except (OSError, ConnectionError):
+                pass
+
     def copy_prefix(self, source, op, length, path, deadline):
         path.parent.mkdir(parents=True, exist_ok=True)
         started = time.monotonic()
@@ -617,12 +669,7 @@ def main():
             threading.Thread(target=terminal, daemon=True).start()
         next_status = 0
         while not cluster.stop.wait(0.2):
-            with cluster.process_lock:
-                for key, process in cluster.processes.items():
-                    if process.poll() is not None and (key in ("router", "coordinator") or any(
-                            key == f"shard-{shard}-{state['active']}" and cluster.phases[shard] == "active"
-                            for shard, state in cluster.state["shards"].items())):
-                        raise RuntimeError(f"active process {key} exited {process.returncode}")
+            cluster.monitor()
             if time.monotonic() >= next_status:
                 log("CLUSTER_STATUS", shards={key: f"{state['active']}:{cluster.phases[key]}"
                                               for key, state in cluster.state["shards"].items()})
