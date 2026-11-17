@@ -2,6 +2,7 @@
 #include <map>
 #include <memory>
 #include <memory_resource>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 
@@ -9,6 +10,7 @@
 #include "matching_engine/core/backend.hpp"
 #include "matching_engine/persistence/model.hpp"
 #include "matching_engine/persistence/order_dictionary.hpp"
+#include "matching_engine/spreads/depth.hpp"
 #include "shared_data/orders/config.hpp"
 
 namespace marketlab::orders {
@@ -42,6 +44,54 @@ class MatchingEngine final : public EngineBackend {
 
   void copy_market(MarketSnapshot&) noexcept override;
 
+  // Group execution uses the same real books, FIFO nodes and active index.
+  // These owner-thread primitives never send messages or wait on another shard.
+  struct FillPiece {
+    persistence::CompactOrder after;
+    Quantity quantity = 0;
+  };
+
+  std::optional<persistence::CompactOrder> begin_group(const LinkHeader&,
+                                                       const NewOrderRequest&,
+                                                       persistence::Result&);
+  void finish_group(const persistence::CompactOrder&, persistence::Result&);
+  void take_prefix(std::uint16_t symbol,
+                   Side resting_side,
+                   Quantity,
+                   std::vector<FillPiece>&,
+                   persistence::Result&);
+  void fill_events(
+      const persistence::CompactOrder&, TradeId, Price, Quantity, Timestamp, persistence::Result&);
+  TradeId allocate_trade();
+  persistence::TradeRecord trade_record(std::uint16_t symbol,
+                                        Price,
+                                        Quantity,
+                                        Timestamp,
+                                        OrderId buy,
+                                        std::uint32_t buyer,
+                                        OrderId sell,
+                                        std::uint32_t seller);
+
+  const persistence::Name& username(std::uint32_t user) const {
+    return usernames_.at(user);
+  }
+
+  spreads::DepthSide source_depth(std::uint16_t symbol, Side) const;
+
+  template <class F>
+  void visit_levels(std::uint16_t symbol, Side side, F&& visit) const {
+    const auto& book = find_book(symbol);
+    auto scan = [&](auto begin, auto end) {
+      for (; begin != end; ++begin)
+        if (!visit(begin->first, begin->second.quantity, begin->second.count))
+          break;
+    };
+    if (side == Side::Buy)
+      scan(book.bids.rbegin(), book.bids.rend());
+    else
+      scan(book.asks.begin(), book.asks.end());
+  }
+
  private:
   struct Order;
 
@@ -62,6 +112,7 @@ class MatchingEngine final : public EngineBackend {
     SymbolName symbol{};
     std::uint16_t symbol_id = 0;
     std::int64_t lower = 0, upper = 0;
+    bool signed_price = false;
     Levels bids, asks;
   };
 
@@ -89,6 +140,13 @@ class MatchingEngine final : public EngineBackend {
   };
 
   using Event = persistence::Event;
+
+  struct Capture {
+    MatchingEngine& engine;
+    Capture(MatchingEngine&, persistence::Result&);
+    ~Capture();
+  };
+
   persistence::Result* capture_ = nullptr;
   std::vector<persistence::Name> usernames_;
   void change(const Order&, bool erase);
@@ -108,6 +166,11 @@ class MatchingEngine final : public EngineBackend {
   void update(const Order&, RequestId, const LinkHeader&, Timestamp = 0);
   void trade(const Order&, TradeId, Price, Quantity, Timestamp);
   void new_order(const LinkHeader&, const NewOrderRequest&);
+  std::optional<Order> accept(const LinkHeader&, const NewOrderRequest&);
+  Book& find_book(std::uint16_t);
+  const Book& find_book(std::uint16_t) const;
+  Order expand_order(const persistence::CompactOrder&);
+  void finish_resting_fill(Order*, Quantity);
   void cancel(const LinkHeader&, const CancelRequest&);
   void snapshot(const LinkHeader&, const Header&);
   void match(Order&, Levels&);

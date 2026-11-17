@@ -550,7 +550,7 @@ class Router {
       ++events;
       return;
     }
-    if (wire.messageType == MessageType::TradeHistoryRecord && h.kind == LinkKind::Event) {
+    if (is_history_record(wire.messageType) && h.kind == LinkKind::Event) {
       links.send(destination, h.kind, h, bytes);
       ++events;
       return;

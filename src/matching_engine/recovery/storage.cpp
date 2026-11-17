@@ -31,6 +31,14 @@ std::vector<std::uint64_t> fingerprints(const OrderConfig& c, std::uint16_t shar
       values.clear();
     values.push_back(h);
   }
+  if (c.spreads) {
+    const spreads::Topology topology(c);
+    if (topology.member(shard) != spreads::no_slot) {
+      add("spread-group-v1");
+      add(std::to_string(topology.fingerprint));
+      values.push_back(h);
+    }
+  }
   return values;
 }
 
@@ -135,7 +143,8 @@ Recovered Storage::read_snapshot(const std::filesystem::path& path) const {
   Reader m{first->payload};
   const auto persisted_fingerprint = m.number(8);
   if (std::find(fingerprints_.begin(), fingerprints_.end(), persisted_fingerprint) ==
-          fingerprints_.end() || m.number(2) != shard_)
+          fingerprints_.end() ||
+      m.number(2) != shard_)
     throw std::runtime_error("Persistence configuration/shard mismatch");
   out.boundary = first->boundary;
   out.boundary.trade_end = m.number(8);
@@ -160,8 +169,11 @@ Recovered Storage::read_snapshot(const std::filesystem::path& path) const {
     }
     if (f->kind != Kind::SnapshotPage || f->count > Page::slots)
       throw std::runtime_error("Unexpected checkpoint frame");
-    for (unsigned i = 0; i < f->count; ++i)
-      out.orders.push_back(decode_order(r));
+    for (unsigned i = 0; i < f->count; ++i) {
+      auto order = decode_order(r, true);
+      (void)dictionary_.compact(order);
+      out.orders.push_back(std::move(order));
+    }
     r.finish();
     total += f->count;
     ++pages;
@@ -213,19 +225,11 @@ Recovered Storage::recover() {
   auto tp = out.boundary.trade_end;
   std::uint64_t previous = out.boundary.seq;
   while (auto f = next_frame(tf, tp)) {
-    if (f->kind != Kind::Trades || f->boundary.seq <= previous || f->count != f->trades ||
-        !f->trades)
+    if ((f->kind != Kind::Trades && f->kind != Kind::TradesV2) || f->boundary.seq <= previous ||
+        f->count != f->trades || !f->trades)
       throw std::runtime_error("Invalid trade log ordering");
-    if (f->payload.size() != std::uint64_t(f->count) * stored_trade_bytes)
-      throw std::runtime_error("Invalid trade payload count");
-    Reader r{f->payload};
-    for (unsigned i = 0; i < f->count; ++i) {
-      auto t = decode_trade(r);
-      check_id(t.id, shard_, f->boundary.next_trade);
-      check_id(t.buy_order, shard_, f->boundary.next_order);
-      check_id(t.sell_order, shard_, f->boundary.next_order);
-    }
-    r.finish();
+    for (const auto& decoded : decode_trades(*f))
+      dictionary_.validate_execution(decoded.record, f->boundary, shard_);
     previous = f->boundary.seq;
     trades.emplace(previous, TradeInfo{f->boundary, f->count, f->end});
   }
@@ -280,7 +284,8 @@ Recovered Storage::recover() {
           check_id(id, shard_, f->boundary.next_order);
           active.erase(id);
         } else if (kind == 1) {
-          auto o = decode_order(r);
+          auto o = decode_order(r, true);
+          (void)dictionary_.compact(o);
           check_id(o.state.orderId, shard_, f->boundary.next_order);
           active[OrderId(o.state.orderId)] = o;
         } else {

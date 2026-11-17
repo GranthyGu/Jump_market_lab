@@ -90,7 +90,7 @@ bool HistoryStore::restore(std::uint64_t recovered_end) {
       throw std::runtime_error("short index checkpoint");
     const auto bytes = snapshot.read(snapshot.size() - footer_size, footer_size);
     Reader meta{bytes};
-    if (meta.number(8) != snapshot_magic || meta.number(8) != 2 || meta.number(8) != fingerprint_)
+    if (meta.number(8) != snapshot_magic || meta.number(8) != 3 || meta.number(8) != fingerprint_)
       throw std::runtime_error("incompatible index checkpoint");
     const auto end = meta.number(8), last_frame = meta.number(8), first_crc = meta.number(8),
                last_crc = meta.number(8);
@@ -141,7 +141,7 @@ void HistoryStore::checkpoint(std::uint64_t end) {
   const auto pages_crc = copy_pages(source, destination, page_bytes);
   Bytes footer;
   for (const std::uint64_t v : {snapshot_magic,
-                                std::uint64_t{2},
+                                std::uint64_t{3},
                                 fingerprint_,
                                 end,
                                 last_frame_,
@@ -214,22 +214,28 @@ void HistoryStore::index_worker() {
       }
       while (position < end) {
         auto frame = next_frame(log, position);
-        if (!frame || frame->kind != Kind::Trades || frame->end > end ||
-            frame->count != frame->trades ||
-            frame->payload.size() != static_cast<std::size_t>(frame->count) * stored_trade_bytes)
+        if (!frame || frame->end > end)
           throw std::runtime_error("invalid committed trade frame while indexing");
-        Reader records{frame->payload};
-        for (std::uint32_t i = 0; i < frame->count; ++i) {
-          auto trade = decode_trade(records);
-          auto buyer = users_.at(fixed_string(trade.buyer)),
-               seller = users_.at(fixed_string(trade.seller));
-          const auto raw =
-              std::span(frame->payload)
-                  .subspan(static_cast<std::size_t>(i) * stored_trade_bytes, stored_trade_bytes);
-          const bpt::TradePosition where{frame->start, i, crc32c(raw)};
-          index_->insert(buyer, where);
-          if (buyer != seller)
-            index_->insert(seller, where);
+        for (const auto& decoded : decode_trades(*frame)) {
+          const auto raw = std::span(frame->payload).subspan(decoded.offset, decoded.length);
+          const bpt::TradePosition where{frame->start + header_bytes + decoded.offset,
+                                         (static_cast<std::uint32_t>(decoded.type) << 24) |
+                                             static_cast<std::uint32_t>(decoded.length),
+                                         crc32c(raw)};
+          std::visit(
+              [&](const auto& trade) {
+                using T = std::decay_t<decltype(trade)>;
+                if constexpr (std::is_same_v<T, SpreadExecution>) {
+                  index_->insert(users_.at(fixed_string(trade.user)), where);
+                } else {
+                  const auto buyer = users_.at(fixed_string(trade.buyer));
+                  const auto seller = users_.at(fixed_string(trade.seller));
+                  index_->insert(buyer, where);
+                  if (buyer != seller)
+                    index_->insert(seller, where);
+                }
+              },
+              decoded.record);
         }
         if (frame->start == 0)
           first_crc_ = frame->checksum;
@@ -252,7 +258,8 @@ void HistoryStore::index_worker() {
 void HistoryStore::request(const LinkHeader& context,
                            const TradeHistoryRequest& request,
                            std::uint64_t committed_end,
-                           const Emit& emit) {
+                           const Emit& emit,
+                           bool exact_visible_end) {
   auto q = request;
   RejectReason error{};
   if ((q.shard && q.shard != shard_) || !q.limit || q.limit > trade_history_page_limit ||
@@ -260,7 +267,7 @@ void HistoryStore::request(const LinkHeader& context,
       q.throughOffset > committed_end || context.user == 0 || context.user >= names_.size()) {
     error = RejectReason::InvalidHistoryQuery;
   } else {
-    if (!q.throughOffset)
+    if (!q.throughOffset && !exact_visible_end)
       q.throughOffset = committed_end;
     std::lock_guard lock(mutex_);
     if (failure_ || stopping_)
@@ -316,31 +323,47 @@ void HistoryStore::query_worker() {
           std::size_t next_position = 0;
           for (const auto& position : positions) {
             const auto offset = position.Get();
-            if (offset > q.throughOffset || q.throughOffset - offset < stored_trade_bytes)
+            const auto type = static_cast<TradeType>(position.type());
+            const auto length = position.length();
+            if (length != execution_bytes(type) || offset > q.throughOffset ||
+                q.throughOffset - offset < length)
               throw std::runtime_error("trade index extends past committed boundary");
             if (window.empty() || offset < window_at ||
-                offset - window_at + stored_trade_bytes > window.size()) {
+                offset - window_at + length > window.size()) {
               // Coalesce nearby positions into at most 8 KiB. Sparse values
-              // still read only their own 136-byte record, not a whole frame.
+              // still read only the indexed record, not a whole frame.
               window_at = offset;
-              auto end = offset + stored_trade_bytes;
+              auto end = offset + length;
               for (std::size_t i = next_position + 1; i < positions.size(); ++i) {
                 auto next = positions[i].Get();
-                if (next < end || next - end > 4096 || next - offset + stored_trade_bytes > 8192)
+                const auto next_length = positions[i].length();
+                if (next < end || next - end > 4096 || next_length > maximum_execution_bytes ||
+                    next - offset + next_length > 8192 || next > q.throughOffset ||
+                    q.throughOffset - next < next_length)
                   break;
-                end = next + stored_trade_bytes;
+                end = next + next_length;
               }
               window = log.read(window_at, end - window_at);
               if (window.size() != end - window_at)
                 throw std::runtime_error("truncated historical trade");
             }
-            const auto raw = std::span(window).subspan(offset - window_at, stored_trade_bytes);
+            const auto raw = std::span(window).subspan(offset - window_at, length);
             if (crc32c(raw) != position.checksum)
               throw std::runtime_error("historical trade checksum mismatch");
             Reader r{raw};
-            auto record = decode_trade(r);
+            auto record = decode_execution_body(r, type);
+            r.finish();
             const auto& name = names_.at(answer.task.context.user);
-            if (fixed_string(record.buyer) != name && fixed_string(record.seller) != name)
+            const bool participant = std::visit(
+                [&](const auto& trade) {
+                  using T = std::decay_t<decltype(trade)>;
+                  if constexpr (std::is_same_v<T, SpreadExecution>)
+                    return fixed_string(trade.user) == name;
+                  else
+                    return fixed_string(trade.buyer) == name || fixed_string(trade.seller) == name;
+                },
+                record);
+            if (!participant)
               throw std::runtime_error("trade index participant mismatch");
             answer.records.push_back(record);
             answer.next = position.Get();
@@ -381,21 +404,57 @@ void HistoryStore::poll() {
                 record_bytes(rejected(task.request.header.requestId, answer.error)));
       continue;
     }
-    for (const auto& trade : answer.records) {
-      TradeHistoryRecord record{};
-      record.header = {
-          MessageType::TradeHistoryRecord, sizeof(record), task.request.header.requestId};
-      record.timestamp = trade.timestamp;
-      record.tradeId = trade.id;
-      record.price = trade.price;
-      record.quantity = trade.quantity;
-      record.buyOrderId = trade.buy_order;
-      record.sellOrderId = trade.sell_order;
-      std::memcpy(record.symbol, trade.symbol.data(), 32);
-      std::memcpy(record.buyer, trade.buyer.data(), 32);
-      std::memcpy(record.seller, trade.seller.data(), 32);
-      task.emit(LinkKind::Event, task.context, record_bytes(record));
-    }
+    for (const auto& execution : answer.records)
+      std::visit(
+          [&](const auto& trade) {
+            using T = std::decay_t<decltype(trade)>;
+            if constexpr (std::is_same_v<T, SpreadExecution>) {
+              SpreadExecutionHistory record{};
+              record.header = {MessageType::SpreadExecutionHistory,
+                               sizeof(record),
+                               task.request.header.requestId};
+              record.timestamp = trade.timestamp;
+              record.tradeId = trade.id;
+              std::memcpy(record.symbol, trade.symbol.data(), 32);
+              record.price = trade.price;
+              record.quantity = trade.quantity;
+              record.aggressorOrderId = trade.execution.aggressor;
+              record.fillNo = trade.execution.fill;
+              record.orderId = trade.order;
+              std::memcpy(record.user, trade.user.data(), 32);
+              record.side = trade.side;
+              auto leg = [](SpreadHistoryLeg& out, const SpreadLeg& value) {
+                out.orderId = value.order;
+                std::memcpy(out.user, value.user.data(), 32);
+                out.price = value.price;
+              };
+              leg(record.a, trade.a);
+              leg(record.x, trade.x);
+              task.emit(LinkKind::Event, task.context, record_bytes(record));
+            } else {
+              TradeHistoryRecord record{};
+              record.header = {
+                  MessageType::TradeHistoryRecord, sizeof(record), task.request.header.requestId};
+              record.timestamp = trade.timestamp;
+              record.tradeId = trade.id;
+              record.price = trade.price;
+              record.quantity = trade.quantity;
+              record.buyOrderId = trade.buy_order;
+              record.sellOrderId = trade.sell_order;
+              std::memcpy(record.symbol, trade.symbol.data(), 32);
+              std::memcpy(record.buyer, trade.buyer.data(), 32);
+              std::memcpy(record.seller, trade.seller.data(), 32);
+              if constexpr (std::is_same_v<T, ImpliedLegTrade>) {
+                ImpliedLegHistory leg{record, trade.execution.aggressor, trade.execution.fill};
+                leg.trade.header.messageType = MessageType::ImpliedLegHistory;
+                leg.trade.header.messageLength = sizeof(leg);
+                task.emit(LinkKind::Event, task.context, record_bytes(leg));
+              } else {
+                task.emit(LinkKind::Event, task.context, record_bytes(record));
+              }
+            }
+          },
+          execution);
     auto end =
         server_record<TradeHistoryEnd>(MessageType::TradeHistoryEnd, task.request.header.requestId);
     end.shard = shard_;

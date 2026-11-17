@@ -420,10 +420,13 @@ class Console {
         complete = true;
         break;
       }
+      case MessageType::ImpliedLegHistory:
       case MessageType::TradeHistoryRecord: {
         if (!history_ || h.requestId != waiting_)
           throw std::runtime_error("Unexpected history record");
-        const auto value = copy_record<TradeHistoryRecord>(bytes);
+        const bool implied = h.messageType == MessageType::ImpliedLegHistory;
+        const auto value = implied ? copy_record<ImpliedLegHistory>(bytes).trade
+                                   : copy_record<TradeHistoryRecord>(bytes);
         const auto shard = static_cast<std::uint16_t>(value.tradeId >> 48);
         if (value.tradeId <= history_last_ids_[shard])
           throw std::runtime_error("History trade IDs repeated or out of order within a shard");
@@ -443,7 +446,33 @@ class Console {
             << "  " << std::setw(12) << fixed_string(value.symbol) << "  " << std::right
             << std::setw(8) << value.quantity << "  " << std::setw(10) << value.price << "  "
             << value.tradeId;
-        std::cout << console::Label{"TRADE", console::magenta} << ' ' << row.str() << '\n';
+        std::cout << console::Label{implied ? "LEG" : "TRADE", console::magenta} << ' ' << row.str();
+        if (implied) {
+          const auto leg = copy_record<ImpliedLegHistory>(bytes);
+          std::cout << "  execution=" << leg.aggressorOrderId << ':' << leg.fillNo;
+        }
+        std::cout << '\n';
+        break;
+      }
+      case MessageType::SpreadExecutionHistory: {
+        if (!history_ || h.requestId != waiting_)
+          throw std::runtime_error("Unexpected spread history record");
+        const auto value = copy_record<SpreadExecutionHistory>(bytes);
+        const auto shard = static_cast<std::uint16_t>(value.tradeId >> 48);
+        if (value.tradeId <= history_last_ids_[shard] || fixed_string(value.user) != options_.user)
+          throw std::runtime_error("Spread history identity/order mismatch");
+        history_last_ids_[shard] = value.tradeId;
+        ++history_page_counts_[shard];
+        ++history_total_;
+        std::cout << console::Label{"SPREAD", console::magenta} << ' ' << history_total_
+                  << "  " << console::time(value.timestamp, true) << "  "
+                  << (value.side == Side::Buy ? "BUY " : "SELL ") << fixed_string(value.symbol)
+                  << "  qty=" << value.quantity << "  price=" << value.price
+                  << "  trade=" << value.tradeId
+                  << "  execution=" << value.aggressorOrderId << ':' << value.fillNo
+                  << "  A=" << fixed_string(value.a.user) << '/' << value.a.orderId
+                  << '@' << value.a.price << "  X=" << fixed_string(value.x.user)
+                  << '/' << value.x.orderId << '@' << value.x.price << '\n';
         break;
       }
       case MessageType::TradeHistoryEnd: {

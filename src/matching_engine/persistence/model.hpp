@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <variant>
 
 #include "shared_data/orders/engine_link.hpp"
 
@@ -57,6 +58,49 @@ struct TradeRecord {
   bool operator==(const TradeRecord&) const = default;
 };
 
+struct ExecutionKey {
+  OrderId aggressor = 0;
+  std::uint32_t fill = 0;
+  bool operator==(const ExecutionKey&) const = default;
+};
+
+struct ImpliedLegTrade : TradeRecord {
+  ExecutionKey execution;
+  bool operator==(const ImpliedLegTrade&) const = default;
+};
+
+struct SpreadLeg {
+  OrderId order = 0;
+  Name user{};
+  Price price = 0;
+  bool operator==(const SpreadLeg&) const = default;
+};
+
+struct SpreadExecution {
+  TradeId id = 0;
+  Timestamp timestamp = 0;
+  Name symbol{};
+  Price price = 0;
+  Quantity quantity = 0;
+  ExecutionKey execution;
+  OrderId order = 0;
+  Name user{};
+  Side side{};
+  SpreadLeg a, x;
+  bool operator==(const SpreadExecution&) const = default;
+};
+
+enum class TradeType : std::uint8_t {
+  Direct = 1,
+  Leg = 2,
+  Spread = 3
+};
+using ExecutionRecord = std::variant<TradeRecord, ImpliedLegTrade, SpreadExecution>;
+
+inline TradeType trade_type(const ExecutionRecord& record) {
+  return static_cast<TradeType>(record.index() + 1);
+}
+
 struct Change {
   bool erase = false;
   CompactOrder order{};
@@ -73,12 +117,16 @@ struct Event {
 
 struct Result {
   std::vector<TradeRecord> trades;
+  // Group commands use typed records; ordinary commands keep their original
+  // compact vector and wire format. Never mix the two representations in a batch.
+  std::vector<ExecutionRecord> executions;
   std::vector<Change> changes;
   std::vector<Event> events;
   std::size_t limit = 8 * 1024 * 1024;
 
   std::size_t bytes() const {
-    return trades.capacity() * sizeof(TradeRecord) + changes.capacity() * sizeof(Change) +
+    return trades.capacity() * sizeof(TradeRecord) +
+           executions.capacity() * sizeof(ExecutionRecord) + changes.capacity() * sizeof(Change) +
            events.capacity() * sizeof(Event);
   }
 
@@ -96,8 +144,13 @@ struct Result {
 
   void clear() {
     trades.clear();
+    executions.clear();
     changes.clear();
     events.clear();
+  }
+
+  std::size_t trade_count() const {
+    return trades.size() + executions.size();
   }
 };
 enum class Stage {

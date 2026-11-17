@@ -57,7 +57,7 @@ struct LinkHeader {
 
 LinkHeader decode_link_header(std::span<const std::uint8_t> bytes);
 inline constexpr std::array<std::uint8_t, 8> link_version{'M', 'L', 'G', 'W', 2, 0, 0, 0};
-inline constexpr std::size_t max_client_frame = sizeof(TradeHistoryRecord);
+inline constexpr std::size_t max_client_frame = sizeof(SpreadExecutionHistory);
 inline constexpr std::size_t max_link_frame = link_header_size + max_client_frame;
 
 std::uint64_t unix_ns();

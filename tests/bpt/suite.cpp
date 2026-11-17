@@ -31,7 +31,7 @@ void duplicate_and_reopen(const std::filesystem::path& root) {
   std::vector<std::pair<std::uint32_t, TradePosition>> input;
   for (std::uint64_t i = 0; i < 12000; ++i) {
     std::uint32_t user = i % 3 == 0 ? UINT32_MAX : random() % 29;
-    TradePosition pos{i * 1000, static_cast<std::uint32_t>(i % 3), 0};
+    TradePosition pos{i * 1000 + 48 + (i % 3) * 136, (1U << 24) | 136, 0};
     input.emplace_back(user, pos); oracle[user].push_back(pos);
   }
   std::shuffle(input.begin(), input.end(), random);
@@ -78,7 +78,8 @@ void concurrent(const std::filesystem::path& root) {
   }); });
   for (unsigned t = 0; t < writers; ++t) writes.emplace_back([&, t] { run([&] {
     for (unsigned i = 0; i < count; ++i) {
-      TradePosition pos{(static_cast<std::uint64_t>(i) * writers + t) * 1000, 0, 0};
+      TradePosition pos{(static_cast<std::uint64_t>(i) * writers + t) * 1000 + 48,
+                        (1U << 24) | 136, 0};
       require(tree.insert(7, pos), "concurrent hot-user insert lost");
       require(tree.insert(100 + t, pos), "concurrent independent-user insert lost");
     }
@@ -93,7 +94,7 @@ void concurrent(const std::filesystem::path& root) {
   for (unsigned t = 0; t < writers; ++t) {
     auto own = all(tree, 100 + t);
     require(own.size() == count, "concurrent final independent-user count");
-    for (unsigned i = 0; i < count; ++i) require(own[i].frame == (static_cast<std::uint64_t>(i) * writers + t) * 1000, "wrong user value");
+    for (unsigned i = 0; i < count; ++i) require(own[i].record_offset == (static_cast<std::uint64_t>(i) * writers + t) * 1000 + 48, "wrong user value");
   }
   tree.flush();
   double seconds = std::chrono::duration<double>(Clock::now() - begin).count();
@@ -108,7 +109,7 @@ void benchmark(const std::filesystem::path& root, std::size_t n, std::size_t cac
     auto user = i % 5 == 0 ? 1 : static_cast<std::uint32_t>(i % 10000 + 2);
     auto sampled = i % 64 == 0;
     auto tick = sampled ? Clock::now() : Clock::time_point{};
-    require(tree.insert(user, {i * 200, 0, 0}), "stress insertion failed");
+    require(tree.insert(user, {i * 200 + 48, (1U << 24) | 136, 0}), "stress insertion failed");
     if (sampled) inserts.push_back(std::chrono::duration<double,std::micro>(Clock::now()-tick).count());
   }
   auto appended = Clock::now(); tree.flush(); auto durable = Clock::now();

@@ -13,15 +13,23 @@ struct UserComparator {
 };
 
 // Logical leaf key: 4-byte user ID. One entry per participant per trade.
-// Frame + ordinal locate the canonical record. A derived per-record CRC lets
-// sparse queries verify 136 bytes instead of reading an entire matching batch.
+// Body offset and packed type/length support both old and variable-size records.
+// A derived per-record CRC avoids reading an entire matching batch for a query.
 struct TradePosition {
-  std::uint64_t frame = 0;
-  std::uint32_t ordinal = 0;
+  std::uint64_t record_offset = 0;
+  std::uint32_t type_and_length = 0;
   std::uint32_t checksum = 0;
 
   std::uint64_t Get() const {
-    return frame + 48 + static_cast<std::uint64_t>(ordinal) * 136;
+    return record_offset;
+  }
+
+  std::uint32_t length() const {
+    return type_and_length & 0x00ffffffU;
+  }
+
+  std::uint8_t type() const {
+    return static_cast<std::uint8_t>(type_and_length >> 24);
   }
 
   bool operator==(const TradePosition&) const = default;
@@ -67,8 +75,7 @@ class TradeIndex {
       return result;
     result.reserve(limit);
     // Construct a synthetic value with exactly the desired byte offset.
-    auto it =
-        after >= 48 ? tree_->BeginAfter(user, TradePosition{after - 48, 0, 0}) : tree_->Begin(user);
+    auto it = after ? tree_->BeginAfter(user, TradePosition{after, 0, 0}) : tree_->Begin(user);
     while (!it.IsEnd() && (*it).first == user && result.size() < limit) {
       const auto position = (*it).second;
       if (position.Get() >= through)

@@ -22,7 +22,7 @@ double seconds(Clock::time_point a, Clock::time_point b) {
   return std::chrono::duration<double>(b - a).count();
 }
 std::uint32_t user_for(std::uint64_t i) { return i % 5 == 0 ? 1 : i % 10000 + 2; }
-TradePosition position_for(std::uint64_t i) { return {i * 200, 0, static_cast<std::uint32_t>(i)}; }
+TradePosition position_for(std::uint64_t i) { return {i * 200 + 48, (1U << 24) | 136, static_cast<std::uint32_t>(i)}; }
 struct DatabaseCloser { void operator()(sqlite3* p) const { sqlite3_close_v2(p); } };
 struct StatementCloser { void operator()(sqlite3_stmt* p) const { sqlite3_finalize(p); } };
 using Statement = std::unique_ptr<sqlite3_stmt, StatementCloser>;
@@ -43,17 +43,17 @@ class SqliteIndex {
     if (!reopen) sql(
         "CREATE TABLE user_trades ("
         "user_id INTEGER NOT NULL, record_offset INTEGER NOT NULL,"
-        "ordinal INTEGER NOT NULL, checksum INTEGER NOT NULL,"
+        "type_length INTEGER NOT NULL, checksum INTEGER NOT NULL,"
         "PRIMARY KEY(user_id, record_offset)) WITHOUT ROWID");
     insert_ = prepare("INSERT INTO user_trades VALUES(?1, ?2, ?3, ?4)");
-    query_ = prepare("SELECT record_offset,ordinal,checksum FROM user_trades "
+    query_ = prepare("SELECT record_offset,type_length,checksum FROM user_trades "
         "WHERE user_id=?1 AND record_offset>?2 AND record_offset<?3 "
         "ORDER BY record_offset LIMIT ?4");
     require(scalar("PRAGMA page_size") == 8192, "SQLite page size differs");
     require(scalar("PRAGMA cache_size") == 1024, "SQLite cache target differs");
     require(scalar("PRAGMA synchronous") == 2, "SQLite synchronous is not FULL");
     require(scalar("PRAGMA mmap_size") == 0, "SQLite mmap must be disabled");
-    auto plan = prepare("EXPLAIN QUERY PLAN SELECT record_offset,ordinal,checksum FROM user_trades "
+    auto plan = prepare("EXPLAIN QUERY PLAN SELECT record_offset,type_length,checksum FROM user_trades "
         "WHERE user_id=1 AND record_offset>0 AND record_offset<200000000 "
         "ORDER BY record_offset LIMIT 256");
     require(sqlite3_step(plan.get()) == SQLITE_ROW, "missing SQLite query plan");
@@ -65,7 +65,7 @@ class SqliteIndex {
     if (!transaction_) { sql("BEGIN IMMEDIATE"); transaction_ = true; }
     check(sqlite3_bind_int64(insert_.get(), 1, user));
     check(sqlite3_bind_int64(insert_.get(), 2, p.Get()));
-    check(sqlite3_bind_int64(insert_.get(), 3, p.ordinal));
+    check(sqlite3_bind_int64(insert_.get(), 3, p.type_and_length));
     check(sqlite3_bind_int64(insert_.get(), 4, p.checksum));
     int rc = sqlite3_step(insert_.get());
     sqlite3_reset(insert_.get());
@@ -85,9 +85,9 @@ class SqliteIndex {
     int rc;
     while ((rc = sqlite3_step(query_.get())) == SQLITE_ROW) {
       auto offset = static_cast<std::uint64_t>(sqlite3_column_int64(query_.get(), 0));
-      auto ordinal = static_cast<std::uint32_t>(sqlite3_column_int64(query_.get(), 1));
+      auto type_length = static_cast<std::uint32_t>(sqlite3_column_int64(query_.get(), 1));
       auto crc = static_cast<std::uint32_t>(sqlite3_column_int64(query_.get(), 2));
-      result.push_back({offset - 48 - static_cast<std::uint64_t>(ordinal) * 136, ordinal, crc});
+      result.push_back({offset, type_length, crc});
     }
     sqlite3_reset(query_.get());
     check(rc, SQLITE_DONE);

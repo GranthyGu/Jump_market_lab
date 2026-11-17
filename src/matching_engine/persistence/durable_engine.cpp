@@ -18,6 +18,7 @@ Options validate(Options o) {
 
 DurableEngine::DurableEngine(const OrderConfig& c, std::uint16_t shard, Options o)
     : options_(validate(std::move(o))),
+      shard_(shard),
       storage_(options_, c, shard),
       working_(c, shard),
       committed_(c, shard),
@@ -159,24 +160,40 @@ void DurableEngine::writer(bool trades) {
         hook(trades ? Stage::BeforeTradeWrite : Stage::BeforeOrderWrite, batch->b.seq);
         // Reserve once per frame before encoding. PUT is the largest delta;
         // the upper bound avoids a second scan just to count DELETE records.
-        const auto payload_bound = trades ? r.trades.size() * stored_trade_bytes
-                                          : r.changes.size() * (1 + stored_order_bytes);
+        const auto payload_bound =
+            trades ? (batch->replay ? batch->replay->payload.size()
+                                    : r.trades.size() * stored_trade_bytes +
+                                          r.executions.size() *
+                                              (maximum_execution_bytes + execution_prefix_bytes))
+                   : r.changes.size() * (1 + stored_order_bytes);
         scratch.reserve(header_bytes + payload_bound + trailer_bytes);
         if (trades) {
-          if (!r.trades.empty()) {
-            start_frame(scratch, Kind::Trades, batch->b, r.trades.size(), r.trades.size());
-            for (const auto& t : r.trades)
-              encode_trade(scratch, t);
+          if (batch->records()) {
+            const auto kind = batch->replay
+                                  ? batch->replay->kind
+                                  : (r.executions.empty() ? Kind::Trades : Kind::TradesV2);
+            start_frame(scratch, kind, batch->b, batch->records(), batch->records());
+            if (batch->replay) {
+              // Preserve V1/V2 layout, record offsets and historical cursors.
+              scratch.insert(
+                  scratch.end(), batch->replay->payload.begin(), batch->replay->payload.end());
+            } else if (!r.executions.empty()) {
+              for (const auto& t : r.executions)
+                encode_execution(scratch, t);
+            } else {
+              for (const auto& t : r.trades)
+                encode_trade(scratch, t);
+            }
             finish_frame(scratch);
             file.append(scratch);
             wrote = true;
-            trade_count += r.trades.size();
+            trade_count += batch->records();
             hook(Stage::TradeWritten, batch->b.seq);
           }
           batch->trade_end = file.append_position();
           batch->trade_count = trade_count;
         } else {
-          start_frame(scratch, Kind::Orders, batch->b, r.trades.size(), r.changes.size());
+          start_frame(scratch, Kind::Orders, batch->b, batch->records(), r.changes.size());
           for (const auto& change : r.changes) {
             integer(scratch, change.erase ? 0 : 1, 1);
             if (change.erase)
@@ -273,14 +290,19 @@ void DurableEngine::poll() {
     history_->publish(boundary_.trade_end);
     service_checkpoint();
     hook(Stage::Emitting, boundary_.seq);
-    for (const auto& event : batch.result.events)
-      batch.emit(event.kind, event.context, {event.payload.data(), event.size});
+    if (batch.complete)
+      batch.complete(boundary_, batch.result.events);
+    else
+      for (const auto& event : batch.result.events)
+        batch.emit(event.kind, event.context, {event.payload.data(), event.size});
     // SnapshotEnd for C must enter the output stream before any event from C+1.
     emit_queries();
-    pending_bytes_ -= batch.result.bytes();
+    pending_bytes_ -= batch.bytes();
     auto recycled = std::move(pending_.front());
     pending_.pop_front();
     recycled->emit = {};
+    recycled->complete = {};
+    recycled->replay.reset();
     recycled->result.clear();
     if (recycled->result.bytes() <= 256 * 1024 && free_.size() < 16)
       free_.push_back(std::move(recycled));
@@ -304,34 +326,72 @@ void DurableEngine::command(const LinkHeader& h,
       capture_query(h, copy_record<Header>(bytes), emit);
       return;
     }
-    while (pending_.size() >= options_.pending_slots ||
-           pending_bytes_ > options_.pending_bytes - options_.command_bytes) {
+    if (group_batch_)
+      throw std::logic_error("Ordinary command during open group batch");
+    while (!has_capacity()) {
       wait_progress();
       poll();
     }
-    auto batch = free_.empty() ? std::make_unique<Batch>() : std::move(free_.back());
-    if (!free_.empty())
-      free_.pop_back();
-    batch->result.clear();
-    batch->result.limit = options_.command_bytes;
-    batch->done.store(0, std::memory_order_relaxed);
+    auto batch = acquire_batch();
     batch->emit = emit;
     working_.execute(h, bytes, batch->result);
-    if (executed_ == std::numeric_limits<std::uint64_t>::max())
-      throw std::runtime_error("Persistence sequence exhausted");
     batch->b = {executed_ + 1, working_.next_order(), working_.next_trade(), 0, 0};
-    auto* handle = batch.get();
-    pending_bytes_ += batch->result.bytes();
-    pending_.push_back(std::move(batch));
-    if (!trade_queue_.push({handle, nullptr}) || !order_queue_.push({handle, nullptr})) {
-      check_error();
-      throw std::runtime_error("Persistence writer stopped");
-    }
-    ++executed_;
+    enqueue(std::move(batch));
   } catch (...) {
     fail(std::current_exception());
     throw;
   }
+}
+
+bool DurableEngine::has_capacity() const {
+  return pending_.size() < options_.pending_slots &&
+         pending_bytes_ <= options_.pending_bytes - options_.command_bytes;
+}
+
+std::unique_ptr<DurableEngine::Batch> DurableEngine::acquire_batch() {
+  if (executed_ == UINT64_MAX)
+    throw std::runtime_error("Persistence sequence exhausted");
+  auto batch = free_.empty() ? std::make_unique<Batch>() : std::move(free_.back());
+  if (!free_.empty())
+    free_.pop_back();
+  batch->result.clear();
+  batch->result.limit = options_.command_bytes;
+  batch->done.store(0, std::memory_order_relaxed);
+  return batch;
+}
+
+void DurableEngine::enqueue(std::unique_ptr<Batch> batch) {
+  if (!batch->result.trades.empty() && !batch->result.executions.empty())
+    throw std::logic_error("Mixed legacy and typed result vectors");
+  if (batch->bytes() > options_.command_bytes || batch->b.seq != executed_ + 1)
+    throw std::runtime_error("Invalid batch budget/sequence");
+  auto* handle = batch.get();
+  pending_bytes_ += batch->bytes();
+  pending_.push_back(std::move(batch));
+  if (!trade_queue_.push({handle, nullptr}) || !order_queue_.push({handle, nullptr})) {
+    check_error();
+    throw std::runtime_error("Persistence writer stopped");
+  }
+  ++executed_;
+}
+
+Result* DurableEngine::begin_group(DurableResult complete) {
+  poll();
+  if (group_batch_)
+    throw std::logic_error("Group batch already open");
+  if (!has_capacity())
+    return nullptr;
+  group_batch_ = acquire_batch();
+  group_batch_->complete = std::move(complete);
+  return &group_batch_->result;
+}
+
+std::uint64_t DurableEngine::seal_group() {
+  if (!group_batch_)
+    throw std::logic_error("No open group batch");
+  group_batch_->b = {executed_ + 1, working_.next_order(), working_.next_trade(), 0, 0};
+  enqueue(std::move(group_batch_));
+  return executed_;
 }
 
 void DurableEngine::capture_query(const LinkHeader& context,
@@ -406,18 +466,19 @@ void DurableEngine::request_checkpoint() {
 }
 
 bool DurableEngine::idle() const {
-  return pending_.empty() && queries_.empty() && !history_->pending() &&
+  return !group_batch_ && pending_.empty() && queries_.empty() && !history_->pending() &&
          history_->caught_up(boundary_.trade_end);
 }
 
 void DurableEngine::replicate(const Frame& orders, const std::optional<Frame>& trades) {
-  if (orders.kind != Kind::Orders || orders.boundary.seq != executed_ + 1 ||
+  if (group_batch_ || orders.kind != Kind::Orders || orders.boundary.seq != executed_ + 1 ||
       orders.boundary.next_order < working_.next_order() ||
       orders.boundary.next_trade != working_.next_trade() + orders.trades ||
       bool(trades) != bool(orders.trades))
     throw std::runtime_error("Replication sequence/counter gap");
-  if (trades && (trades->kind != Kind::Trades || trades->boundary.seq != orders.boundary.seq ||
-                 trades->count != orders.trades || trades->trades != orders.trades ||
+  if (trades && ((trades->kind != Kind::Trades && trades->kind != Kind::TradesV2) ||
+                 trades->boundary.seq != orders.boundary.seq || trades->count != orders.trades ||
+                 trades->trades != orders.trades ||
                  trades->boundary.next_order != orders.boundary.next_order ||
                  trades->boundary.next_trade != orders.boundary.next_trade))
     throw std::runtime_error("Replication parallel-log mismatch");
@@ -437,7 +498,7 @@ void DurableEngine::replicate(const Frame& orders, const std::optional<Frame>& t
       change.erase = true;
       change.order.id = reader.number(8);
     } else if (kind == 1) {
-      change.order = storage_.dictionary().compact(decode_order(reader));
+      change.order = storage_.dictionary().compact(decode_order(reader, true));
     } else {
       throw std::runtime_error("Invalid replicated delta");
     }
@@ -445,20 +506,14 @@ void DurableEngine::replicate(const Frame& orders, const std::optional<Frame>& t
   }
   reader.finish();
   if (trades) {
-    Reader tr{trades->payload};
-    for (std::uint32_t i = 0; i < trades->count; ++i)
-      batch->result.add(batch->result.trades, decode_trade(tr));
-    tr.finish();
+    for (const auto& t : decode_trades(*trades))
+      storage_.dictionary().validate_execution(t.record, trades->boundary, shard_);
+    batch->replay = *trades;
   }
+  if (batch->bytes() > options_.command_bytes)
+    throw std::runtime_error("Replicated batch exceeds command budget");
   working_.replicate(batch->result.changes, storage_.dictionary(), batch->b);
-  auto* handle = batch.get();
-  pending_bytes_ += batch->result.bytes();
-  pending_.push_back(std::move(batch));
-  if (!trade_queue_.push({handle, nullptr}) || !order_queue_.push({handle, nullptr})) {
-    check_error();
-    throw std::runtime_error("Replication writer stopped");
-  }
-  ++executed_;
+  enqueue(std::move(batch));
 }
 
 void DurableEngine::wait_checkpoint() {

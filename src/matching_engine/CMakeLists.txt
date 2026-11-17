@@ -5,7 +5,7 @@ endif()
 include(../CMakeLists.txt)
 add_subdirectory(trade_history/index)
 
-add_library(marketlab_matching_core STATIC core/engine.cpp market_data/snapshot_mailbox.cpp
+add_library(marketlab_matching_core STATIC core/engine.cpp core/group_execution.cpp market_data/snapshot_mailbox.cpp
   persistence/codec.cpp persistence/files.cpp persistence/durable_engine.cpp
   persistence/order_dictionary.cpp
   recovery/state.cpp recovery/storage.cpp)

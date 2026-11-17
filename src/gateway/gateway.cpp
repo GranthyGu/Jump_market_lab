@@ -486,7 +486,7 @@ class Gateway {
       io.send(destination, bytes);
       return;
     }
-    if (wire.messageType == MessageType::TradeHistoryRecord && h.kind == LinkKind::Event) {
+    if (is_history_record(wire.messageType) && h.kind == LinkKind::Event) {
       ++events;
       io.send(destination, bytes);
       return;

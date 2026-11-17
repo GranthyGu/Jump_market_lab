@@ -17,12 +17,15 @@ Name checked_name(const std::string& value) {
 }  // namespace
 
 OrderDictionary::OrderDictionary(const OrderConfig& config) {
+  if (config.spreads)
+    topology_.emplace(config);
   if (config.products.size() > std::numeric_limits<std::uint16_t>::max() ||
       config.accounts.size() > std::numeric_limits<std::uint32_t>::max()) {
     throw std::invalid_argument("Order dictionary ID range exceeded");
   }
   users_.resize(config.accounts.size() + 1);
   symbols_.resize(config.products.size() + 1);
+  policies_.resize(config.products.size() + 1);
   for (std::size_t i = 0; i < config.accounts.size(); ++i) {
     const auto& name = config.accounts[i].name;
     users_[i + 1] = checked_name(name);
@@ -33,6 +36,10 @@ OrderDictionary::OrderDictionary(const OrderConfig& config) {
   for (std::size_t i = 0; i < config.products.size(); ++i) {
     const auto& symbol = config.products[i].symbol;
     symbols_[i + 1] = checked_name(symbol);
+    policies_[i + 1] = {config.products[i].shard,
+                        product_limits(config, i),
+                        config.spreads && (symbol == config.spread_symbols[3] ||
+                                           symbol == config.spread_symbols[4])};
     if (!symbol_ids_.emplace(symbol, static_cast<std::uint16_t>(i + 1)).second) {
       throw std::invalid_argument("Duplicate order dictionary symbol");
     }
@@ -42,6 +49,11 @@ OrderDictionary::OrderDictionary(const OrderConfig& config) {
 CompactOrder OrderDictionary::compact(const StoredOrder& order) const {
   const auto user = user_ids_.at(fixed_string(order.username));
   const auto symbol = symbol_ids_.at(fixed_string(order.state.symbol));
+  const auto& policy = policies_[symbol];
+  if ((order.state.orderId >> 48) != policy.shard ||
+      (!policy.signed_price && order.state.price <= 0) || order.state.price < policy.limits.lower ||
+      order.state.price > policy.limits.upper)
+    throw std::runtime_error("Persisted order violates product ownership/price limits");
   return compact_order(order.state, user, symbol, order.arrival);
 }
 
@@ -63,6 +75,70 @@ StoredOrder OrderDictionary::expand(const CompactOrder& order) const {
   result.username = users_.at(order.user);
   result.arrival = order.arrival;
   return result;
+}
+
+void OrderDictionary::validate_execution(const ExecutionRecord& record,
+                                         const Boundary& boundary,
+                                         std::uint16_t owner) const {
+  auto id = [&](OrderId value, std::uint16_t expected, bool trade = false) {
+    const auto counter = value & ((1ULL << 48) - 1);
+    if (!counter || (value >> 48) != expected ||
+        (expected == owner && counter >= (trade ? boundary.next_trade : boundary.next_order)))
+      throw std::runtime_error("Trade ID/reference outside product owner/counter");
+  };
+  auto known_user = [&](const Name& name) {
+    (void)user_ids_.at(fixed_string(name));
+  };
+  std::visit(
+      [&](const auto& t) {
+        using T = std::decay_t<decltype(t)>;
+        const auto symbol = symbol_ids_.at(fixed_string(t.symbol));
+        const auto& policy = policies_[symbol];
+        if (policy.shard != owner || (!policy.signed_price && t.price <= 0))
+          throw std::runtime_error("Trade product/price mismatch");
+        id(t.id, owner, true);
+        if constexpr (std::is_same_v<T, TradeRecord>) {
+          id(t.buy_order, owner);
+          id(t.sell_order, owner);
+          known_user(t.buyer);
+          known_user(t.seller);
+        } else {
+          if (!topology_)
+            throw std::runtime_error("Typed implied trade without spread configuration");
+          const auto slot = topology_->slot(symbol);
+          const auto aggressor_owner = static_cast<std::uint16_t>(t.execution.aggressor >> 48);
+          if (!t.execution.fill || topology_->member(aggressor_owner) == spreads::no_slot)
+            throw std::runtime_error("Invalid execution key");
+          id(t.execution.aggressor, aggressor_owner);
+          const auto spread_owner = topology_->shards[0];
+          if constexpr (std::is_same_v<T, ImpliedLegTrade>) {
+            if (slot > spreads::C)
+              throw std::runtime_error("Implied leg must name an outright");
+            const auto buy_shard = static_cast<std::uint16_t>(t.buy_order >> 48);
+            const auto sell_shard = static_cast<std::uint16_t>(t.sell_order >> 48);
+            if (!((buy_shard == owner && sell_shard == spread_owner) ||
+                  (sell_shard == owner && buy_shard == spread_owner)))
+              throw std::runtime_error("Implied leg lacks real/spread counterparties");
+            id(t.buy_order, buy_shard);
+            id(t.sell_order, sell_shard);
+            known_user(t.buyer);
+            known_user(t.seller);
+          } else {
+            if (slot != spreads::AB && slot != spreads::AC)
+              throw std::runtime_error("Combination record must name a spread");
+            id(t.order, spread_owner);
+            id(t.a.order, topology_->shards[1]);
+            id(t.x.order, topology_->shards[slot == spreads::AB ? 2 : 3]);
+            known_user(t.user);
+            known_user(t.a.user);
+            known_user(t.x.user);
+            if (t.execution.aggressor != t.order && t.execution.aggressor != t.a.order &&
+                t.execution.aggressor != t.x.order)
+              throw std::runtime_error("Execution key does not identify a participating order");
+          }
+        }
+      },
+      record);
 }
 
 }  // namespace marketlab::orders::persistence

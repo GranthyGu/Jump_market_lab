@@ -30,7 +30,8 @@ class HistoryStore {
   void request(const LinkHeader&,
                const TradeHistoryRequest&,
                std::uint64_t committed_end,
-               const Emit&);
+               const Emit&,
+               bool exact_visible_end = false);
   void poll();
   bool pending() const;
 
@@ -50,7 +51,7 @@ class HistoryStore {
 
   struct Answer {
     Task task;
-    std::vector<persistence::TradeRecord> records;
+    std::vector<persistence::ExecutionRecord> records;
     std::uint64_t next = 0;
     bool more = false;
     RejectReason error{};

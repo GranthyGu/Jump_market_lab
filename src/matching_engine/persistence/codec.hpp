@@ -12,7 +12,8 @@ enum class Kind : std::uint32_t {
   Orders = 2,
   SnapshotMeta = 3,
   SnapshotPage = 4,
-  SnapshotEnd = 5
+  SnapshotEnd = 5,
+  TradesV2 = 6
 };
 
 struct Frame {
@@ -36,9 +37,22 @@ struct Reader {
 };
 
 void encode_order(Bytes&, const StoredOrder&);
-StoredOrder decode_order(Reader&);
+StoredOrder decode_order(Reader&, bool signed_price = false);
 void encode_trade(Bytes&, const TradeRecord&);
-TradeRecord decode_trade(Reader&);
+TradeRecord decode_trade(Reader&, bool signed_price = false);
+inline constexpr std::size_t execution_prefix_bytes = 3, maximum_execution_bytes = 197;
+std::size_t execution_bytes(TradeType);
+void encode_execution(Bytes&, const ExecutionRecord&);
+ExecutionRecord decode_execution(Reader&);
+ExecutionRecord decode_execution_body(Reader&, TradeType);
+
+struct DecodedExecution {
+  ExecutionRecord record;
+  std::size_t offset, length;
+  TradeType type;
+};
+
+std::vector<DecodedExecution> decode_trades(const Frame&);
 void start_frame(Bytes&, Kind, const Boundary&, std::uint32_t trades, std::uint32_t count);
 void finish_frame(Bytes&);
 void encode_frame(Bytes&,

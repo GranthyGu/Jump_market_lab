@@ -26,7 +26,7 @@ double seconds(Clock::time_point start, Clock::time_point end) {
   return std::chrono::duration<double>(end - start).count();
 }
 std::uint32_t user_for(std::uint64_t i) { return i % 5 == 0 ? 1 : i % 10000 + 2; }
-TradePosition position_for(std::uint64_t i) { return {i * 200, 0, static_cast<std::uint32_t>(i)}; }
+TradePosition position_for(std::uint64_t i) { return {i * 200 + 48, (1U << 24) | 136, static_cast<std::uint32_t>(i)}; }
 Oracle oracle_for(std::uint64_t count) {
   Oracle expected(10002);
   for (std::uint64_t i = 0; i < count; ++i)

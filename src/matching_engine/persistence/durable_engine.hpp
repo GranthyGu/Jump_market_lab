@@ -34,6 +34,29 @@ class DurableEngine final : public EngineBackend {
 
   bool idle() const;
   void replicate(const Frame& orders, const std::optional<Frame>& trades);
+  using DurableResult = std::function<void(const Boundary&, std::span<const Event>)>;
+  // A group command owns one mutable result across rounds. No file writer sees
+  // it until seal_group(), and a full queue returns nullptr rather than blocking I/O.
+  Result* begin_group(DurableResult);
+  std::uint64_t seal_group();
+
+  bool group_open() const {
+    return bool(group_batch_);
+  }
+
+  MatchingEngine& working() {
+    return working_;
+  }
+
+  const OrderDictionary& dictionary() const {
+    return storage_.dictionary();
+  }
+
+  std::size_t command_budget() const {
+    return options_.command_bytes;
+  }
+
+  bool has_capacity() const;
 
   std::size_t symbol_count() const noexcept override {
     return committed_.symbol_count();
@@ -60,8 +83,18 @@ class DurableEngine final : public EngineBackend {
     Result result;
     Boundary b;
     Emit emit;
+    DurableResult complete;
+    std::optional<Frame> replay;
     std::atomic<unsigned> done{0};
     std::uint64_t trade_end = 0, trade_count = 0;
+
+    std::size_t records() const {
+      return replay ? replay->count : result.trade_count();
+    }
+
+    std::size_t bytes() const {
+      return result.bytes() + (replay ? replay->payload.capacity() : 0);
+    }
   };
 
   struct Cut {
@@ -90,6 +123,7 @@ class DurableEngine final : public EngineBackend {
   };
 
   Options options_;
+  std::uint16_t shard_;
   Storage storage_;
   MatchingEngine working_;
   CommittedState committed_;
@@ -101,6 +135,7 @@ class DurableEngine final : public EngineBackend {
   std::size_t pending_bytes_ = 0;
   std::deque<std::unique_ptr<Batch>> pending_;
   std::vector<std::unique_ptr<Batch>> free_;
+  std::unique_ptr<Batch> group_batch_;
   std::deque<Query> queries_;
   std::size_t query_bytes_ = 0;
   Queue<Job> trade_queue_, order_queue_;
@@ -126,5 +161,7 @@ class DurableEngine final : public EngineBackend {
   void wait_progress();
   void stop() noexcept;
   void hook(Stage, std::uint64_t);
+  std::unique_ptr<Batch> acquire_batch();
+  void enqueue(std::unique_ptr<Batch>);
 };
 }  // namespace marketlab::orders::persistence

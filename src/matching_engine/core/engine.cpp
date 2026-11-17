@@ -38,8 +38,11 @@ MatchingEngine::MatchingEngine(const OrderConfig& config, std::uint16_t shard)
     auto& book = books_.back();
     put_string(book.symbol, product.symbol);
     book.symbol_id = static_cast<std::uint16_t>(i + 1);
-    book.lower = static_cast<std::int64_t>(product.previous_close) * 90 / 100;
-    book.upper = static_cast<std::int64_t>(product.previous_close) * 110 / 100;
+    const auto limits = product_limits(config, i);
+    book.lower = limits.lower;
+    book.upper = limits.upper;
+    book.signed_price = config.spreads && (product.symbol == config.spread_symbols[3] ||
+                                           product.symbol == config.spread_symbols[4]);
     symbols_.emplace(std::string_view(book.symbol, product.symbol.size()), books_.size() - 1);
   }
   usernames_.resize(config.accounts.size() + 1);
@@ -230,7 +233,10 @@ void MatchingEngine::trade(
   queue(LinkKind::Event, {0, LinkKind::Event, 0, order.user, 0}, record);
 }
 
-void MatchingEngine::new_order(const LinkHeader& h, const NewOrderRequest& request) {
+std::optional<MatchingEngine::Order> MatchingEngine::accept(const LinkHeader& h,
+                                                            const NewOrderRequest& request) {
+  if (!h.user || h.user >= users_.size())
+    throw std::runtime_error("Unknown engine user");
   // Validate fixed-width strings without allocating a temporary std::string.
   const auto end = std::find(std::begin(request.symbol), std::end(request.symbol), '\0');
   if (end == std::end(request.symbol) || !std::all_of(end, std::end(request.symbol), [](char c) {
@@ -240,11 +246,11 @@ void MatchingEngine::new_order(const LinkHeader& h, const NewOrderRequest& reque
   const auto found = symbols_.find(
       std::string_view(request.symbol, static_cast<std::size_t>(end - request.symbol)));
   if (found == symbols_.end() || (request.side != Side::Buy && request.side != Side::Sell) ||
-      request.price <= 0 || request.quantity <= 0 || request.price < books_[found->second].lower ||
-      request.price > books_[found->second].upper || next_order_ > sequence_limit ||
-      next_trade_ > sequence_limit) {
+      (!books_[found->second].signed_price && request.price <= 0) || request.quantity <= 0 ||
+      request.price < books_[found->second].lower || request.price > books_[found->second].upper ||
+      next_order_ > sequence_limit || next_trade_ > sequence_limit) {
     queue(LinkKind::Event, h, rejected(request.header.requestId, RejectReason::InvalidOrder));
-    return;
+    return std::nullopt;
   }
   auto& book = books_[found->second];
   Order incoming{};
@@ -257,6 +263,15 @@ void MatchingEngine::new_order(const LinkHeader& h, const NewOrderRequest& reque
   incoming.state.originalQuantity = incoming.state.remainingQuantity = request.quantity;
   incoming.state.status = OrderStatus::Accepted;
   update(incoming, request.header.requestId, h);
+  return incoming;
+}
+
+void MatchingEngine::new_order(const LinkHeader& h, const NewOrderRequest& request) {
+  auto accepted = accept(h, request);
+  if (!accepted)
+    return;
+  auto& incoming = *accepted;
+  auto& book = *incoming.book;
   match(incoming, request.side == Side::Buy ? book.asks : book.bids);
   if (incoming.state.remainingQuantity)
     rest(incoming);
@@ -301,15 +316,25 @@ void MatchingEngine::match(Order& incoming, Levels& opposite) {
       update(*order, 0, {0, LinkKind::Event, 0, order->user, 0}, time);
     }
     change(*resting, !resting->state.remainingQuantity);
-    best->second.quantity -= static_cast<std::uint64_t>(quantity);
-    if (!resting->state.remainingQuantity) {
-      unlink(*resting);
-      active_.erase(resting->state.orderId);
-      pool_.release(resting);
-      if (!best->second.count)
-        opposite.erase(best);
-    }
+    finish_resting_fill(resting, quantity);
   }
+}
+
+void MatchingEngine::finish_resting_fill(Order* resting, Quantity quantity) {
+  const auto position = resting->position;
+  position->second.quantity -= static_cast<std::uint64_t>(quantity);
+  if (resting->state.remainingQuantity)
+    return;
+  auto& levels = resting->state.side == Side::Buy ? resting->book->bids : resting->book->asks;
+  unlink(*resting);
+  active_.erase(resting->state.orderId);
+  pool_.release(resting);
+  if (!position->second.count)
+    levels.erase(position);
+}
+
+TradeId MatchingEngine::allocate_trade() {
+  return allocate(shard_, next_trade_);
 }
 
 void MatchingEngine::rest(const Order& incoming) {

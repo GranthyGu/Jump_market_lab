@@ -37,6 +37,8 @@ enum class MessageType : std::uint16_t {
   TradeHistoryRequest = 9,
   TradeHistoryRecord = 10,
   TradeHistoryEnd = 11,
+  ImpliedLegHistory = 12,
+  SpreadExecutionHistory = 13,
 };
 
 enum class Side : std::uint8_t {
@@ -161,6 +163,33 @@ struct TradeHistoryRecord {
   Username seller;
 };
 
+struct ImpliedLegHistory {
+  TradeHistoryRecord trade;
+  OrderId aggressorOrderId;
+  std::uint32_t fillNo;
+};
+
+struct SpreadHistoryLeg {
+  OrderId orderId;
+  Username user;
+  Price price;
+};
+
+struct SpreadExecutionHistory {
+  Header header;
+  Timestamp timestamp;
+  TradeId tradeId;
+  SymbolName symbol;
+  Price price;
+  Quantity quantity;
+  OrderId aggressorOrderId;
+  std::uint32_t fillNo;
+  OrderId orderId;
+  Username user;
+  Side side;
+  SpreadHistoryLeg a, x;
+};
+
 struct TradeHistoryEnd {
   Header header;
   Timestamp timestamp;
@@ -188,6 +217,8 @@ static_assert(sizeof(ActiveOrderSnapshot) == 81);
 static_assert(sizeof(RequestRejected) == 24);
 static_assert(sizeof(TradeHistoryRequest) == 34);
 static_assert(sizeof(TradeHistoryRecord) == 150);
+static_assert(sizeof(ImpliedLegHistory) == 162);
+static_assert(sizeof(SpreadExecutionHistory) == 211);
 static_assert(sizeof(TradeHistoryEnd) == 46);
 
 template <typename T>
@@ -200,7 +231,13 @@ static_assert(is_wire_record<Header> && is_wire_record<OrderState> &&
               is_wire_record<OrderUpdate> && is_wire_record<Trade> &&
               is_wire_record<ActiveOrderSnapshot> && is_wire_record<RequestRejected> &&
               is_wire_record<TradeHistoryRequest> && is_wire_record<TradeHistoryRecord> &&
-              is_wire_record<TradeHistoryEnd>);
+              is_wire_record<TradeHistoryEnd> && is_wire_record<ImpliedLegHistory> &&
+              is_wire_record<SpreadExecutionHistory>);
+
+constexpr bool is_history_record(MessageType type) {
+  return type == MessageType::TradeHistoryRecord || type == MessageType::ImpliedLegHistory ||
+         type == MessageType::SpreadExecutionHistory;
+}
 
 // Value-initialize records to zero before assigning fields. Character fields
 // require a null terminator and zero padding. Set messageType/messageLength
