@@ -87,7 +87,8 @@ void validate_levels(const std::vector<Level>& levels, bool delta, bool extended
     const auto& x = levels[i];
     if ((x.side != Side::Buy && x.side != Side::Sell) || (!extended && x.price <= 0))
       throw std::runtime_error("Invalid side or price");
-    if ((!extended && x.implied_quantity) || (bool(x.quantity) != bool(x.num_orders)) ||
+    if ((!extended && x.implied_quantity) ||
+        (bool(x.quantity || x.implied_quantity) != bool(x.num_orders)) ||
         (!delta && !x.quantity && !x.implied_quantity) ||
         x.implied_quantity > UINT64_MAX - x.quantity)
       throw std::runtime_error("Invalid aggregate values");
@@ -276,7 +277,7 @@ void print_level(const Level& x) {
             << console::Label{x.side == Side::Buy ? "BUY " : "SELL",
                               x.side == Side::Buy ? console::green : console::yellow}
             << " price=" << x.price << " quantity=" << x.quantity + x.implied_quantity
-            << " numOfOrders=" << x.num_orders << " D=" << x.quantity << ' '
-            << console::magenta << "I=" << x.implied_quantity << console::reset << '\n';
+            << " numOfOrders=" << x.num_orders << " D=" << x.quantity << ' ' << console::magenta
+            << "I=" << x.implied_quantity << console::reset << '\n';
 }
 }  // namespace marketlab::md

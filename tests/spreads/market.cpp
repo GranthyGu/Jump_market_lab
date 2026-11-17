@@ -31,12 +31,12 @@ void merge() {
           "Must merge all sources before truncating five prices");
   const auto &same = merged.levels[1];
   require(same.price == 120 && same.quantity == 3 &&
-              same.implied_quantity == 13 && same.num_orders == 1,
-          "Same-price direct/AB/AC quantities or real order count differ");
+              same.implied_quantity == 13 && same.num_orders == 3,
+          "Same-price direct/AB/AC quantities or route order count differ");
   require(merged.levels[0].quantity == 0 &&
               merged.levels[0].implied_quantity == 2 &&
-              !merged.levels[0].num_orders,
-          "Pure implied level fabricated direct order count");
+              merged.levels[0].num_orders == 1,
+          "Pure implied level must count each positive route once");
   views[9] = {};
   const auto updated = book(s::merged_market(core, 1, s::A, views));
   require(merged.levels[0].price == 119 && updated.levels[0].price == 120,
@@ -45,8 +45,8 @@ void merge() {
 
 void wire() {
   const md::Book source{4,
-                        {{md::Side::Buy, 0, 3, 1, 4},
-                         {md::Side::Buy, -1, 0, 0, 7},
+                        {{md::Side::Buy, 0, 3, 2, 4},
+                         {md::Side::Buy, -1, 0, 1, 7},
                          {md::Side::Sell, 1, 5, 2, 0}},
                         true};
   const auto epoch = md::new_epoch();
@@ -74,7 +74,7 @@ void wire() {
   invalid.levels[0].implied_quantity = UINT64_MAX;
   rejects([&] { md::validate_book(invalid); });
   invalid = source;
-  invalid.levels[1].num_orders = 1;
+  invalid.levels[1].num_orders = 0;
   rejects([&] { md::validate_book(invalid); });
 }
 
@@ -84,17 +84,17 @@ void client_delta() {
   const auto ticket = recovery.next_request(now);
   require(ticket.has_value(), "Initial snapshot query absent");
   const auto epoch = md::new_epoch();
-  md::Book before{4, {{md::Side::Buy, 0, 2, 1, 3}}, true};
+  md::Book before{4, {{md::Side::Buy, 0, 2, 2, 3}}, true};
   recovery.complete(
       *ticket, {md::Kind::SnapshotV2, epoch, 4, 0, 123, before.levels}, now);
-  md::Book after{4, {{md::Side::Buy, 0, 4, 1, 1}}, true};
+  md::Book after{4, {{md::Side::Buy, 0, 4, 2, 1}}, true};
   auto changes = md::difference(before, after);
   require(changes.size() == 1,
           "Unchanged total suppressed changed D/I quantities");
   recovery.udp({md::Kind::DeltaV2, epoch, 4, 1, 124, changes}, now);
   require(recovery.view(4).snapshot->levels == after.levels,
           "D/I delta not applied");
-  md::Book pure{4, {{md::Side::Buy, 0, 0, 0, 9}}, true};
+  md::Book pure{4, {{md::Side::Buy, 0, 0, 1, 9}}, true};
   // Receive index 3 before 2 to exercise buffered V2-kind preservation.
   recovery.udp({md::Kind::DeltaV2, epoch, 4, 3, 126,
                 md::difference(pure, {4, {}, true})},
@@ -114,9 +114,9 @@ void full_replacement() {
   for (const auto side : {md::Side::Buy, md::Side::Sell})
     for (int i = 0; i < 5; ++i) {
       before.levels.push_back(
-          {side, side == md::Side::Buy ? -1 - i : 1 + i, 0, 0, 1});
+          {side, side == md::Side::Buy ? -1 - i : 1 + i, 0, 1, 1});
       after.levels.push_back(
-          {side, side == md::Side::Buy ? -11 - i : 11 + i, 0, 0, 2});
+          {side, side == md::Side::Buy ? -11 - i : 11 + i, 0, 1, 2});
     }
   const auto changes = md::difference(before, after);
   require(changes.size() == 20, "Rolling window omitted removed prices");

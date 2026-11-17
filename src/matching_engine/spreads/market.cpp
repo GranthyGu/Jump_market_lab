@@ -46,8 +46,10 @@ MarketBookSnapshot merged_market(const MatchingEngine& core,
         merged = real[real_at++];
       for (unsigned i = 0; i < count; ++i) {
         const auto& view = views[candidates[i]];
-        if (at[i] < view.count && view.price[at[i]] == *price)
+        if (at[i] < view.count && view.price[at[i]] == *price) {
           add(merged.implied_quantity, view.quantity[at[i]++]);
+          add(merged.num_orders, 1);
+        }
       }
       auto total = merged.quantity;
       add(total, merged.implied_quantity);
