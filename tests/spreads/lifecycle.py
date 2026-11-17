@@ -155,7 +155,11 @@ class Deployment:
                              "--config", self.config, "--market-config", publisher, "--cluster-config", topology,
                              "--build-dir", binary, "--data-dir", root / "data", "--log-dir", root / "logs",
                              "--checkpoint-ms", "50", "--trace"]
-        self.start()
+        try:
+            self.start()
+        except Exception:
+            self.close()
+            raise
 
     def launch(self, args, name):
         stream = (self.root / name).open("w")
