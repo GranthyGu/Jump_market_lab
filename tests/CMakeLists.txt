@@ -133,3 +133,13 @@ add_test(NAME spread_persistence_correctness
 set_tests_properties(spread_persistence_correctness PROPERTIES TIMEOUT 60
   LABELS "spreads;recovery;correctness;cornercase")
 add_dependencies(demo_tests spread_persistence_tests)
+
+add_executable(spread_execution_tests spreads/execution.cpp)
+target_include_directories(spread_execution_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_execution_tests PRIVATE marketlab_matching_core)
+target_compile_options(spread_execution_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_execution_correctness_stress
+  COMMAND spread_execution_tests "${CMAKE_BINARY_DIR}/spread-results/execution")
+set_tests_properties(spread_execution_correctness_stress PROPERTIES TIMEOUT 60
+  LABELS "spreads;correctness;cornercase;performance")
+add_dependencies(demo_tests spread_execution_tests)

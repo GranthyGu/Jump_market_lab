@@ -63,6 +63,7 @@ class MatchingEngine final : public EngineBackend {
   void fill_events(
       const persistence::CompactOrder&, TradeId, Price, Quantity, Timestamp, persistence::Result&);
   TradeId allocate_trade();
+  persistence::Name symbol_name(std::uint16_t symbol) const;
   persistence::TradeRecord trade_record(std::uint16_t symbol,
                                         Price,
                                         Quantity,

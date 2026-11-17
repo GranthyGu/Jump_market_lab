@@ -113,6 +113,13 @@ void MatchingEngine::fill_events(const persistence::CompactOrder& value,
   update(order, 0, {0, LinkKind::Event, 0, value.user, 0}, timestamp);
 }
 
+persistence::Name MatchingEngine::symbol_name(std::uint16_t symbol) const {
+  persistence::Name result{};
+  const auto& book = find_book(symbol);
+  std::copy(std::begin(book.symbol), std::end(book.symbol), result.begin());
+  return result;
+}
+
 persistence::TradeRecord MatchingEngine::trade_record(std::uint16_t symbol,
                                                       Price price,
                                                       Quantity quantity,
@@ -126,8 +133,7 @@ persistence::TradeRecord MatchingEngine::trade_record(std::uint16_t symbol,
   t.timestamp = timestamp;
   t.price = price;
   t.quantity = quantity;
-  const auto& book = find_book(symbol);
-  std::copy(std::begin(book.symbol), std::end(book.symbol), t.symbol.begin());
+  t.symbol = symbol_name(symbol);
   t.buy_order = buy;
   t.sell_order = sell;
   t.buyer = usernames_.at(buyer);
