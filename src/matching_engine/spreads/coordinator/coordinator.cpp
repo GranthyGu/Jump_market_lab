@@ -1,4 +1,4 @@
-#include "matching_engine/spreads/coordinator.hpp"
+#include "matching_engine/spreads/coordinator/coordinator.hpp"
 #include <bit>
 
 namespace marketlab::orders::spreads {

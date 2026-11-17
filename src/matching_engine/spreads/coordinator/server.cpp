@@ -1,5 +1,5 @@
-#include "matching_engine/spreads/coordinator_server.hpp"
-#include "matching_engine/spreads/coordinator.hpp"
+#include "matching_engine/spreads/coordinator/server.hpp"
+#include "matching_engine/spreads/coordinator/coordinator.hpp"
 #include "matching_engine/spreads/join.hpp"
 #include "matching_engine/spreads/links.hpp"
 #include <fstream>

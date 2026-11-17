@@ -1,4 +1,4 @@
-#include "matching_engine/spreads/coordinator_server.hpp"
+#include "matching_engine/spreads/coordinator/server.hpp"
 #include "shared_data/paths.hpp"
 #include "shared_data/runtime/thread.hpp"
 #include <csignal>

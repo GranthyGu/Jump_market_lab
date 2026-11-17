@@ -12,7 +12,7 @@
 | 来源与推导 | `spreads/depth.*` | 固定三档、12 条 route、依赖位图、价格限制、delta/snapshot 编解码 |
 | 选择与配对 | `spreads/execution.*` | 价格/直接 FIFO/AB 优先级，固定选择计划，两来源 FIFO 片段切分 |
 | 单命令状态 | `spreads/session.*` | 多轮命令、P2P 执行、来源同步与明细并行、一条完整 Result、短路径 |
-| Coordinator | `spreads/coordinator.*`、`coordinator_server.*`、`coordinator_main.cpp` | 纯状态机与独立 TCP 进程，来源/视图/内存完成确认 |
+| Coordinator | `spreads/coordinator/`：`coordinator.*`、`server.*`、`main.cpp` | 分别承载纯状态机、TCP 服务及接入维护、独立进程入口；确认来源/视图/内存完成 |
 | 接入 | `spreads/protocol.*`、`links.*`、`join.*`、`worker.*` | 组报文、实例和 epoch 校验、握手、重接入、业务/peer 适配 |
 | Router 与发布 | `cluster/router_spreads.*`、`spreads/publication.*` | 主 Router 内部的关联组模块；有界组请求 FIFO、MEM_DONE 放行、实际参与者持久化汇总、查询和行情可见边界 |
 | 行情 | `spreads/market.*`、`shared_data/market_data/`、`publisher/` | 合并真实与 implied 五档，V2 编码、快照/增量、显示 |
