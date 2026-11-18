@@ -17,10 +17,11 @@ class LatencyAnalysisTest(unittest.TestCase):
 
     def fixture(self, scenario="group-implied", memory=300, mask=7, duplicate=False, missing=False):
         ordinary = scenario.startswith("ordinary-")
-        shard = 1 if ordinary else 5
+        shard = 1 if ordinary else {"group-butterfly-out": 6, "group-butterfly-b": 7,
+                                     "group-shared": 6}.get(scenario, 5)
         (self.root / "run.json").write_text(json.dumps({
             "scenario": scenario, "count": 1, "window": 1, "warmup": 1, "seconds": 0.001,
-            "clock": "CLOCK_MONOTONIC_RAW", "clock_resolution_ns": 42,
+            "clock": "CLOCK_MONOTONIC_RAW", "clock_resolution_ns": 42, "calendar_orders": 1,
         }))
         with (self.root / "client.csv").open("w", newline="") as stream:
             writer = csv.writer(stream)
@@ -46,6 +47,24 @@ class LatencyAnalysisTest(unittest.TestCase):
                 self.assertEqual(samples[0]["memory_us"], 0.2)
                 self.assertEqual(samples[0]["client_us"], 0.3)
                 self.assertEqual(samples[0]["start_to_memory_us"], 0.1)
+
+    def test_butterfly_and_shared_participants(self):
+        for scenario in ("group-butterfly-in", "group-butterfly-out", "group-butterfly-b", "group-shared"):
+            with self.subTest(scenario=scenario):
+                self.fixture(scenario, mask=15)
+                run, _ = analyze(self.root)
+                self.assertEqual(run["validated_orders"], 1)
+                self.fixture(scenario, mask=7)
+                with self.assertRaisesRegex(RuntimeError, "participant mask"):
+                    analyze(self.root)
+
+    def test_shared_calendar_phase(self):
+        self.fixture("group-shared", mask=7)
+        path = self.root / "run.json"
+        run = json.loads(path.read_text())
+        run["calendar_orders"] = 2
+        path.write_text(json.dumps(run))
+        self.assertEqual(analyze(self.root)[0]["validated_orders"], 1)
 
     def test_missing_memory(self):
         self.fixture(missing=True)

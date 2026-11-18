@@ -11,11 +11,14 @@
 
 `build.sh` 编译所有本地回归、正式服务、`gateway_client`、SQLite 对照和独立性能程序，输出到 `build/demo-tests/bin/`。需要 CMake、C++20 编译器、Python 3、SQLite 开发库及 POSIX 网络接口；SQLite 仅用于测试。
 
-`run_all.sh` 默认执行 **所有已注册 CTest + 8 个独立测试/实验组**，按顺序运行，避免性能实验相互干扰。CTest 清单动态读取，新增已注册测试会自动纳入。某项失败、未构建或超时不会被忽略，也不会阻止后续项目运行；最终返回非零。
+`run_all.sh` 默认执行 **所有已注册 CTest + 10 个独立测试/实验组**，按顺序运行，避免性能实验相互干扰。CTest 清单动态读取，新增已注册测试会自动纳入。某项失败、未构建或超时不会被忽略，也不会阻止后续项目运行；最终返回非零。
+
+其中包括 spreads 进程性能测试及八种逐单 latency 场景。后者在正常构建下的 `latency-probes/` 自动准备独立 Release 测量程序；正常服务的计时探针仍关闭。完整模式每个 latency 场景采样 5000 笔、重复三轮，quick 模式为 200 笔、一轮，均检查内存完成、参与片集合与完整客户端成交结果。
 
 ```sh
 ./tests/run_all.sh --list                  # 仅显示完整清单与命令
 ./tests/run_all.sh --quick                 # 全部项目；缩小独立性能实验的负载
+./tests/run_all.sh --skip-cmu              # 全部项目测试；不运行外部 CMU 项
 ./tests/run_all.sh --regression-only       # 仅 CTest 日常回归
 ./tests/run_all.sh --verbose               # 同时向终端输出每项完整日志
 ./tests/run_all.sh --build-dir build/demo-tests --output build/my-test-results

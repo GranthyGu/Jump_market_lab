@@ -104,11 +104,22 @@ def plan(args, build, directory, tests):
     extra(name, cmd, 1800, ["bpt_sqlite_benchmark"])
     if cache_value(build, "MARKETLAB_BUILD_SQLITE_BENCHMARK") != "ON":
         tasks[-1].missing = "SQLite tests are disabled in this build. Run tests/build.sh to enable and build them."
-    name = "cmu_public"
-    extra(name, [py, ROOT / "tests/bpt/run_cmu_public.py", "--source", args.cmu_source.resolve(),
-                 "--build", build / "cmu-public", "--output", directory / name / "artifacts",
-                 "--cxx", cache_value(build, "CMAKE_CXX_COMPILER") or "c++", "--jobs", args.jobs,
-                 "--duration", 1000 if args.quick else 30000], 1800)
+    name = "spread_process_benchmark"
+    extra(name, [py, ROOT / "tests/spreads/benchmark.py", "--build-dir", binary,
+                 "--output", directory / name / "artifacts", "--repeats", 1 if args.quick else 3],
+          900, ["spread_process_tests", "spread_market_tests", "market_matching_engine",
+                "market_engine_router", "market_group_coordinator", "market_gateway"])
+    name = "spread_latency_comparison"
+    extra(name, [py, ROOT / "tests/spreads/latency.py", "--prepare-build", build,
+                 "--output", directory / name / "artifacts", "--count", 200 if args.quick else 5000,
+                 "--warmup", 20 if args.quick else 200, "--windows", 128,
+                 "--repeats", 1 if args.quick else 3], 1800)
+    if not args.skip_cmu:
+        name = "cmu_public"
+        extra(name, [py, ROOT / "tests/bpt/run_cmu_public.py", "--source", args.cmu_source.resolve(),
+                     "--build", build / "cmu-public", "--output", directory / name / "artifacts",
+                     "--cxx", cache_value(build, "CMAKE_CXX_COMPILER") or "c++", "--jobs", args.jobs,
+                     "--duration", 1000 if args.quick else 30000], 1800)
     return tasks
 
 
@@ -190,7 +201,7 @@ def save_report(directory, report, started):
         rows.append(f"| {name} | {r['status'] if r else 'NOT RUN'} | "
                     + (f"{r['wall_seconds']:.2f} | [log]({r['log']}) |" if r else "— | — |"))
     if report["excluded"]:
-        rows += ["", "Excluded explicitly by --regression-only: " + ", ".join(report["excluded"])]
+        rows += ["", "Excluded explicitly by command-line options: " + ", ".join(report["excluded"])]
     rows += ["", "Quick mode reduces benchmark sizes only.", ""]
     (directory / "report.md").write_text("\n".join(rows))
 
@@ -217,6 +228,7 @@ def main():
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/demo-tests")
     parser.add_argument("--output", type=Path, default=ROOT / "build/test-results")
     parser.add_argument("--regression-only", action="store_true", help="Only registered CTest regressions; explicitly omit standalone experiments/CMU")
+    parser.add_argument("--skip-cmu", action="store_true", help="Exclude external CMU tests; keep all project tests and benchmarks")
     parser.add_argument("--quick", action="store_true", help="Run every selected task, with smaller standalone benchmark workloads; not a full performance measurement")
     parser.add_argument("--list", action="store_true", help="List selected tasks and commands without running them")
     parser.add_argument("--verbose", action="store_true", help="Stream task output as well as saving it")
@@ -246,12 +258,9 @@ def main():
                                      dir=args.output.resolve()))
     tasks = plan(args, build, directory, tests)
     selected = [task.name for task in tasks]
-    if args.regression_only:
-        args.regression_only = False
-        excluded = [t.name for t in plan(args, build, directory, tests) if t.name not in selected]
-        args.regression_only = True
-    else:
-        excluded = []
+    full_args = argparse.Namespace(**vars(args))
+    full_args.regression_only = full_args.skip_cmu = False
+    excluded = [t.name for t in plan(full_args, build, directory, tests) if t.name not in selected]
     report = {"started_at": datetime.datetime.now().astimezone().isoformat(), "platform": platform.platform(),
               "scope": "regression" if args.regression_only else "all", "quick": args.quick,
               "build_directory": str(build), "selected_tests": selected, "excluded": excluded, "results": []}

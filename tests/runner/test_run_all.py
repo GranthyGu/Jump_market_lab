@@ -92,7 +92,7 @@ with patch.object(runner, 'inventory', return_value=[{}]), patch.object(runner, 
         with tempfile.TemporaryDirectory() as tmp:
             build = Path(tmp)
             (build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++\nMARKETLAB_BUILD_SQLITE_BENCHMARK:BOOL=OFF\n")
-            args = argparse.Namespace(timeout=None, regression_only=False, quick=True, jobs=2, cmu_source=build / "source")
+            args = argparse.Namespace(timeout=None, regression_only=False, skip_cmu=False, quick=True, jobs=2, cmu_source=build / "source")
             tests = [{"name": "new_future_test", "command": ["some-test"],
                       "properties": [{"name": "TIMEOUT", "value": 40}]}]
             tasks = runner.plan(args, build, build / "report", tests)
@@ -101,9 +101,17 @@ with patch.object(runner, 'inventory', return_value=[{}]), patch.object(runner, 
             self.assertEqual({t.name for t in tasks[1:]}, {
                 "persistence_queue_recovery_spsc_park", "persistence_queue_recovery_spsc_yield",
                 "persistence_queue_comparison", "snapshot_contention_benchmark", "trade_history_benchmark",
-                "bpt_cache_concurrency_comparison", "bpt_sqlite_comparison", "cmu_public"})
+                "bpt_cache_concurrency_comparison", "bpt_sqlite_comparison", "cmu_public",
+                "spread_process_benchmark", "spread_latency_comparison"})
             self.assertIn("SQLite tests are disabled", next(t.missing for t in tasks if t.name == "bpt_sqlite_comparison"))
             self.assertTrue(all(t.timeout > 0 for t in tasks))
+            latency = next(t for t in tasks if t.name == "spread_latency_comparison")
+            self.assertIn("--prepare-build", latency.command)
+            self.assertIn("200", latency.command)
+            self.assertFalse(latency.missing)
+            args.skip_cmu = True
+            without_cmu = runner.plan(args, build, build / "report", tests)
+            self.assertEqual([t.name for t in without_cmu], [t.name for t in tasks if t.name != "cmu_public"])
             args.regression_only = True
             self.assertEqual([t.name for t in runner.plan(args, build, build / "report", tests)], ["new_future_test"])
 

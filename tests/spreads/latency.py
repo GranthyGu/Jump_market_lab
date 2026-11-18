@@ -14,7 +14,8 @@ import subprocess
 import time
 
 
-SCENARIOS = ("ordinary-hot", "ordinary-balanced", "group-direct", "group-implied")
+SCENARIOS = ("ordinary-hot", "ordinary-balanced", "group-direct", "group-implied",
+             "group-butterfly-in", "group-butterfly-out", "group-butterfly-b", "group-shared")
 METRICS = ("memory_us", "client_us", "send_to_start_us", "start_to_memory_us", "after_memory_us")
 
 
@@ -46,6 +47,7 @@ def analyze(directory):
     clients = rows(directory / "client.csv")
     requests = {row["request"] for row in clients}
     check(len(clients) == len(requests) == run["count"], "Missing/duplicate client samples")
+    check(run["scenario"] in SCENARIOS, "Unknown latency scenario")
     ordinary = run["scenario"].startswith("ordinary-")
     starts, memories, group_memories = {}, {}, {}
     for path in sorted((directory / "probes").glob("probe-*.csv")):
@@ -70,10 +72,23 @@ def analyze(directory):
         check(memory is not None, "Missing group memory probe")
         check(start["shard"] == client["shard"] and start["sequence"] == memory["sequence"],
               "Probe request/sequence/shard mismatch")
+        expected_shard = {"group-butterfly-in": 5, "group-butterfly-out": 6,
+                          "group-butterfly-b": 7, "group-shared": 6}.get(run["scenario"])
+        if expected_shard:
+            check(client["shard"] == expected_shard, "Wrong butterfly aggressor owner")
         if ordinary:
             check(memory["shard"] == client["shard"], "Ordinary completion shard mismatch")
         else:
-            mask = 1 << (client["shard"] - 5) if run["scenario"] == "group-direct" else (7 if index % 2 == 0 else 11)
+            scenario = run["scenario"]
+            if scenario == "group-direct":
+                mask = 1 << (client["shard"] - 5)
+            elif scenario == "group-implied":
+                mask = 7 if index % 2 == 0 else 11
+            elif scenario == "group-shared":
+                mask = 7 if index + run["warmup"] < run["calendar_orders"] else 15
+            else:
+                check(scenario.startswith("group-butterfly-"), "Unknown latency scenario")
+                mask = 15
             check(memory["participants"] == mask, "Unexpected direct/implied participant mask")
         sent, begun, done, received = (client["send_ns"], start["timestamp_ns"],
                                        memory["timestamp_ns"], client["done_ns"])
@@ -112,9 +127,34 @@ def execute(command, log):
     check(result == 0, f"Native benchmark exited {result}; see {log}")
 
 
+def prepare_build(base, log):
+    """Build probes separately; never instrument the caller's normal services."""
+    root = Path(__file__).resolve().parents[2]
+    base = base.resolve()
+    if base.name == "bin":
+        base = base.parent
+    cache = base / "CMakeCache.txt"
+    check(cache.is_file(), f"Missing normal CMake build: {base}")
+    compiler = next((line.partition("=")[2] for line in cache.read_text().splitlines()
+                     if line.startswith("CMAKE_CXX_COMPILER:")), "")
+    build = base / "latency-probes"
+    configure = ["cmake", "-S", str(root / "src"), "-B", str(build),
+                 "-DCMAKE_BUILD_TYPE=Release", "-DMARKETLAB_BUILD_TESTS=ON",
+                 "-DMARKETLAB_LATENCY_PROBES=ON", "-DMARKETLAB_BUILD_SQLITE_BENCHMARK=OFF"]
+    if compiler:
+        configure.append("-DCMAKE_CXX_COMPILER=" + compiler)
+    with log.open("w") as stream:
+        for command in (configure, ["cmake", "--build", str(build), "--parallel", "4",
+                                    "--target", "spread_latency_tests"]):
+            subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, timeout=600, check=True)
+    return build / "bin"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build-dir", type=Path, required=True, help="Probe-enabled bin directory")
+    builds = parser.add_mutually_exclusive_group(required=True)
+    builds.add_argument("--build-dir", type=Path, help="Existing probe-enabled bin directory")
+    builds.add_argument("--prepare-build", type=Path, help="Normal build; prepare an isolated Release probe build automatically")
     parser.add_argument("--output", type=Path, required=True, help="New output directory")
     parser.add_argument("--count", type=int, default=5000)
     parser.add_argument("--warmup", type=int, default=200)
@@ -126,17 +166,20 @@ def main():
         parser.error("Invalid counts/repeats")
     if any(window < 1 or window > args.count for window in args.windows):
         parser.error("Windows must be in [1, count]")
-    binary = args.build_dir.resolve()
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    preparation = time.monotonic()
+    binary = (prepare_build(args.prepare_build, output / "build.log") if args.prepare_build
+              else args.build_dir.resolve())
+    build_seconds = time.monotonic() - preparation
     for name in ("spread_latency_tests", "market_matching_engine", "market_engine_router",
                  "market_group_coordinator", "market_gateway"):
         if not (binary / name).is_file():
             parser.error(f"Missing binary: {binary / name}")
-    output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
     summary = {
         "created": datetime.now().astimezone().isoformat(), "platform": platform.platform(),
-        "build_dir": str(binary), "count_per_run": args.count, "warmup": args.warmup,
+        "build_dir": str(binary), "build_seconds": build_seconds, "count_per_run": args.count, "warmup": args.warmup,
         "windows": args.windows, "repeats": args.repeats, "trace": False,
         "clock": "CLOCK_MONOTONIC_RAW nanoseconds, same host", "results": {},
     }
@@ -159,8 +202,8 @@ def main():
                 total["runs"].append(run)
                 for name in METRICS:
                     total["values"][name].extend(sample[name] for sample in samples)
-                print(f"PASS orders={run['validated_orders']} memory_mean_us="
-                      f"{run['latency']['memory_us']['mean_us']:.3f} client_mean_us="
+                print(f"PASS orders={run['validated_orders']} memory_start_mean_us="
+                      f"{run['latency']['start_to_memory_us']['mean_us']:.3f} client_mean_us="
                       f"{run['latency']['client_us']['mean_us']:.3f} "
                       f"orders/s={run['orders_per_second']:.2f}", flush=True)
     for key, total in totals.items():

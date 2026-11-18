@@ -130,7 +130,7 @@ add_test(NAME spread_depth_correctness_stress
   COMMAND spread_depth_tests "${CMAKE_BINARY_DIR}/spread-results/depth")
 set_tests_properties(spread_depth_correctness_stress PROPERTIES TIMEOUT 60
   LABELS "spreads;correctness;cornercase;performance")
-add_dependencies(demo_tests spread_depth_tests)
+add_dependencies(demo_tests spread_depth_tests spread_shared_depth_tests)
 
 add_executable(spread_persistence_tests spreads/persistence.cpp)
 target_include_directories(spread_persistence_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -210,7 +210,7 @@ add_test(NAME spread_session_correctness_stress
   COMMAND spread_session_tests "${CMAKE_BINARY_DIR}/spread-results/session")
 set_tests_properties(spread_session_correctness_stress PROPERTIES TIMEOUT 120
   LABELS "spreads;recovery;correctness;cornercase;performance")
-add_dependencies(demo_tests spread_session_tests)
+add_dependencies(demo_tests spread_session_tests spread_butterfly_session_tests)
 
 add_executable(spread_publication_tests spreads/publication.cpp
   ../src/matching_engine/cluster/router_spreads_publication.cpp)
