@@ -10,20 +10,22 @@ struct Page {
   m::TradeHistoryEnd end{};
 };
 
-Page query(p::DurableEngine &engine, unsigned user, std::uint64_t after = 0,
-           std::uint64_t through = 0, unsigned limit = 256,
+Page query(p::DurableEngine& engine,
+           unsigned user,
+           std::uint64_t after = 0,
+           std::uint64_t through = 0,
+           unsigned limit = 256,
            std::optional<std::uint64_t> visible_end = {}) {
   Page page;
   bool done = false;
-  m::TradeHistoryRequest q{
-      {m::MessageType::TradeHistoryRequest, sizeof(q), 9000},
-      0,
-      static_cast<std::uint16_t>(limit),
-      after,
-      through};
+  m::TradeHistoryRequest q{{m::MessageType::TradeHistoryRequest, sizeof(q), 9000},
+                           0,
+                           static_cast<std::uint16_t>(limit),
+                           after,
+                           through};
   auto h = context(9000, user);
   h.kind = o::LinkKind::History;
-  auto emit = [&](auto kind, const auto &, auto bytes) {
+  auto emit = [&](auto kind, const auto&, auto bytes) {
     if (kind == o::LinkKind::HistoryEnd) {
       page.end = o::copy_record<m::TradeHistoryEnd>(bytes);
       done = true;
@@ -48,22 +50,25 @@ Page query(p::DurableEngine &engine, unsigned user, std::uint64_t after = 0,
   return page;
 }
 
-void rest(p::DurableEngine &engine, unsigned user, unsigned request,
-          const char *symbol, m::Side side, m::Price price,
+void rest(p::DurableEngine& engine,
+          unsigned user,
+          unsigned request,
+          const char* symbol,
+          m::Side side,
+          m::Price price,
           m::Quantity quantity) {
   const auto q = order(request, symbol, side, price, quantity);
-  engine.command(context(request, user), o::record_bytes(q),
-                 [](auto, const auto &, auto) {});
+  engine.command(context(request, user), o::record_bytes(q), [](auto, const auto&, auto) {
+  });
   engine.drain();
 }
 
 void codec() {
-  p::TradeRecord direct{id(5, 1), 1,        name("SP_AB"), -2,         3,
-                        id(5, 1), id(5, 2), name("Alice"), name("Bob")};
+  p::TradeRecord direct{
+      id(5, 1), 1, name("SP_AB"), -2, 3, id(5, 1), id(5, 2), name("Alice"), name("Bob")};
   p::ImpliedLegTrade leg;
-  static_cast<p::TradeRecord &>(leg) = {
-      id(6, 1),    2,        name("A"),     110,        3,
-      id(5, 1234), id(6, 1), name("Alice"), name("Bob")};
+  static_cast<p::TradeRecord&>(leg) = {
+      id(6, 1), 2, name("A"), 110, 3, id(5, 1234), id(6, 1), name("Alice"), name("Bob")};
   leg.execution = {id(7, 8765), 1};
   p::SpreadExecution spread{id(5, 2),
                             2,
@@ -76,9 +81,18 @@ void codec() {
                             m::Side::Buy,
                             {id(6, 1), name("Bob"), 110},
                             {id(7, 1), name("Carol"), 110}};
-  for (const p::ExecutionRecord &record :
-       {p::ExecutionRecord(direct), p::ExecutionRecord(leg),
-        p::ExecutionRecord(spread)}) {
+  p::ButterflyExecution butterfly;
+  static_cast<p::SpreadExecution&>(butterfly) = spread;
+  butterfly.symbol = name("BF_ABC");
+  butterfly.price = 4;
+  butterfly.a.price = 120;
+  butterfly.x.price = 110;
+  butterfly.b_second = {id(7, 2), name("Carol"), 111};
+  butterfly.c = {id(8, 1), name("Bob"), 105};
+  for (const p::ExecutionRecord& record : {p::ExecutionRecord(direct),
+                                           p::ExecutionRecord(leg),
+                                           p::ExecutionRecord(spread),
+                                           p::ExecutionRecord(butterfly)}) {
     o::Bytes bytes;
     p::encode_execution(bytes, record);
     p::Reader reader{bytes};
@@ -97,10 +111,30 @@ void codec() {
   }
   p::OrderDictionary dictionary(config());
   dictionary.validate_execution(leg, {1, 2, 2, 0, 0}, 6);
-  rejects([&] { dictionary.validate_execution(leg, {1, 2, 2, 0, 0}, 7); });
+  rejects([&] {
+    dictionary.validate_execution(leg, {1, 2, 2, 0, 0}, 7);
+  });
   dictionary.validate_execution(spread, {1, 3, 3, 0, 0}, 5);
+  dictionary.validate_execution(butterfly, {1, 3, 3, 0, 0}, 5);
+  for (unsigned invalid = 0; invalid < 3; ++invalid) {
+    auto bad = butterfly;
+    if (invalid == 0)
+      ++bad.price;
+    if (invalid == 1)
+      bad.b_second.order = bad.x.order;
+    if (invalid == 2)
+      bad.quantity = INT32_MAX;
+    o::Bytes encoded;
+    p::encode_execution(encoded, bad);
+    rejects([&] {
+      p::Reader reader{encoded};
+      p::decode_execution(reader);
+    });
+  }
   spread.execution.aggressor = id(8, 1);
-  rejects([&] { dictionary.validate_execution(spread, {1, 3, 3, 0, 0}, 5); });
+  rejects([&] {
+    dictionary.validate_execution(spread, {1, 3, 3, 0, 0}, 5);
+  });
   spread.execution.aggressor = id(5, 1);
   spread.price = 1;
   o::Bytes bytes;
@@ -111,7 +145,7 @@ void codec() {
   });
 }
 
-void mixed_batch(const std::filesystem::path &root) {
+void mixed_batch(const std::filesystem::path& root) {
   const auto opt = options(root / "old");
   p::Boundary final;
   std::vector<o::Bytes> expected;
@@ -119,34 +153,29 @@ void mixed_batch(const std::filesystem::path &root) {
     p::DurableEngine engine(config(), 5, opt);
     rest(engine, 2, 1, "SP_AB", m::Side::Sell, -2, 1);
     bool durable = false;
-    auto *result = engine.begin_group([&](const auto &boundary, auto events) {
-      require(boundary.seq == 2 && boundary.trade_count == 2,
-              "One group must seal one batch");
+    auto* result = engine.begin_group([&](const auto& boundary, auto events) {
+      require(boundary.seq == 2 && boundary.trade_count == 2, "One group must seal one batch");
       require(events.size() == 7, "Wrong owned-order event count");
       durable = true;
     });
     require(result, "Unexpected group capacity refusal");
-    auto incoming = engine.working().begin_group(
-        context(2), order(2, "SP_AB", m::Side::Buy, 0, 3), *result);
+    auto incoming =
+        engine.working().begin_group(context(2), order(2, "SP_AB", m::Side::Buy, 0, 3), *result);
     require(incoming.has_value(), "Zero spread rejected");
     std::vector<o::MatchingEngine::FillPiece> pieces;
     engine.working().take_prefix(4, m::Side::Sell, 1, pieces, *result);
-    require(pieces.size() == 1 && pieces[0].after.id == id(5, 1),
-            "FIFO source mismatch");
+    require(pieces.size() == 1 && pieces[0].after.id == id(5, 1), "FIFO source mismatch");
     fill(*incoming, 1);
-    const auto direct = engine.working().trade_record(
-        4, -2, 1, 123, incoming->id, 1, id(5, 1), 2);
+    const auto direct = engine.working().trade_record(4, -2, 1, 123, incoming->id, 1, id(5, 1), 2);
     result->add(result->executions, p::ExecutionRecord(direct));
     engine.working().fill_events(*incoming, direct.id, -2, 1, 123, *result);
-    engine.working().fill_events(pieces[0].after, direct.id, -2, 1, 123,
-                                 *result);
+    engine.working().fill_events(pieces[0].after, direct.id, -2, 1, 123, *result);
     engine.poll();
     require(!durable && engine.boundary().seq == 1 && engine.group_open(),
             "Unsealed group committed");
     require(std::filesystem::file_size(root / "old/trades/trades.log") == 0,
             "Partial group reached log writer");
-    require(query(engine, 1).records.empty(),
-            "Unsealed group leaked through history");
+    require(query(engine, 1).records.empty(), "Unsealed group leaked through history");
 
     fill(*incoming, 2);
     p::SpreadExecution spread{engine.working().allocate_trade(),
@@ -169,34 +198,26 @@ void mixed_batch(const std::filesystem::path &root) {
     const auto hidden = query(engine, 1, 0, 0, 256, 0);
     require(hidden.records.empty() && hidden.end.throughOffset == 0,
             "Explicit public boundary zero exposed locally durable trades");
-    require(query(engine, 1, 0, 0, 256, engine.boundary().trade_end)
-                    .records.size() == 2,
+    require(query(engine, 1, 0, 0, 256, engine.boundary().trade_end).records.size() == 2,
             "Public history did not advance at the exact permitted boundary");
     const auto first = query(engine, 1, 0, 0, 1);
-    require(first.end.flags & m::history_more,
-            "Mixed record pagination lost tail");
-    const auto second =
-        query(engine, 1, first.end.nextOffset, first.end.throughOffset, 1);
+    require(first.end.flags & m::history_more, "Mixed record pagination lost tail");
+    const auto second = query(engine, 1, first.end.nextOffset, first.end.throughOffset, 1);
     require(first.end.nextOffset == p::header_bytes + p::execution_prefix_bytes,
             "Cursor must point at record body");
-    require(o::copy_record<m::TradeHistoryRecord>(first.records.at(0)).price ==
-                -2,
+    require(o::copy_record<m::TradeHistoryRecord>(first.records.at(0)).price == -2,
             "Negative direct trade changed");
-    const auto record =
-        o::copy_record<m::SpreadExecutionHistory>(second.records.at(0));
-    require(record.price == 0 && record.a.orderId == id(6, 9999) &&
-                record.fillNo == 2,
+    const auto record = o::copy_record<m::SpreadExecutionHistory>(second.records.at(0));
+    require(record.price == 0 && record.a.orderId == id(6, 9999) && record.fillNo == 2,
             "Combination identity changed in history");
     expected = query(engine, 1).records;
-    require(query(engine, 2).records.size() == 1 &&
-                query(engine, 3).records.empty(),
+    require(query(engine, 2).records.size() == 1 && query(engine, 3).records.empty(),
             "Combination history leaked to real-leg counterparties");
     final = engine.boundary();
   }
   {
     p::DurableEngine recovered(config(), 5, opt);
-    require(recovered.boundary().seq == final.seq &&
-                recovered.working().active_order_count(1) == 0,
+    require(recovered.boundary().seq == final.seq && recovered.working().active_order_count(1) == 0,
             "Mixed-frame recovery lost final order state");
     auto actual = query(recovered, 1).records;
     require(actual == expected, "History changed across restart");
@@ -213,8 +234,7 @@ void mixed_batch(const std::filesystem::path &root) {
     replacement.drain();
     require(replacement.boundary().trade_end == final.trade_end,
             "Replication moved history cursors");
-    require(query(replacement, 1).records == expected,
-            "Replicated history changed");
+    require(query(replacement, 1).records == expected, "Replicated history changed");
     p::File original(root / "old/trades/trades.log", false),
         copied(root / "new/trades/trades.log", false);
     require(original.read(0, original.size()) == copied.read(0, copied.size()),
@@ -226,21 +246,21 @@ void mixed_batch(const std::filesystem::path &root) {
   {
     p::DurableEngine reopened(config(), 5, options(root / "new"));
     const auto source = reopened.working().source_depth(4, m::Side::Buy);
-    require(source.count == 1 && source.price[0] == -3 &&
-                source.quantity[0] == 2,
+    require(source.count == 1 && source.price[0] == -3 && source.quantity[0] == 2,
             "Signed snapshot price failed recovery");
   }
 }
 
-void leg_history(const std::filesystem::path &root) {
+void leg_history(const std::filesystem::path& root) {
   p::DurableEngine engine(config(), 6, options(root));
   rest(engine, 2, 1, "A", m::Side::Sell, 110, 3);
-  auto *result = engine.begin_group([](const auto &, auto) {});
+  auto* result = engine.begin_group([](const auto&, auto) {
+  });
   std::vector<o::MatchingEngine::FillPiece> pieces;
   engine.working().take_prefix(1, m::Side::Sell, 3, pieces, *result);
   p::ImpliedLegTrade leg;
-  static_cast<p::TradeRecord &>(leg) = engine.working().trade_record(
-      1, 110, 3, 125, id(5, 1000), 1, id(6, 1), 2);
+  static_cast<p::TradeRecord&>(leg) =
+      engine.working().trade_record(1, 110, 3, 125, id(5, 1000), 1, id(6, 1), 2);
   leg.execution = {id(7, 4000), 1};
   result->add(result->executions, p::ExecutionRecord(leg));
   engine.working().fill_events(pieces[0].after, leg.id, 110, 3, 125, *result);
@@ -248,26 +268,24 @@ void leg_history(const std::filesystem::path &root) {
   engine.drain();
   for (unsigned user : {1, 2}) {
     const auto page = query(engine, user);
-    const auto record =
-        o::copy_record<m::ImpliedLegHistory>(page.records.at(0));
-    require(record.aggressorOrderId == id(7, 4000) &&
-                record.trade.buyOrderId == id(5, 1000),
+    const auto record = o::copy_record<m::ImpliedLegHistory>(page.records.at(0));
+    require(record.aggressorOrderId == id(7, 4000) && record.trade.buyOrderId == id(5, 1000),
             "Remote order was truncated/validated as local");
   }
-  require(query(engine, 3).records.empty(),
-          "Unrelated leg account saw history");
+  require(query(engine, 3).records.empty(), "Unrelated leg account saw history");
 }
-} // namespace
+}  // namespace
 
-int main(int argc, char **argv) {
-  const auto output =
-      std::filesystem::path(argc > 1 ? argv[1] : "spread-persistence-results");
+int main(int argc, char** argv) {
+  const auto output = std::filesystem::path(argc > 1 ? argv[1] : "spread-persistence-results");
   demo::Suite suite(output);
   const auto root = output / std::to_string(getpid());
   suite.test("typed-record-roundtrip-truncation-and-ownership", codec);
-  suite.test("unsealed-mixed-batch-history-recovery-and-byte-exact-replication",
-             [&] { mixed_batch(root / "mixed"); });
-  suite.test("leg-history-both-parties-and-remote-counters",
-             [&] { leg_history(root / "leg"); });
+  suite.test("unsealed-mixed-batch-history-recovery-and-byte-exact-replication", [&] {
+    mixed_batch(root / "mixed");
+  });
+  suite.test("leg-history-both-parties-and-remote-counters", [&] {
+    leg_history(root / "leg");
+  });
   return suite.finish();
 }

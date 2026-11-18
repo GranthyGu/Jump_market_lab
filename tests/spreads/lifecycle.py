@@ -30,7 +30,7 @@ class Trader(base.Trader):
 
     def receive(self):
         kind, length, request = base.history.HEADER.unpack(self.exact(14))
-        check(14 <= length <= 211, "invalid typed client frame")
+        check(14 <= length <= 299, "invalid typed client frame")
         return kind, request, self.exact(length - 14)
 
     def order(self, symbol, side, price, quantity=1):

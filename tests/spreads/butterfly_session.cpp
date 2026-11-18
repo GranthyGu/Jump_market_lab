@@ -176,6 +176,31 @@ void cross_level(const std::filesystem::path& root) {
           "Two one-contract orders were not paired across B levels");
 }
 
+void window_pair(const std::filesystem::path& root) {
+  Fixture f(root);
+  f.seed(s::A, m::Side::Sell, 120, 3);
+  f.seed(s::C, m::Side::Sell, 105, 3);
+  f.seed(s::B, m::Side::Buy, 110, 1);
+  f.seed(s::B, m::Side::Buy, 109, 1);
+  const auto odd = f.seed(s::B, m::Side::Buy, 108, 1);
+  f.seed(s::B, m::Side::Buy, 107, 3);
+  f.start();
+  f.run(s::BF, m::Side::Buy, 11, 3);
+  f.settle();
+  const auto target = trades(f, 0);
+  require(target.size() == 3 && target[0].price == 6 && target[1].price == 10 &&
+              target[2].price == 11 &&
+              std::all_of(target.begin(),
+                          target.end(),
+                          [](const auto& trade) {
+                            return trade.quantity == 1;
+                          }),
+          "Third-level odd B must pair with the fourth level after refresh");
+  require(f.coordinator->counters.rounds == 2 && trades(f, 2, odd).size() == 1 &&
+              !f.sessions[2]->sources()[2 * s::B + s::Bid].count,
+          "Window refresh lost or reused a residual B contract");
+}
+
 void stress(const std::filesystem::path& root) {
   Fixture f(root);
   constexpr unsigned count = 10000;
@@ -216,6 +241,9 @@ int main(int argc, char** argv) {
   });
   suite.test("two-b-orders-across-levels-and-overlapped-source-refresh", [&] {
     cross_level(data / "levels");
+  });
+  suite.test("odd-b-crosses-third-and-fourth-levels-after-refresh", [&] {
+    window_pair(data / "window");
   });
   suite.test("ten-thousand-shared-source-orders", [&] {
     stress(data / "stress");

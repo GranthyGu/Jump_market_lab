@@ -1,5 +1,6 @@
 #include "network.hpp"
 #include "fixtures.hpp"
+#include "matching_engine/spreads/transport/join.hpp"
 #include "matching_engine/spreads/transport/links.hpp"
 #include "shared_data/orders/engine_connections.hpp"
 
@@ -10,6 +11,17 @@ namespace {
 void codec() {
   const auto c = config();
   const s::Topology topology(c);
+  for (const auto& route : s::routes) {
+    const auto owner = topology.owner(route.target);
+    require(!(s::peer_mask(owner) & (1U << owner)), "Peer graph includes self");
+    for (unsigned leg = 0; leg < route.legs(); ++leg) {
+      const auto remote = topology.owner(route.source(leg) / 2);
+      if (remote != owner)
+        require((s::peer_mask(owner) & (1U << remote)) && (s::peer_mask(remote) & (1U << owner)),
+                "Route cannot reach a real source owner");
+    }
+  }
+  require(!s::peer_mask(4), "Invalid group member has peers");
   const s::ConnectionIdentity peer{o::group::Role::Peer, 5, 123, topology.fingerprint};
   auto bytes = s::identity_bytes(peer);
   p::Reader identity_reader{bytes};

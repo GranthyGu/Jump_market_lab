@@ -114,9 +114,12 @@ class Cluster:
                  self.topology["router_admin_port"], self.topology["supervisor_port"]]
         products = [value for key, value in exchange if key == "symbol"]
         if self.group_enabled:
-            names = settings.get("spread_symbols", ["A", "B", "C", "SP_AB", "SP_AC"])
+            names = settings.get("spread_symbols", ["A", "B", "C", "SP_AB", "SP_AC", "BF_ABC"])
             owners = {product[0]: product[2] for product in products}
-            self.group_shards = {owners[name] for name in names}
+            if len(names) not in (5, 6):
+                raise ValueError("spread_symbols requires A,B,C,SP_AB,SP_AC[,BF_ABC]")
+            required = names[:5] + [name for name in names[5:] if name in owners]
+            self.group_shards = {owners[name] for name in required}
             if len(self.group_shards) != 4:
                 raise ValueError("spread group requires four distinct shard owners")
             configured = settings.get("coordinator", ["127.0.0.1", "7120"])

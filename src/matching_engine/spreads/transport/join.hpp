@@ -16,7 +16,8 @@ struct Endpoint {
 using Directory = std::array<Endpoint, 4>;
 
 constexpr std::uint8_t peer_mask(std::uint8_t member) {
-  return member == 0 ? 14 : member == 1 ? 13 : member < 4 ? 3 : 0;
+  // Any butterfly leg can initiate execution against the other three owners.
+  return member < 4 ? std::uint8_t(15U ^ (1U << member)) : 0;
 }
 
 bool same_boundary(const persistence::Boundary&, const persistence::Boundary&);
