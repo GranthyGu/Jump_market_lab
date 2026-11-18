@@ -45,7 +45,7 @@ Router 的关联组功能现在位于 [cluster/router_spreads.cpp](../../src/mat
 - 帧检查长度、类型、标志、正文是否完整消费；单帧上限 64 KiB。握手不能重复，心跳不能夹带命令字段。
 - 显式维护取消一个 join 后，Coordinator 会忽略属于已退役 join 的接入回包。这是处理不同连接之间的迟到回复；普通交易报文没有获得“重复就忽略”的通用重试语义。
 
-入口见 [protocol.cpp](../../src/matching_engine/spreads/protocol.cpp)、[links.cpp](../../src/matching_engine/spreads/links.cpp)、[worker.cpp](../../src/matching_engine/spreads/worker.cpp) 和 [Coordinator 状态机](../../src/matching_engine/spreads/coordinator/coordinator.cpp)。fingerprint 用来发现配置不一致，不是加密认证或网络安全签名。
+入口见 [protocol.cpp](../../src/matching_engine/spreads/protocol.cpp)、[links.cpp](../../src/matching_engine/spreads/links.cpp)、[spread_worker.cpp](../../src/matching_engine/runtime/spread_worker.cpp) 和 [Coordinator 状态机](../../src/matching_engine/spreads/coordinator/coordinator.cpp)。fingerprint 用来发现配置不一致，不是加密认证或网络安全签名。
 
 ### 3.2 来源、执行前缀与成交明细
 
@@ -71,7 +71,7 @@ Router 对每个命令记录实际参与者和各自 localBatchSeq。持久化�
 3. 事件类型、长度和请求关联元信息合法，全部正文解析完毕。
 4. MEM_DONE 指定的 localBatchSeq 与持久化 Boundary.seq 相同；所有实际参与者完整后才发该命令的通知。
 
-这沿用 Task 2 每片 Batch 的提交顺序。实现用一份命令记录和四个历史游标，不再维护四份待发布命令队列。代码见 [publication.cpp](../../src/matching_engine/spreads/publication.cpp)。
+这沿用 Task 2 每片 Batch 的提交顺序。实现用一份命令记录和四个历史游标，不再维护四份待发布命令队列。代码见 [router_spreads_publication.cpp](../../src/matching_engine/cluster/router_spreads_publication.cpp)。
 
 ## 4. 意外中断的处理矩阵
 
@@ -93,7 +93,7 @@ Router 对每个命令记录实际参与者和各自 localBatchSeq。持久化�
 
 超时只表示无法在时限内确认进展，不等于订单未执行。即使各片文件事实上已经完整，只要丢失必要回执且控制状态无法确认，也可能继续暂停；当前没有从磁盘重建并补发这些在途组结果的流程。
 
-组成员业务连接丢失时，Router 特意保留上游连接，因而无关 shard 1—4 可以继续交易；这一行为有真实进程测试。不能把它扩展成“任何控制进程故障都不影响 1—4”。实现入口为 [Router 连接处理](../../src/matching_engine/cluster/router.cpp)、[Worker](../../src/matching_engine/spreads/worker.cpp)、[启动器](../../src/matching_engine/cluster/run.py)。
+组成员业务连接丢失时，Router 特意保留上游连接，因而无关 shard 1—4 可以继续交易；这一行为有真实进程测试。不能把它扩展成“任何控制进程故障都不影响 1—4”。实现入口为 [Router 连接处理](../../src/matching_engine/cluster/router.cpp)、[Worker](../../src/matching_engine/runtime/spread_worker.cpp)、[启动器](../../src/matching_engine/cluster/run.py)。
 
 ## 5. 自动重接入为什么不能只看“重启成功”
 
@@ -144,7 +144,7 @@ SIGINT/SIGTERM 设置停止标志并进入关闭流程；SIGKILL 无法执行这
 - **暂停不等于回滚已公开事实。** 已形成的不可变候选和迟到的合法结果仍需按其序号处理；不能用它们推断组已经可以接受新命令。恢复的初始行情许可还要等 Worker READY。
 - **历史与复制保持原事实。** 三种成交记录保留类型、原 ID、时间和文件边界进行读取/复制；索引是可重建派生数据，恢复不重新撮合，也不生成历史成交的新通知。
 
-入口见 [DurableEngine](../../src/matching_engine/persistence/durable_engine.cpp)、[Publication/MarketPublication](../../src/matching_engine/spreads/publication.cpp)、[Router 查询处理](../../src/matching_engine/cluster/router.cpp)。
+入口见 [DurableEngine](../../src/matching_engine/persistence/durable_engine.cpp)、[Router 发布控制](../../src/matching_engine/cluster/router_spreads_publication.cpp)、[行情候选](../../src/matching_engine/market_data/spread_market.cpp)、[Router 查询处理](../../src/matching_engine/cluster/router.cpp)。
 
 ## 8. 这些检查的存储与延迟代价
 

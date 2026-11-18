@@ -1,7 +1,7 @@
 #pragma once
 #include "matching_engine/spreads/join.hpp"
 #include "matching_engine/spreads/links.hpp"
-#include "matching_engine/spreads/publication.hpp"
+#include "matching_engine/market_data/spread_market.hpp"
 #include "matching_engine/spreads/session.hpp"
 
 namespace marketlab::orders::spreads {

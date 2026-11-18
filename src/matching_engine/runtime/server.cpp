@@ -8,7 +8,7 @@
 #include "matching_engine/cluster/worker.hpp"
 #include "matching_engine/persistence/durable_engine.hpp"
 #include "matching_engine/market_data/snapshot_mailbox.hpp"
-#include "matching_engine/spreads/worker.hpp"
+#include "matching_engine/runtime/spread_worker.hpp"
 #include "shared_data/market_data/transport.hpp"
 #include "shared_data/orders/engine_connections.hpp"
 

@@ -1,4 +1,5 @@
-#include "matching_engine/spreads/market.hpp"
+#include "matching_engine/market_data/spread_market.hpp"
+#include "matching_engine/spreads/protocol.hpp"
 
 namespace marketlab::orders::spreads {
 MarketBookSnapshot merged_market(const MatchingEngine& core,
@@ -57,5 +58,61 @@ MarketBookSnapshot merged_market(const MatchingEngine& core,
     }
   }
   return out;
+}
+
+MarketPublication::MarketPublication(MatchingEngine& core,
+                                     const OrderConfig& config,
+                                     std::uint16_t shard)
+    : core_(core),
+      topology_(config),
+      visible_(core.symbol_count()) {
+  if (topology_.member(shard) >= 4)
+    throw std::invalid_argument("Unknown group market owner");
+  slots_.reserve(command_window + 1);
+  for (unsigned i = 0; i < command_window + 1; ++i)
+    slots_.emplace_back(core.symbol_count());
+}
+
+void MarketPublication::reset() {
+  head_ = size_ = 0;
+  permitted_ = 0;
+}
+
+void MarketPublication::capture(std::uint64_t seq, const Views& views) {
+  std::size_t at;
+  if (size_ && slots_[(head_ + size_ - 1) % slots_.size()].seq == seq) {
+    at = (head_ + size_ - 1) % slots_.size();
+  } else {
+    if (size_ == slots_.size() || (seq && seq <= permitted_) ||
+        (size_ && seq < slots_[(head_ + size_ - 1) % slots_.size()].seq))
+      throw std::runtime_error("Market candidate window/order exhausted");
+    at = (head_ + size_++) % slots_.size();
+  }
+  auto& candidate = slots_[at];
+  candidate.seq = seq;
+  core_.copy_market(candidate.snapshot);
+  for (auto& book : candidate.snapshot.books) {
+    const auto slot = topology_.slot(book.symbol_id);
+    if (slot < 5)
+      book = merged_market(core_, book.symbol_id, slot, views);
+  }
+}
+
+void MarketPublication::permit(std::uint64_t seq) {
+  if (seq < permitted_)
+    throw std::runtime_error("Stale market publication permit");
+  while (size_ && slots_[head_].seq <= seq) {
+    const auto& snapshot = slots_[head_].snapshot;
+    visible_.epoch = snapshot.epoch;
+    std::copy(snapshot.books.begin(), snapshot.books.end(), visible_.books.begin());
+    head_ = (head_ + 1) % slots_.size();
+    --size_;
+  }
+  permitted_ = seq;
+}
+
+void MarketPublication::copy(MarketSnapshot& out) const noexcept {
+  out.epoch = visible_.epoch;
+  std::copy(visible_.books.begin(), visible_.books.end(), out.books.begin());
 }
 }  // namespace marketlab::orders::spreads

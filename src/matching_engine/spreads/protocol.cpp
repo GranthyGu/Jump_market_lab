@@ -1,9 +1,11 @@
 #include "matching_engine/spreads/protocol.hpp"
+#include <algorithm>
 #include <bit>
 
 namespace marketlab::orders::spreads {
 using persistence::integer;
 using persistence::Reader;
+using persistence::Event;
 
 Bytes frame(const Header& h, std::span<const std::uint8_t> body) {
   if (body.size() > group::maximum_frame - group::header_size)
@@ -167,5 +169,87 @@ std::uint16_t read_sources(Reader& r, Sources& sources, std::uint16_t allowed, b
   }
   sources = next;
   return seen;
+}
+
+namespace {
+constexpr auto body_limit = group::maximum_frame - group::header_size;
+
+std::size_t event_bytes(const Event& event) {
+  return 5 + (event.context.token ? 16 : 0) + event.size;
+}
+
+void put_event(Bytes& bytes, const Event& event) {
+  if (event.kind != LinkKind::Event || !event.context.user ||
+      (!event.context.token && event.context.session) || event.size > event.payload.size())
+    throw std::runtime_error("Invalid durable command event");
+  integer(bytes, event.context.token ? 1 : 0, 1);
+  integer(bytes, event.context.user, 4);
+  if (event.context.token) {
+    integer(bytes, event.context.token, 8);
+    integer(bytes, event.context.session, 8);
+  }
+  bytes.insert(bytes.end(), event.payload.begin(), event.payload.begin() + event.size);
+}
+}  // namespace
+
+Event read_result_event(Reader& reader) {
+  Event event;
+  event.kind = event.context.kind = LinkKind::Event;
+  const auto flags = reader.number(1);
+  event.context.user = reader.number(4);
+  if (flags > 1 || !event.context.user)
+    throw std::runtime_error("Invalid durable event metadata");
+  if (flags) {
+    event.context.token = reader.number(8);
+    event.context.session = reader.number(8);
+    if (!event.context.token)
+      throw std::runtime_error("Empty solicited event token");
+  }
+  if (reader.data.size() - reader.position < sizeof(marketlab::Header))
+    throw std::runtime_error("Truncated durable client event");
+  marketlab::Header header{};
+  std::memcpy(&header, reader.data.data() + reader.position, sizeof(header));
+  event.size = header.messageLength;
+  if (event.size > event.payload.size() || event.size > reader.data.size() - reader.position ||
+      (header.messageType != MessageType::OrderUpdate && header.messageType != MessageType::Trade &&
+       header.messageType != MessageType::RequestRejected) ||
+      (!event.context.token && header.requestId) ||
+      !valid_client_record(reader.data.subspan(reader.position, event.size), false))
+    throw std::runtime_error("Invalid durable client event");
+  std::copy_n(reader.data.data() + reader.position, event.size, event.payload.data());
+  reader.position += event.size;
+  return event;
+}
+
+void send_result(const Header& context,
+                 const persistence::Boundary& boundary,
+                 std::span<const Event> events,
+                 Bytes& bytes,
+                 const SendPart& send) {
+  if (!context.epoch || !context.seq)
+    throw std::runtime_error("Result requires group identity");
+  std::uint32_t part = 0;
+  std::size_t at = 0;
+  do {
+    bytes.clear();
+    integer(bytes, part, 4);
+    if (!part)
+      put_boundary(bytes, boundary);
+    const auto count_at = bytes.size();
+    integer(bytes, 0, 2);
+    unsigned count = 0;
+    while (at < events.size() && bytes.size() + event_bytes(events[at]) <= body_limit) {
+      put_event(bytes, events[at++]);
+      ++count;
+    }
+    bytes[count_at] = count & 255;
+    bytes[count_at + 1] = count >> 8;
+    auto header = context;
+    header.kind = MessageKind::DurableResult;
+    header.round = 0;
+    header.flags = at == events.size() ? group::final_part : 0;
+    send(header, bytes);
+    ++part;
+  } while (at != events.size());
 }
 }  // namespace marketlab::orders::spreads

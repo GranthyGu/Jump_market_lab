@@ -1,4 +1,5 @@
-#include "matching_engine/spreads/publication.hpp"
+#include "matching_engine/cluster/router_spreads_publication.hpp"
+#include "matching_engine/market_data/spread_market.hpp"
 #include "fixtures.hpp"
 
 using namespace spread_test;

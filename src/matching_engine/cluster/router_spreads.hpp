@@ -1,7 +1,7 @@
 #pragma once
 #include "matching_engine/spreads/join.hpp"
 #include "matching_engine/spreads/links.hpp"
-#include "matching_engine/spreads/publication.hpp"
+#include "matching_engine/cluster/router_spreads_publication.hpp"
 
 namespace marketlab::orders::spreads {
 // Spread-group scheduling and publication inside the main Router process.

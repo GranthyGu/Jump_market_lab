@@ -1,20 +1,8 @@
 #pragma once
 #include <deque>
-#include "matching_engine/spreads/market.hpp"
 #include "matching_engine/spreads/protocol.hpp"
 
 namespace marketlab::orders::spreads {
-inline constexpr std::size_t command_window = 128;
-
-// Multipart results keep existing client event bytes. Unsolicited events omit
-// token/session (both zero), and boundaries occur only in the first part.
-using SendPart = std::function<void(const Header&, std::span<const std::uint8_t>)>;
-void send_result(const Header&,
-                 const persistence::Boundary&,
-                 std::span<const persistence::Event>,
-                 Bytes& scratch,
-                 const SendPart&);
-
 class Publication {
  public:
   struct Callbacks {
@@ -83,35 +71,4 @@ class Publication {
   void advance();
 };
 
-// Owner-thread immutable market candidates. All storage is allocated at startup;
-// a later permit can never sample the newer working order book.
-class MarketPublication {
- public:
-  MarketPublication(MatchingEngine&, const OrderConfig&, std::uint16_t shard);
-  void reset();
-  void capture(std::uint64_t sequence, const Views&);
-  void permit(std::uint64_t sequence);
-  void copy(MarketSnapshot&) const noexcept;
-
-  std::size_t pending() const {
-    return size_;
-  }
-
- private:
-  struct Candidate {
-    std::uint64_t seq = 0;
-    MarketSnapshot snapshot;
-
-    explicit Candidate(std::size_t symbols)
-        : snapshot(symbols) {
-    }
-  };
-
-  MatchingEngine& core_;
-  Topology topology_;
-  MarketSnapshot visible_;
-  std::vector<Candidate> slots_;
-  std::size_t head_ = 0, size_ = 0;
-  std::uint64_t permitted_ = 0;
-};
 }  // namespace marketlab::orders::spreads

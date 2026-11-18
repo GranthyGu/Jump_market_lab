@@ -1,9 +1,11 @@
 #pragma once
+#include <functional>
 #include "matching_engine/spreads/depth.hpp"
 #include "matching_engine/persistence/codec.hpp"
 
 namespace marketlab::orders::spreads {
 using MessageKind = group::Kind;
+inline constexpr std::size_t command_window = 128;
 
 struct Header {
   MessageKind kind{};
@@ -39,4 +41,15 @@ std::uint16_t read_sources(persistence::Reader&,
                            Sources&,
                            std::uint16_t allowed_sources,
                            bool initial);
+
+// Multipart results keep existing client event bytes. Unsolicited events omit
+// token/session (both zero), and boundaries occur only in the first part.
+using SendPart = std::function<void(const Header&, std::span<const std::uint8_t>)>;
+void send_result(const Header&,
+                 const persistence::Boundary&,
+                 std::span<const persistence::Event>,
+                 Bytes& scratch,
+                 const SendPart&);
+
+persistence::Event read_result_event(persistence::Reader&);
 }  // namespace marketlab::orders::spreads

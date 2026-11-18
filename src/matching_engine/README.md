@@ -5,14 +5,14 @@
 | 分组 | 文件 | 职责 |
 | --- | --- | --- |
 | 撮合核心 | [core/](core/)：`engine.*`、`active_index.hpp`、`backend.hpp` | 单线程价格/FIFO 撮合、活动订单定位、结果收集，以及状态所有者调用的后端接口 |
-| 进程与服务 | [runtime/](runtime/)：`server.*`、`main.cpp` | 启动参数、订单 reactor、命令与通知适配、后台服务生命周期 |
-| 行情读通道 | [market_data/](market_data/)：`snapshot_mailbox.*` | 通过邮箱请求状态所有者复制已提交五档视图 |
+| 进程与服务 | [runtime/](runtime/)：`server.*`、`spread_worker.*`、`main.cpp` | 启动参数、订单 reactor、命令与通知适配、后台服务生命周期；`spread_worker.*` 接入价差 Session、peer 与恢复就绪状态 |
+| 行情读通道 | [market_data/](market_data/)：`snapshot_mailbox.*`、`spread_market.*` | 通过邮箱请求状态所有者复制公开五档视图；`spread_market.*` 合并真实/implied，并管理不可变候选及发布许可 |
 | 持久化 | [persistence/](persistence/) | 双日志写线程、有界结果生命周期、二进制编码、同步、通知提交屏障 |
 | 快照与恢复 | [recovery/](recovery/) | 分页 COW 状态、快照发布、日志轮换、连续前缀恢复 |
 | 成交历史 | [trade_history/](trade_history/)：`history_store.*` | 已提交成交日志的异步索引、索引快照与恢复、有界分页查询 |
 | 历史索引实现 | [trade_history/index/](trade_history/index/)：`trade_index.hpp`、`page_file.*`、`cmu/` | 按用户与成交位置查找的 B+ 树、页文件、Buffer Pool、ARC；`cmu/` 保留 BusTub 来源与许可证 |
-| 路由与计划重启 | [cluster/](cluster/)：`router.*`、`router_spreads.*`、`worker.*`、`rpc.*`、`run.py` | C++ 订单路由与引擎控制；`router_spreads.*` 是主 Router 内的价差组调度和发布模块；Python 协调复制、排空与接管 |
-| 跨片价差 | [spreads/](spreads/) | 固定三档/12 路推导、原 FIFO 上的执行计划、多轮 Session、peer 接入、组持久化发布和不可变行情候选 |
+| 路由与计划重启 | [cluster/](cluster/)：`router.*`、`router_spreads.*`、`router_spreads_publication.*`、`worker.*`、`rpc.*`、`run.py` | C++ 订单路由与引擎控制；价差组调度及实际参与者结果汇总在主 Router 内完成；Python 协调复制、排空与接管 |
+| 跨片价差 | [spreads/](spreads/) | 固定三档/12 路推导、原 FIFO 上的执行计划、多轮 Session、共享组协议与连接接入 |
 | 组协调器 | [spreads/coordinator/](spreads/coordinator/)：`coordinator.*`、`server.*`、`main.cpp` | 组来源/视图/内存完成状态机、TCP 服务与接入维护、独立 Coordinator 程序入口 |
 
 `MatchingEngine` 保留纯内存接口，供原核心测试使用；`DurableEngine` 包装它并控制对外可见性。两个写线程只借用不可变结果，不访问工作订单簿。所有后台线程退出后才能销毁结果和快照页。
