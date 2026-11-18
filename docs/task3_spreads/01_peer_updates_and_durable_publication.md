@@ -1,6 +1,6 @@
 # Task 3：Router 直连、独立 Coordinator、三档推导与 P2P 成交
 
-日期：2026-11-17。状态：已实现并进行正确性、压力和故障验证。代码与数据结构见 [05](05_implementation_and_data_structures.md)，实际测试口径、结果与耗时见 [06](06_validation_results.md)。
+日期：2026-11-17；位图及消息传递说明更新于 2026-11-18。状态：已实现并进行正确性、压力和故障验证。代码与数据结构见 [05](05_implementation_and_data_structures.md)，实际测试口径、结果与耗时见 [06](06_validation_results.md)。
 
 **Router 直接连接 S/A/B/C，按关联组排队并派发订单。独立 GroupCoordinator 维护五个合约的三档、计算 implied，确认整条命令内存及视图完成后向 Router 发送 MEM_DONE；Router 据此派发下一条，不等待 fsync。普通和 implied 命令的持久化结果都由实际参与 shard 直接返回 Router；Router 收齐本条 MEM_DONE 指定的实际参与者结果后再发布。**
 
@@ -89,6 +89,8 @@ SET_LEVEL：    price, totalRemaining
 REMOVE_LEVEL： price
 ```
 
+上述是逻辑字段；当前线协议将 `(symbolId, bookSide)` 合为一个 `source:uint8`，编号见第 4.1.1 节。正常轮次的 delta／快照记录直接装入 SOURCE_DONE，不另外发送来源位图；完成消息与来源记录的对应关系见第 4.1.2 节。
+
 - SET_LEVEL 同时用于新档和数量更新，发送最终绝对量；零数量统一移除。
 - REMOVE_LEVEL 表示从缓存窗口移除，可能是价位已空，也可能只是被新优价挤出三档，不代表撤销真实订单。
 - 最优档耗尽时，原第四档进入前三档，发送新增档；新优价进入时，同时移除被挤出的旧第三档。
@@ -120,14 +122,14 @@ Coordinator 按 ROUND_BEGIN 的名单收齐来源后，重算并同步 implied�
 
 下表 bid/ask 均指原生价位。每条规则取两侧各自最优三档，按第 4.2 节逐层配对；数量指手数，不是实际订单张数。
 
-| 目标 | implied bid | implied ask |
-| --- | --- | --- |
-| SP_AB（IN） | A bid − B ask | A ask − B bid |
-| A，来自 AB（OUT） | SP_AB bid + B bid | SP_AB ask + B ask |
-| B（OUT） | A bid − SP_AB ask | A ask − SP_AB bid |
-| SP_AC（IN） | A bid − C ask | A ask − C bid |
-| A，来自 AC（OUT） | SP_AC bid + C bid | SP_AC ask + C ask |
-| C（OUT） | A bid − SP_AC ask | A ask − SP_AC bid |
+| 目标 | implied bid | implied ask | bid / ask routeId |
+| --- | --- | --- | --- |
+| SP_AB（IN） | A bid − B ask | A ask − B bid | 0 / 1 |
+| A，来自 AB（OUT） | SP_AB bid + B bid | SP_AB ask + B ask | 2 / 3 |
+| B（OUT） | A bid − SP_AB ask | A ask − SP_AB bid | 4 / 5 |
+| SP_AC（IN） | A bid − C ask | A ask − C bid | 6 / 7 |
+| A，来自 AC（OUT） | SP_AC bid + C bid | SP_AC ask + C ask | 8 / 9 |
+| C（OUT） | A bid − SP_AC ask | A ask − SP_AC bid | 10 / 11 |
 
 | 变化来源 | 可能需要重算的目标 |
 | --- | --- |
@@ -137,7 +139,47 @@ Coordinator 按 ROUND_BEGIN 的名单收齐来源后，重算并同步 implied�
 | SP_AB | A 的 AB 路径、B |
 | SP_AC | A 的 AC 路径、C |
 
-实现时将上述依赖细化到 `(symbolId, bookSide)`，预计算十个来源侧各自影响的 route 位图。每轮来源更新只置脏位，收齐名单后每条脏 route 最多重算一次；未变 route 保留原结果。十二条 route 各使用最多五段的固定容量数组和有效段数，复用计算及发送缓冲区；热路径不为来源／路径集合建立动态 map，也不逐轮分配这些小数组。目标完整视图仍包含其全部 route，变化判断覆盖价格、数量、more 和空集合。
+实现时将上述依赖细化到 `(symbolId, bookSide)`，预计算十个来源侧各自影响的 route 位图。每轮来源更新只标记变化来源，收齐名单后每条受影响 route 最多重算一次；不受影响的 route 保留原结果。十二条 route 各使用最多五段的固定容量数组和有效段数，复用计算及发送缓冲区；热路径不为来源／路径集合建立动态 map，也不逐轮分配这些小数组。目标完整视图仍包含其全部 route，变化判断覆盖价格、数量、more 和空集合。
+
+#### 4.1.1 三种位图存在哪里
+
+位图是整数中的集合标记：第 i 位为 1，表示编号 i 在集合中。它不保存价格、数量或订单，也不是另一份行情视图。三个阶段使用不同的编号空间，不能直接混用：
+
+| 标记 | 类型与有效位 | 存储位置和生命周期 | 是否传到其他进程 |
+| --- | --- | --- | --- |
+| 来源变化 `dirty_` | `uint16_t`，低 10 位对应来源侧 | 独立 Coordinator 进程内的 `Coordinator` 对象成员；跨本轮多条 SOURCE_DONE 累积，在 `reset_round()` 开始新轮或整单完成时清零 | 不传；从收到的来源记录重建并累积 |
+| 受影响规则 `affected` | `uint16_t`，低 12 位对应 routeId | Coordinator 调用 `recompute()` 时的局部变量，每次从 0 计算；不跨消息保存 | 不传；在本进程中决定哪些 route 需要重算 |
+| 目标变化 `changed` | `uint8_t`，低 5 位对应目标合约 | `recompute()` 的局部结果，按值返回给 `Coordinator::finish_sources()`，再传给 `install()` | 按目标所属 shard 拆成子集后，以 `targets:uint8` 随 IMPLIED_REPLACE 发送 |
+| 待确认目标 `awaiting_views_` | `uint8_t`，与 `changed` 使用相同 5 位 | `Coordinator` 对象成员；`install()` 保存本次目标集合，跨消息等待 VIEW_APPLIED 并逐次清位 | 整个待确认集合不发送；各 shard 回传自己已安装的 `targets` 子集 |
+
+来源号为 `2 × slot + side`，Bid=0、Ask=1；目标位号直接使用 slot。这里的 slot 是组内固定编号，不是外部 symbolId 或 shardId：
+
+| 合约 | slot／目标位号 | Bid 来源位号 | Ask 来源位号 |
+| --- | --- | --- | --- |
+| A | 0 | 0 | 1 |
+| B | 1 | 2 | 3 |
+| C | 2 | 4 | 5 |
+| SP_AB | 3 | 6 | 7 |
+| SP_AC | 4 | 8 | 9 |
+
+依赖表 `dependencies` 定义在 [depth.hpp](../../src/matching_engine/spreads/depth.hpp)，是按十二条固定规则编译期生成的 `std::array<uint16_t, 10>`，数组内容共 20 字节。`dependencies[source]` 表示该来源影响哪些 route；运行时只查表和按位或，不逐轮构建依赖图、不通过网络分发这张表。例如 A ask（来源 1）对应 route 1、5、7、11，SP_AB bid（来源 6）对应 route 2、5。
+
+`dirty_`、`awaiting_views_` 的成员定义见 [coordinator.hpp](../../src/matching_engine/spreads/coordinator/coordinator.hpp)，推导局部变量见 [depth.cpp](../../src/matching_engine/spreads/depth.cpp)。当前 `finish_sources()` 还计算一份局部 `affected`，只用于统计本轮重算条数；实际价格推导仍只在 `recompute()` 中执行一次。这些标记只服务内存轮次推进，不写入订单／成交日志 Batch。
+
+#### 4.1.2 一轮内谁传给谁，在哪一步传
+
+1. **shard 完成真实修改，向 Coordinator 发来源记录。** [Session::source_done()](../../src/matching_engine/spreads/session.cpp) 比较本地新旧三档及 hasMore，用一个局部来源位图挑出要编码的记录。这个局部变量也叫 `changed`，但它是 10 位来源集合，与上表的 5 位目标 `changed` 含义不同。它本身不进入报文；SOURCE_DONE 正文为 `记录数:uint8 + 各记录的长度:uint8及delta／快照内容`，每条记录内部含 `source:uint8`。无来源变化时仍发送记录数为 0 的 SOURCE_DONE，表示该 shard 本轮已完成。
+2. **Coordinator 接收记录，累积 `dirty_`。** `read_sources()` 校验来源归属、重复记录及窗口版本，应用记录并返回这些来源号组成的位图；Coordinator 执行 `dirty_ |= 本次来源位图`，同时在 `done_` 中标记发送 shard 已完成。`done_`／`expected_` 是另一个 4 位成员集合，按 S/A/B/C 编号，用于收齐 ROUND_BEGIN 的名单，不能用 `dirty_` 代替。即使某片记录数为 0，也要等待它的完成报告。
+3. **名单和报告齐全后，内部生成 `affected`。** ROUND_BEGIN 与 SOURCE_DONE 可跨连接先后乱序到达；只有名单已声明且 `done_ == expected_` 时，才汇总所有脏来源的依赖：`affected = 按位或 dependencies[每个脏来源]`。同一 route 即使被两个来源同时标记，也只有一位，只重算一次。
+4. **重算后，内部生成目标 `changed`。** 对 `affected` 中每条 route，用最新来源推导并比较缓存 `views_[routeId]`。价格、数量、more 或空集合确有变化，才更新缓存并置该 route 的目标合约位；受影响不等于结果一定改变。一个目标的多个 route 改变也只占一位。`dirty_` 不在此处立即清零，随本轮保留到下一次 `reset_round()`。
+5. **Coordinator 向各目标所属 shard 发视图和目标位图。** `install(changed, false)` 先令 `awaiting_views_ = changed`，再逐片计算 `own = changed & member_targets(member)`。`own != 0` 才发送 IMPLIED_REPLACE，正文首字节就是 `own`，随后为这些目标的全部 route 视图，包括未变化的 route 和显式的空 route。A/B/C 各负责一个目标；S 可在同一帧中携带 SP_AB、SP_AC 两个目标。子集仍沿用全组五位编号，不重新编号。
+6. **目标 shard 安装后，向 Coordinator 回传目标位图。** `Session::control()` 校验并安装完整视图后，发送 VIEW_APPLIED，正文仅为收到的 `targets:uint8`；groupEpoch/seq/round 沿用公共头。Coordinator 核对发送者归属、轮次及待确认位，执行 `awaiting_views_ &= ~targets`。待确认位全部清零后向发起 shard 发 ROUND_READY；发起 shard 仍须另等本地 detailsReady。
+
+第 5、6 步传输的 1 字节仅指目标位图，不是完整消息长度。来源位图、route 位图都不需要另加网络字段；目标位图则同时描述“本帧替换哪些合约”和“本帧确认哪些合约”，不逐个重复 symbolId。具体编解码见 [protocol.cpp](../../src/matching_engine/spreads/transport/protocol.cpp)，收齐和发送逻辑见 [coordinator.cpp](../../src/matching_engine/spreads/coordinator/coordinator.cpp)。
+
+这条来源／视图链路全部走 **shard ↔ Coordinator 控制连接**，不经 Router，也不走两腿 P2P 明细连接。Router 另等整条命令的 MEM_DONE；VIEW_APPLIED 只确认内存视图安装，不表示 Batch 已封闭或结果已落盘。
+
+正常轮次若 `changed == 0`，不发送 IMPLIED_REPLACE，也不等待 VIEW_APPLIED，来源收齐后直接返回 ROUND_READY。第 5.3 节的 LOCAL_COMPLETE 进一步跳过整个普通轮次。初始化／重接入则按第 2 节强制为需要重新安装的目标发送完整视图，即使与 Coordinator 的旧缓存相同，也不能套用正常轮次的“未变不发送”。
 
 ### 4.2 三档总量取 min，最优价位逐层配对
 
@@ -266,10 +308,10 @@ Coordinator 核对运行代次、来源连接、命令序号和就绪状态，�
 | EXECUTE_PREFIX | 发起 shard → 两腿所属 shard | 首次请求携带命令上下文；执行项只有 routeId、q，两腿各自从最优价位完成 q |
 | EXECUTION_DONE | 腿所属 shard → 发起 shard | 本轮该接收方整个执行批次的真实修改已应用；可早于完整 RESULT_DETAILS，不回传逐单列表或重复请求字段 |
 | RESULT_DETAILS | 发起 shard ↔ 腿所属 shard（确需时） | 源实际成交片段和必要配对分配，与来源／视图更新重叠；按 seq/round/route 关联，不进入 Coordinator 来源缓存 |
-| DEPTH_SNAPSHOT / DEPTH_DELTA | S/A/B/C → Coordinator | 第 3 节的窗口内容，按完整编码长度选择较小的一种；S 同帧携带本次实际变化的来源侧 |
-| SOURCE_DONE | 本轮声明的参与者 → Coordinator | 本轮真实修改及来源更新已完成，不等待明细配对；无三档变化也报告，此时不提交本单 Batch |
-| IMPLIED_REPLACE | Coordinator → 受影响目标 | targetSymbolId、viewStamp、完整 route 分组；空列表表示清空 |
-| VIEW_APPLIED | 目标 → Coordinator | 完整安装 targetSymbolId、viewStamp；S 无特殊本地捷径 |
+| DEPTH_SNAPSHOT / DEPTH_DELTA | S/A/B/C → Coordinator | 第 3 节的来源记录编码，按完整编码长度选择较小的一种；正常轮次装入 SOURCE_DONE，S 可同帧携带多个变化来源侧 |
+| SOURCE_DONE | 本轮声明的参与者 → Coordinator | 正文为变化来源记录数及记录，不另带 `dirty_`；本轮真实修改及来源更新已完成，不等待明细配对；无三档变化也发送记录数 0，此时不提交本单 Batch |
+| IMPLIED_REPLACE | Coordinator → 目标所属 shard | 正文为 `targets:uint8` 及这些目标的完整 route 分组；viewStamp 在公共头中，空 route 以档数 0 明确编码 |
+| VIEW_APPLIED | 目标所属 shard → Coordinator | 正文为已完整安装的 `targets:uint8`，公共头对应 viewStamp；S 可确认一个或两个合约，不以 shard 回执替代目标位 |
 | ROUND_READY | Coordinator → 发起 shard | 本轮来源及必要视图已完成；发起方另等本地 detailsReady 后，才决定继续成交、挂簿收尾或结束 |
 | COMMAND_END（通知） | 发起 shard → 累计实际参与者 | seq、最后完成的 round；整条命令不会再有执行，各片明细齐全后封闭 Result 入队，本片本地处理 |
 | COMMAND_END（确认） | 每个实际参与者 → Coordinator | seq、最后完成的 round、localBatchSeq；本片不会再追加本条结果，完整 Batch 已入队，不代表落盘 |
@@ -421,7 +463,7 @@ B、C 的报价共享 A 的真实流动性，不能把两边展示量相加当�
 
 ### 10.2 网络顺序：视图刷新与明细配对重叠，两项齐全再继续
 
-下图沿用原有参与者和整单结束流程，加入来源／视图与成交明细的并行进度。省略公共头及首次请求上下文；“来源更新 + SOURCE_DONE”可合帧，更新按完整编码长度选择 delta 或快照。两条 P2P 腿可以并行；ROUND_READY 与 detailsReady 任一先完成都只记进度，两项齐全后才继续。
+下图沿用原有参与者和整单结束流程，加入来源／视图与成交明细的并行进度。省略公共头及首次请求上下文；当前实现将来源记录直接编码在 SOURCE_DONE 中，按完整编码长度选择 delta 或快照。图中的 `source` 是来源编号，`targets` 是目标位图，编号规则见第 4.1.1 节。两条 P2P 腿可以并行；ROUND_READY 与 detailsReady 任一先完成都只记进度，两项齐全后才继续。
 
 ```mermaid
 sequenceDiagram
@@ -440,25 +482,26 @@ sequenceDiagram
             B->>A: EXECUTE_PREFIX(rBAsk, 45)
             Note over A: 消耗 ask：100×20、101×25
             A->>B: EXECUTION_DONE
-            A->>K: A ask 来源更新 + SOURCE_DONE
+            A->>K: SOURCE_DONE（A ask 记录，source=1）
         and SP_AB 腿
             B->>S: EXECUTE_PREFIX(rBAsk, 45)
             Note over S: 消耗 SP_AB bid：6×30、5×15
             S->>B: EXECUTION_DONE
-            S->>K: SP_AB bid 来源更新 + SOURCE_DONE
+            S->>K: SOURCE_DONE（SP_AB bid 记录，source=6）
         end
         Note over B: 收齐 EXECUTION_DONE，更新本地数量，不等逐单明细
-        B->>K: SOURCE_DONE（无来源变化）
+        B->>K: SOURCE_DONE（记录数=0）
         Note over B,S: 只累计本单 Result，尚不封闭或提交 Batch
         par 来源汇聚与视图刷新
-            Note over K: 收齐 S/A/B，仅重算脏 route
+            Note over K: 收齐 S/A/B<br/>dirty_=0x42 → affected=0x8A6 → changed=0x06
             par 安装 B 视图
-                K->>B: IMPLIED_REPLACE(B)
-                B->>K: VIEW_APPLIED
+                K->>B: IMPLIED_REPLACE（targets=0x02，B 完整视图）
+                B->>K: VIEW_APPLIED（targets=0x02）
             and 安装 C 视图
-                K->>C: IMPLIED_REPLACE(C)
-                C->>K: VIEW_APPLIED
+                K->>C: IMPLIED_REPLACE（targets=0x04，C 完整视图）
+                C->>K: VIEW_APPLIED（targets=0x04）
             end
+            Note over K: awaiting_views_ 全部清零
             K->>B: ROUND_READY(seq=101, round=1)
         and 成交明细传输与配对
             A->>B: RESULT_DETAILS（A 的必要 FIFO 片段）
@@ -509,6 +552,17 @@ B 主动单已全部成交，没有留下原生挂单，因此只报 SOURCE_DONE
 | C | 91 × 15、92 × 60 | min(75,100)＝75 手 |
 
 Coordinator 分别向 B、C 发送完整 IMPLIED_REPLACE；它们安装后回复 VIEW_APPLIED。本例 A、S 的 implied 集合仍为空，没有变化，不发送替换。**C 只安装视图，不是本条真实结果参与者：不报 SOURCE_DONE，不收 COMMAND_END，不为本条创建日志 Batch。** B 虽然原生挂簿未变化，但产生了主动单成交结果，仍需持久化。
+
+本例三步标记的具体值如下，位号均从 0 开始；十六进制只是整数的展示形式：
+
+| 阶段 | 被置位的编号 | 位图值及去向 |
+| --- | --- | --- |
+| 汇聚来源 `dirty_` | 1＝A ask、6＝SP_AB bid | `(1 << 1) + (1 << 6) = 0x42`，只保存在 Coordinator |
+| 推导范围 `affected` | route 1、2、5、7、11 | `dependencies[1]` 与 `dependencies[6]` 按位或得到 `0x8A6`；route 5 被两来源引用，也只重算一次 |
+| 实际目标变化 `changed` | 1＝B、2＝C | `0x06`；route 1、2、7 的另一来源仍为空，重算后仍为空，只有 route 5、11 的结果改变 |
+| 发视图及收确认 | B 的目标位 1；C 的目标位 2 | 发给 B 的 `targets=0x02`，发给 C 的 `targets=0x04`；各片安装后原样确认 |
+
+`awaiting_views_` 从 `0x06` 开始；若 B 先确认，清除 `0x02` 后剩 `0x04`，再收到 C 的确认则归零；C 先确认也一样。这里目标位 1 表示 B，而来源位 1 表示 A ask，必须按所在阶段解读。B 的无来源变化报告只推进成员完成位，不向 `dirty_` 增加任何位。正常流程直到命令结束后才向 Router 发送 MEM_DONE，以上三个位图都不作为 MEM_DONE 字段。
 
 - **下一条命令何时执行：** B/C 的 VIEW_APPLIED 收齐后，Coordinator 返回 ROUND_READY；B 另等 detailsReady，确认剩余量为零后通知 S/A 结束，各片检查明细完整并分别封闭 Batch。Coordinator 收齐 S/A/B 的 COMMAND_END 确认，知道全部实际参与者都不会再追加本单，直接向 Router 发 MEM_DONE，Router 即可派发下一条，不等磁盘。
 - **客户端何时得知成交：** 在上述内存完成条件满足后，Router 再收齐 S/A/B 直接返回的 DURABLE_RESULT 与完整事件，确认本条 MEM_DONE 也已收到后，经 Gateway 通知相关用户，包括主动单和源挂单用户。不等待 C 落盘。
