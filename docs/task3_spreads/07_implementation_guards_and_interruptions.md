@@ -183,7 +183,7 @@ SIGINT/SIGTERM 设置停止标志并进入关闭流程；SIGKILL 无法执行这
 | 本地同步失败 | 原 [recovery suite](../../tests/recovery/suite.cpp)、[optimizations](../../tests/recovery/optimizations.cpp) | 复用的 Task 2 注入检查覆盖失败 Batch 不公开和查询目标同步失败；不等于验证了跨片部分 fsync 后的自动恢复 |
 | 压力与端到端 | [测试说明](../../tests/spreads/README.md) | 百万次核心循环、5000 小单明细、5000 请求突发、15000 本地成交通知，以及真实 Publisher/CLI 适配 |
 
-历史完整 Release 验证为 **26/26 个 CTest 通过，总耗时 159.79 秒**；其中 Task 3 的 9 个 C++ suite 共 52 个用例，另有 Python 生命周期场景。8 项核心/协议 UBSan 测试通过。ASan 在进入测试 main 前初始化失败，不能标为通过，详情已记录在 06。上述完整验证对应 `50c0c6e`；当前 `aca0517` 还包含后续目录整理。本文仅新增说明和文档入口，没有重新执行完整测试，也不更新旧测量数据。
+历史完整 Release 验证为 **26/26 个 CTest 通过，总耗时 159.79 秒**；其中 Task 3 的 9 个 C++ suite 共 52 个用例，另有 Python 生命周期场景。8 项核心/协议 UBSan 测试通过。ASan 在进入测试 main 前初始化失败，不能标为通过，详情已记录在 06。上述完整验证对应 `50c0c6e`；本文最初的行为核对使用 `aca0517`。2026-11-18 组件整理后的完整回归另见 [08](08_component_layout_and_validation.md)，不覆盖这里的历史测量。
 
 目前未有 Task 3 专项故障注入覆盖：逐个磁盘写入/fsync 切点、真实掉电、supervisor 强杀后的残留进程、activate 回复丢失、所有半连接/分区组合。对于这些情况，本文只能说明代码处理规则及限制，不能宣称全部验证成功。
 

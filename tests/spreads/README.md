@@ -30,3 +30,5 @@ ctest --test-dir build/task3 --output-on-failure -R '^spread_'
 性能口径必须分开：核心循环为进程内批次平均；单请求测量包含 Gateway TCP、组通信、fsync 和回复；5000 请求同时入队的分位数包含排队时间；一个 5000 片段扫单只有一个样本，不能当作每订单 p99。`--trace` 会增加日志开销。详细实测见 [验证报告](../../docs/task3_spreads/06_validation_results.md)。
 
 故障测试中的 SIGSTOP/SIGKILL 只针对测试创建的进程。部分跨片执行发生故障时，正确结果是保留未完成状态并暂停，且不发布片面成交；此测试不声称已有跨片自动回滚或分布式故障原子提交。
+
+2026-11-18 目录整理后的完整回归、编译耗时与逐项结果见 [组件整理验证](../../docs/task3_spreads/08_component_layout_and_validation.md)。

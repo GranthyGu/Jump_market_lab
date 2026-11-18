@@ -2,6 +2,8 @@
 
 日期：2026-11-17。代码基线 `50c0c6e`，本报告的后续文档提交不改变二进制。代码构造与内存布局见 [05](05_implementation_and_data_structures.md)；可解析结果保存为 [验证数据](validation/2026-11-17-results.json)。
 
+2026-11-18 组件目录整理后的构建与完整回归结果见 [08](08_component_layout_and_validation.md)。本文保留原日期、代码基线和性能样本，不用后续运行覆盖历史测量。
+
 ## 1. 本次结果与复现
 
 **Release 已注册的 26 项 CTest 全部通过，墙钟总耗时 159.79 秒；其中 Task 3 的 10 项全部通过。9 个新增 C++ suite 共 52 个用例，另有 Python 真实维护/恢复/Publisher/CLI 场景。8 项新增核心与协议测试的 UBSan 检查均通过。**

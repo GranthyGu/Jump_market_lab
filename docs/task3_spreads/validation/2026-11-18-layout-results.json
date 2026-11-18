@@ -1,0 +1,546 @@
+{
+  "date": "2026-11-18",
+  "base_commit": "38a61ac",
+  "code_commit": "71085fa",
+  "implementation_commits": [
+    "8e28ddb",
+    "71085fa"
+  ],
+  "build_type": "Release",
+  "builds": [
+    {
+      "command": "cmake --build build/task3 --target demo_tests -j8",
+      "incremental": true,
+      "wall_seconds": 3.42,
+      "passed": true,
+      "log": "build/task3/component-layout-final-build.log"
+    },
+    {
+      "command": "./src/scripts/build.sh --jobs 8",
+      "incremental": true,
+      "wall_seconds": 13.58,
+      "passed": true,
+      "log": "build/task3/component-layout-runtime-build.log"
+    }
+  ],
+  "stage1": {
+    "passed": 3,
+    "total": 3,
+    "ctest_wall_seconds": 11.03,
+    "junit": "build/task3/component-layout-stage1.xml"
+  },
+  "ctest_wall_seconds": 168.95,
+  "ctest_timestamp": "2026-11-18T13:08:09",
+  "ctest_junit": "build/task3/component-layout-final.xml",
+  "ctest_log": "build/task3/component-layout-final-tests.log",
+  "ctest": [
+    {
+      "name": "demo_engine",
+      "seconds": 0.726315,
+      "passed": true
+    },
+    {
+      "name": "demo_gateway",
+      "seconds": 7.58294,
+      "passed": true
+    },
+    {
+      "name": "demo_publisher",
+      "seconds": 28.7525,
+      "passed": true
+    },
+    {
+      "name": "demo_integration",
+      "seconds": 20.2972,
+      "passed": true
+    },
+    {
+      "name": "snapshot_mailbox",
+      "seconds": 0.564297,
+      "passed": true
+    },
+    {
+      "name": "persistence_correctness",
+      "seconds": 0.590289,
+      "passed": true
+    },
+    {
+      "name": "persistence_optimizations",
+      "seconds": 0.597069,
+      "passed": true
+    },
+    {
+      "name": "recovery_process",
+      "seconds": 3.88885,
+      "passed": true
+    },
+    {
+      "name": "bpt_correctness_concurrency_stress",
+      "seconds": 3.17123,
+      "passed": true
+    },
+    {
+      "name": "bpt_cache_control_correctness",
+      "seconds": 1.95855,
+      "passed": true
+    },
+    {
+      "name": "trade_history_correctness",
+      "seconds": 0.262216,
+      "passed": true
+    },
+    {
+      "name": "trade_history_process",
+      "seconds": 3.33345,
+      "passed": true
+    },
+    {
+      "name": "planned_restart_process",
+      "seconds": 19.4304,
+      "passed": true
+    },
+    {
+      "name": "replication_correctness",
+      "seconds": 0.597036,
+      "passed": true
+    },
+    {
+      "name": "test_runner_correctness",
+      "seconds": 1.43629,
+      "passed": true
+    },
+    {
+      "name": "client_reconnect_process",
+      "seconds": 34.6133,
+      "passed": true
+    },
+    {
+      "name": "spread_depth_correctness_stress",
+      "seconds": 1.03799,
+      "passed": true
+    },
+    {
+      "name": "spread_persistence_correctness",
+      "seconds": 0.64529,
+      "passed": true
+    },
+    {
+      "name": "spread_execution_correctness_stress",
+      "seconds": 0.947638,
+      "passed": true
+    },
+    {
+      "name": "spread_market_correctness",
+      "seconds": 0.382623,
+      "passed": true
+    },
+    {
+      "name": "spread_network_correctness",
+      "seconds": 0.401209,
+      "passed": true
+    },
+    {
+      "name": "spread_coordinator_correctness_stress",
+      "seconds": 0.42061,
+      "passed": true
+    },
+    {
+      "name": "spread_session_correctness_stress",
+      "seconds": 1.30354,
+      "passed": true
+    },
+    {
+      "name": "spread_publication_correctness",
+      "seconds": 0.377922,
+      "passed": true
+    },
+    {
+      "name": "spread_native_process",
+      "seconds": 9.47968,
+      "passed": true
+    },
+    {
+      "name": "spread_lifecycle_process",
+      "seconds": 26.1358,
+      "passed": true
+    }
+  ],
+  "spread_ctest_count": 10,
+  "spread_ctest_sum_seconds": 41.132302,
+  "spread_cpp_cases": 52,
+  "spread_suites": [
+    {
+      "name": "depth",
+      "source": "build/task3/spread-results/depth/suite.json",
+      "cases": [
+        {
+          "name": "derived-spread-price-limits-and-topology-identity",
+          "passed": true,
+          "duration_ms": 0.205875,
+          "error": ""
+        },
+        {
+          "name": "documented-five-segment-example",
+          "passed": true,
+          "duration_ms": 0.000542,
+          "error": ""
+        },
+        {
+          "name": "all-twelve-routes-vs-unit-quantity-oracle",
+          "passed": true,
+          "duration_ms": 92.7108,
+          "error": ""
+        },
+        {
+          "name": "adaptive-depth-roundtrip-negative-zero-and-window-movement",
+          "passed": true,
+          "duration_ms": 470.797,
+          "error": ""
+        },
+        {
+          "name": "truncated-versions-and-invalid-windows-do-not-mutate-cache",
+          "passed": true,
+          "duration_ms": 0.277041,
+          "error": ""
+        },
+        {
+          "name": "quantity-over-uint32-and-price-overflow",
+          "passed": true,
+          "duration_ms": 0.006208,
+          "error": ""
+        },
+        {
+          "name": "fixed-cache-and-dirty-source-recompute-stress",
+          "passed": true,
+          "duration_ms": 60.9141,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "persistence",
+      "source": "build/task3/spread-results/persistence/suite.json",
+      "cases": [
+        {
+          "name": "typed-record-roundtrip-truncation-and-ownership",
+          "passed": true,
+          "duration_ms": 4.04558,
+          "error": ""
+        },
+        {
+          "name": "unsealed-mixed-batch-history-recovery-and-byte-exact-replication",
+          "passed": true,
+          "duration_ms": 161.04,
+          "error": ""
+        },
+        {
+          "name": "leg-history-both-parties-and-remote-counters",
+          "passed": true,
+          "duration_ms": 49.0513,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "execution",
+      "source": "build/task3/spread-results/execution/suite.json",
+      "cases": [
+        {
+          "name": "documented-ac-direct-ab-selection-and-original-fifo",
+          "passed": true,
+          "duration_ms": 0.286416,
+          "error": ""
+        },
+        {
+          "name": "bid-ask-priority-vs-independent-sorted-oracle",
+          "passed": true,
+          "duration_ms": 504.374,
+          "error": ""
+        },
+        {
+          "name": "more-refill-barrier-and-wide-level-quantity",
+          "passed": true,
+          "duration_ms": 0.160459,
+          "error": ""
+        },
+        {
+          "name": "all-twelve-routes-owned-events-and-economic-counterparties",
+          "passed": true,
+          "duration_ms": 5.88783,
+          "error": ""
+        },
+        {
+          "name": "dual-fifo-pairing-and-incremental-order-updates",
+          "passed": true,
+          "duration_ms": 0.107417,
+          "error": ""
+        },
+        {
+          "name": "million-fixed-plan-selections",
+          "passed": true,
+          "duration_ms": 36.0918,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "market",
+      "source": "build/task3/spread-results/market/suite.json",
+      "cases": [
+        {
+          "name": "merge-direct-ab-ac-before-truncation-and-own-candidate",
+          "passed": true,
+          "duration_ms": 0.295167,
+          "error": ""
+        },
+        {
+          "name": "signed-v2-wire-shard-encoding-and-invalid-aggregate",
+          "passed": true,
+          "duration_ms": 0.812458,
+          "error": ""
+        },
+        {
+          "name": "client-delta-di-change-pure-implied-and-reordered-delete",
+          "passed": true,
+          "duration_ms": 0.187125,
+          "error": ""
+        },
+        {
+          "name": "full-window-replacement-and-maximum-frame-sizes",
+          "passed": true,
+          "duration_ms": 0.168291,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "network",
+      "source": "build/task3/spread-results/network/suite.json",
+      "cases": [
+        {
+          "name": "group-headers-identities-and-atomic-source-view-codecs",
+          "passed": true,
+          "duration_ms": 0.1455,
+          "error": ""
+        },
+        {
+          "name": "independent-business-peer-listeners-split-coalesced-frames-and-role-fencing",
+          "passed": true,
+          "duration_ms": 15.7761,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "coordinator",
+      "source": "build/task3/spread-results/coordinator/suite.json",
+      "cases": [
+        {
+          "name": "early-source-overlap-view-only-target-and-memory-completion",
+          "passed": true,
+          "duration_ms": 0.033959,
+          "error": ""
+        },
+        {
+          "name": "multi-round-cumulative-participants-and-no-redundant-view-install",
+          "passed": true,
+          "duration_ms": 0.059459,
+          "error": ""
+        },
+        {
+          "name": "local-complete-epoch-sequence-fences-and-unresolved-pause",
+          "passed": true,
+          "duration_ms": 0.038417,
+          "error": ""
+        },
+        {
+          "name": "explicit-empty-implied-replacement",
+          "passed": true,
+          "duration_ms": 0.003125,
+          "error": ""
+        },
+        {
+          "name": "million-local-completion-control-messages",
+          "passed": true,
+          "duration_ms": 26.4611,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "session",
+      "source": "build/task3/spread-results/session/suite.json",
+      "cases": [
+        {
+          "name": "all-twelve-routes-fifo-splitting-owned-events-and-one-batch",
+          "passed": true,
+          "duration_ms": 155.683,
+          "error": ""
+        },
+        {
+          "name": "source-refresh-overlaps-delayed-details-and-ordered-end",
+          "passed": true,
+          "duration_ms": 10.7665,
+          "error": ""
+        },
+        {
+          "name": "documented-direct-ab-ac-priority-and-command-wide-fill-numbers",
+          "passed": true,
+          "duration_ms": 24.2779,
+          "error": ""
+        },
+        {
+          "name": "rolling-three-level-window-before-worse-direct-price",
+          "passed": true,
+          "duration_ms": 16.3544,
+          "error": ""
+        },
+        {
+          "name": "deep-local-fast-path-and-has-more-transition",
+          "passed": true,
+          "duration_ms": 14.5916,
+          "error": ""
+        },
+        {
+          "name": "residual-cleanup-round-and-view-only-participant",
+          "passed": true,
+          "duration_ms": 13.2301,
+          "error": ""
+        },
+        {
+          "name": "five-thousand-source-pieces-multipart-durable-stress",
+          "passed": true,
+          "duration_ms": 79.2051,
+          "error": ""
+        },
+        {
+          "name": "zero-and-negative-spread-execution",
+          "passed": true,
+          "duration_ms": 23.5387,
+          "error": ""
+        },
+        {
+          "name": "random-buy-sell-rolling-window-against-full-depth-unit-oracle",
+          "passed": true,
+          "duration_ms": 544.136,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "publication",
+      "source": "build/task3/spread-results/publication/suite.json",
+      "cases": [
+        {
+          "name": "durable-before-memory-and-accepted-before-peer-fills",
+          "passed": true,
+          "duration_ms": 0.070875,
+          "error": ""
+        },
+        {
+          "name": "independent-notifications-with-contiguous-history-and-market",
+          "passed": true,
+          "duration_ms": 0.009208,
+          "error": ""
+        },
+        {
+          "name": "unrelated-shard-history-has-no-global-barrier",
+          "passed": true,
+          "duration_ms": 0.002792,
+          "error": ""
+        },
+        {
+          "name": "multipart-results-no-partial-publication-and-duplicate-fences",
+          "passed": true,
+          "duration_ms": 0.849417,
+          "error": ""
+        },
+        {
+          "name": "bounded-admission-masks-batch-order-and-byte-budgets",
+          "passed": true,
+          "duration_ms": 0.154083,
+          "error": ""
+        },
+        {
+          "name": "immutable-market-permits-and-bounded-round-coalescing",
+          "passed": true,
+          "duration_ms": 0.258208,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "name": "process",
+      "source": "build/task3/spread-results/process/suite.json",
+      "cases": [
+        {
+          "name": "native-eight-shards-coordinator-router-gateway-bootstrap",
+          "passed": true,
+          "duration_ms": 633.739,
+          "error": ""
+        },
+        {
+          "name": "ordinary-shards-and-butterfly-reuse-original-path",
+          "passed": true,
+          "duration_ms": 8.07483,
+          "error": ""
+        },
+        {
+          "name": "native-implied-market-trades-and-typed-history",
+          "passed": true,
+          "duration_ms": 7.40825,
+          "error": ""
+        },
+        {
+          "name": "negative-zero-and-direct-spread-native-execution",
+          "passed": true,
+          "duration_ms": 12.4475,
+          "error": ""
+        },
+        {
+          "name": "native-multi-round-window-and-complete-order-capture",
+          "passed": true,
+          "duration_ms": 7.6425,
+          "error": ""
+        },
+        {
+          "name": "idle-crashed-member-recovers-exact-boundary-and-rejoins",
+          "passed": true,
+          "duration_ms": 231.421,
+          "error": ""
+        },
+        {
+          "name": "all-twelve-in-out-routes-across-real-peer-connections",
+          "passed": true,
+          "duration_ms": 31.1256,
+          "error": ""
+        },
+        {
+          "name": "single-outstanding-short-path-and-implied-latency",
+          "passed": true,
+          "duration_ms": 159.908,
+          "error": ""
+        },
+        {
+          "name": "native-pipeline-and-five-thousand-piece-multipart-stress",
+          "passed": true,
+          "duration_ms": 1962.47,
+          "error": ""
+        },
+        {
+          "name": "partial-memory-crash-stays-paused-after-worker-reconnection",
+          "passed": true,
+          "duration_ms": 5271.41,
+          "error": ""
+        }
+      ]
+    }
+  ],
+  "sanitizers_rerun": false,
+  "notes": [
+    "Source relocation and dependency cleanup only; original matching and disk persistence implementations unchanged.",
+    "Build times use existing build caches; test wall time is not order latency.",
+    "Session test now explicitly includes Coordinator after removing the transitive header dependency.",
+    "Per-case results are read from suite.json because CTest may truncate successful stdout."
+  ]
+}

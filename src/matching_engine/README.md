@@ -25,3 +25,5 @@ Task 3 继续调用同一个 `MatchingEngine`，`core/group_execution.cpp` 只�
 跨组件通用设施位于 [shared_data/runtime/](../shared_data/runtime/)：`io.*` 管理文件描述符与通用网络 I/O，`thread.*` 管理停止和等待，`log.*` 提供日志，`wakeup.hpp` 唤醒 reactor，`availability.hpp` 记录可用性状态。订单协议仍在 `shared_data/orders/`，行情协议与分片视图传输仍在 `shared_data/market_data/`。
 
 构建：仓库根目录执行 `./src/scripts/build.sh`。启动与维护见 [Exchange 运行指南](../../docs/EXCHANGE_RUN.md) 和 [计划重启设计](../../docs/task2_recovery/09_planned_restart_router_design.md)。测试见 [recovery 测试说明](../../tests/recovery/README.md)。
+
+2026-11-18 按组件整理后的构建归属、复用关系及完整回归耗时见 [目录整理验证](../../docs/task3_spreads/08_component_layout_and_validation.md)。
