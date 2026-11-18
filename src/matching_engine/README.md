@@ -2,7 +2,7 @@
 
 运行程序默认采用方案 2 持久化；当前提交、快照与恢复路径见 [订单状态与双日志一致性](../../docs/task2_recovery/11_orderbook_delta_snapshot_consistency.md)。默认启动脚本由 `cluster/run.py` 管理 Router、独立 GroupCoordinator 与各 shard 的 A/B 进程，正常交易路径由 C++ 执行。
 
-演示配置包含 20 个普通商品 `ITEM0001`—`ITEM0020`，按轮询分到 shard1—4，每片五个；shard5—8 承载 A、B、C 和三个价差品种，共 26 个商品。缩减商品列表后，A/B/C/SP_AB/SP_AC/BF_ABC 的全局 ID 为 21—26。已有 1000 商品的持久化数据不兼容新的品种字典，演示请使用独立目录：`./src/scripts/run_matching_engine.sh --data-dir src/config/.marketlab-data/exchange-demo20`；旧数据保留。
+演示配置包含 24 个普通商品 `ITEM0001`—`ITEM0024`，按轮询分到 shard1—4，每片六个；shard5—8 承载 A、B、C 和三个价差品种，共 30 个商品。A/B/C/SP_AB/SP_AC/BF_ABC 的全局 ID 为 25—30。已有 1000 或 20 个 ITEM 的持久化数据不兼容新的品种字典，演示请使用独立目录：`./src/scripts/run_matching_engine.sh --data-dir src/config/.marketlab-data/exchange-demo24`；旧数据保留。
 
 | 分组 | 文件 | 职责 |
 | --- | --- | --- |
