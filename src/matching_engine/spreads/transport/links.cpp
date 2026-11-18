@@ -1,4 +1,4 @@
-#include "matching_engine/spreads/links.hpp"
+#include "matching_engine/spreads/transport/links.hpp"
 #include <iostream>
 
 namespace marketlab::orders::spreads {
@@ -18,7 +18,7 @@ void Links::outgoing(ConnectionId id,
                      std::uint16_t shard,
                      std::uint64_t instance) {
   State state;
-  state.outgoing = true; 
+  state.outgoing = true;
   state.expected = {role, shard, instance, self_.fingerprint};
   links_.emplace(id, state);
 }

@@ -1,6 +1,6 @@
 #pragma once
 #include "matching_engine/persistence/durable_engine.hpp"
-#include "matching_engine/spreads/coordinator/coordinator.hpp"
+#include "matching_engine/spreads/transport/protocol.hpp"
 #include "matching_engine/spreads/execution.hpp"
 
 namespace marketlab::orders::spreads {

@@ -9,11 +9,11 @@
 | 分组 | 文件 | 职责 |
 | --- | --- | --- |
 | 核心复用接口 | `core/group_execution.cpp`、`core/engine.hpp` | 在原簿上接收主动单、取真实 FIFO 前缀、记录本片成交和最终剩余挂单 |
-| 来源与推导 | `spreads/depth.*` | 固定三档、12 条 route、依赖位图、价格限制、delta/snapshot 编解码 |
+| 来源与推导 | `spreads/depth.*` | 固定三档、12 条 route、依赖位图、价格限制与共享成员映射；不依赖持久化或组网络编解码 |
 | 选择与配对 | `spreads/execution.*` | 价格/直接 FIFO/AB 优先级，固定选择计划，两来源 FIFO 片段切分 |
 | 单命令状态 | `spreads/session.*` | 多轮命令、P2P 执行、来源同步与明细并行、一条完整 Result、短路径 |
 | Coordinator | `spreads/coordinator/`：`coordinator.*`、`server.*`、`main.cpp` | 分别承载纯状态机、TCP 服务及接入维护、独立进程入口；确认来源/视图/内存完成 |
-| 组通信 | `spreads/protocol.*`、`links.*`、`join.*` | 组报文、持久化结果分块、实例和 epoch 校验、握手与接入数据 |
+| 组通信 | `spreads/transport/`：`protocol.*`、`links.*`、`join.*` | 组报文、三档 delta/snapshot 与持久化结果分块编解码、实例和 epoch 校验、握手与接入数据 |
 | shard 运行时适配 | `runtime/spread_worker.*` | 将组业务/peer 连接、恢复及就绪状态接入原 shard 服务；持有 Session 和行情候选 |
 | Router 与发布 | `cluster/router_spreads.*`、`cluster/router_spreads_publication.*` | 主 Router 内部的关联组模块；有界组请求 FIFO、MEM_DONE 放行、实际参与者持久化汇总、查询和行情可见边界 |
 | 行情 | `market_data/spread_market.*`、`shared_data/market_data/`、`publisher/` | 合并真实与 implied 五档、保存不可变候选并应用发布许可；复用原行情传输，支持 V2 编码、快照/增量和显示 |
@@ -21,6 +21,52 @@
 | 维护 | `cluster/router.cpp`、`cluster/run.py` | 整组排空、单片替换、standby 准备、激活、恢复及干净关闭 |
 
 `spreads=enabled` 才启用关联组。默认配置有 A、B、C、SP_AB、SP_AC 五个关联品种，S/A/B/C 四个成员；BF_ABC 使用 S 的调度和持久化，但仍为独立普通订单簿，不执行蝶式腿联动。
+
+### 1.1 按组件整理后的目录
+
+2026-11-18 按代码实际所有者整理；下面省略原有未移动文件，`.*` 表示头文件和源文件。
+
+```text
+matching_engine/
+├── core/
+│   └── group_execution.cpp
+├── cluster/
+│   ├── router.*
+│   ├── router_spreads.*
+│   └── router_spreads_publication.*
+├── runtime/
+│   ├── server.*
+│   └── spread_worker.*
+├── market_data/
+│   ├── snapshot_mailbox.*
+│   └── spread_market.*
+└── spreads/
+    ├── depth.*
+    ├── execution.*
+    ├── session.*
+    ├── transport/
+    │   ├── protocol.*
+    │   ├── links.*
+    │   └── join.*
+    └── coordinator/
+        ├── coordinator.*
+        ├── server.*
+        └── main.cpp
+```
+
+`Publication` 只由 Router 持有，其实现编入 `market_engine_router`，发布测试单独编译同一源文件；不再作为撮合核心库的一部分。`MarketPublication` 与真实/implied 合并放在 `market_data/spread_market.*`。`Worker` 继续编入运行时库，只把源文件放到与实际用途一致的 `runtime/`。类名和 `marketlab::orders::spreads` 命名空间保持，调用接口及对象所有权不变。
+
+共享的 `member_targets/member_sources` 位于 `depth.hpp`，Session 直接依赖组协议，不再通过 Coordinator 类头文件取得这些映射。三档线格式和结果分块集中在 `transport/protocol.*`；`command_window=128` 也作为组协议共用约束声明，行情代码无需包含 Router 类。`join.*` 保留恢复报告、端点及边界比较；`links.*` 保留连接握手与心跳，真正的接入状态推进仍由 Coordinator 服务和 Worker 完成。
+
+### 1.2 普通 shard 行情与原 Batch 编码的复用
+
+Shard 1—4 在默认持久化模式下，双日志完成后由 [DurableEngine::poll](../../src/matching_engine/persistence/durable_engine.cpp) 更新 `CommittedState`；`DurableEngine::copy_market` 调用 [CommittedState::market](../../src/matching_engine/recovery/state.cpp) 从已提交聚合价档提取买卖各五档。[MatchingEngine::copy_market](../../src/matching_engine/core/engine.cpp) 则是 working 簿的快照接口。组行情沿用该接口复制基础视图，再合并 implied 并保存按命令序号关联的候选，等待 Router 许可后公开。
+
+两类 shard 最终都通过 [SnapshotMailbox](../../src/matching_engine/market_data/snapshot_mailbox.cpp)、已有行情 TCP/共享内存传输交给 Publisher。`spread_market.*` 负责引擎侧公开视图；[publisher.cpp](../../src/publisher/publisher.cpp) 继续负责汇总采样、snapshot/delta 编码选择及对外发送。
+
+磁盘 Batch 编码仍由 `DurableEngine::writer()` 和 [persistence/codec.*](../../src/matching_engine/persistence/codec.hpp) 完成：组命令 `seal_group()` 后进入同一套订单/成交双日志队列，复用订单 delta、普通成交记录和日志帧，扩展类型化腿成交/组合成交。`transport/protocol.cpp` 中的 `send_result()` 只负责把**已经本地提交的 Boundary 和客户端事件**分块返回 Router；事件正文继续复用原协议，只增加组序号、分块和完整性元信息，不重复传输全部订单日志。
+
+这次整理没有新增线程、消息往返、转发队列或每笔持久化步骤；固定容量结构、候选缓存、执行计划与提交顺序保持原实现。
 
 ## 2. Coordinator 的三档存储
 

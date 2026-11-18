@@ -1,5 +1,5 @@
 #pragma once
-#include "matching_engine/spreads/protocol.hpp"
+#include "matching_engine/spreads/transport/protocol.hpp"
 
 namespace marketlab::orders::spreads {
 struct Recovery {

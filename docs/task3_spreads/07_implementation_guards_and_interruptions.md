@@ -1,6 +1,6 @@
 # Task 3：工程补充、运行时检查与意外中断处理
 
-日期：2026-11-17。按代码基线 `aca0517` 核对。本文说明正常交易流程之外的工程处理，以及这些处理的实际保证范围。架构与交易语义仍以 [01](01_peer_updates_and_durable_publication.md)、[03](03_restart_shutdown_recovery_and_trade_records.md)、[04](04_matching_priority.md) 为准；模块与数据结构见 [05](05_implementation_and_data_structures.md)，已有测试结果和耗时见 [06](06_validation_results.md)。
+日期：2026-11-17。行为按代码基线 `aca0517` 核对，文件位置已随 2026-11-18 的组件整理更新。本文说明正常交易流程之外的工程处理，以及这些处理的实际保证范围。架构与交易语义仍以 [01](01_peer_updates_and_durable_publication.md)、[03](03_restart_shutdown_recovery_and_trade_records.md)、[04](04_matching_priority.md) 为准；模块与数据结构见 [05](05_implementation_and_data_structures.md)，原验证结果和耗时见 [06](06_validation_results.md)。
 
 **当前能够自动恢复的是：控制进程仍保留进度、各片能确认回到完整公开边界的成员故障。故障若留下未完成的跨片执行，或无法确认齐全的参与者持久化结果，代码会暂停整个关联组的新执行，保留不确定状态，不自动回滚、补造回执或重放命令。** 后一种处理是防止继续扩大不一致，并不代表已经修复了这笔交易。正常异步落盘期间的短暂结果不齐不属于故障，仍沿用 MEM_DONE 后继续内存执行的设计。
 
@@ -45,7 +45,7 @@ Router 的关联组功能现在位于 [cluster/router_spreads.cpp](../../src/mat
 - 帧检查长度、类型、标志、正文是否完整消费；单帧上限 64 KiB。握手不能重复，心跳不能夹带命令字段。
 - 显式维护取消一个 join 后，Coordinator 会忽略属于已退役 join 的接入回包。这是处理不同连接之间的迟到回复；普通交易报文没有获得“重复就忽略”的通用重试语义。
 
-入口见 [protocol.cpp](../../src/matching_engine/spreads/protocol.cpp)、[links.cpp](../../src/matching_engine/spreads/links.cpp)、[spread_worker.cpp](../../src/matching_engine/runtime/spread_worker.cpp) 和 [Coordinator 状态机](../../src/matching_engine/spreads/coordinator/coordinator.cpp)。fingerprint 用来发现配置不一致，不是加密认证或网络安全签名。
+入口见 [protocol.cpp](../../src/matching_engine/spreads/transport/protocol.cpp)、[links.cpp](../../src/matching_engine/spreads/transport/links.cpp)、[spread_worker.cpp](../../src/matching_engine/runtime/spread_worker.cpp) 和 [Coordinator 状态机](../../src/matching_engine/spreads/coordinator/coordinator.cpp)。fingerprint 用来发现配置不一致，不是加密认证或网络安全签名。
 
 ### 3.2 来源、执行前缀与成交明细
 
@@ -60,7 +60,7 @@ Router 的关联组功能现在位于 [cluster/router_spreads.cpp](../../src/mat
 
 原设计允许“视图先更新、明细稍后到”。实现另外检查配对后的剩余数量与已确认真实执行数量一致；只有 `ROUND_READY` 和 `detailsReady` 同时满足才继续。`COMMAND_END` 不能越过尚未完成的分配。
 
-代码见 [depth.cpp](../../src/matching_engine/spreads/depth.cpp)、[execution.cpp](../../src/matching_engine/spreads/execution.cpp)、[session.cpp](../../src/matching_engine/spreads/session.cpp)。这些检查用于发现状态不一致；如果异常发生前已经修改真实簿，抛异常不会自动撤销之前的修改。
+代码见 [depth.cpp](../../src/matching_engine/spreads/depth.cpp)、[来源与组协议编解码](../../src/matching_engine/spreads/transport/protocol.cpp)、[execution.cpp](../../src/matching_engine/spreads/execution.cpp)、[session.cpp](../../src/matching_engine/spreads/session.cpp)。这些检查用于发现状态不一致；如果异常发生前已经修改真实簿，抛异常不会自动撤销之前的修改。
 
 ### 3.3 持久化结果不能靠“收到一包”判定完成
 
@@ -110,7 +110,7 @@ Router 对每个命令记录实际参与者和各自 localBatchSeq。持久化�
 
 网络还有一个正常竞争：Router 收到 READY 后发出的 RUN，可能比另一个连接上的 Worker READY 更早到达。Worker 对尚未就绪或暂缺持久化容量的工作只保留 **一条** owned deferred 报文，条件满足后处理；重复占用该槽会报错，不额外堆积执行队列。
 
-代码见 [join.cpp](../../src/matching_engine/spreads/join.cpp)、[Coordinator 接入服务](../../src/matching_engine/spreads/coordinator/server.cpp)、[RouterGroup](../../src/matching_engine/cluster/router_spreads.cpp)。自动重启也不是无限重试：启动失败或重接入期间进程再次退出会进入 failed；边界不满足时不能靠反复重启把它变成 READY。
+代码见 [join.cpp](../../src/matching_engine/spreads/transport/join.cpp)、[Coordinator 接入服务](../../src/matching_engine/spreads/coordinator/server.cpp)、[RouterGroup](../../src/matching_engine/cluster/router_spreads.cpp)。自动重启也不是无限重试：启动失败或重接入期间进程再次退出会进入 failed；边界不满足时不能靠反复重启把它变成 READY。
 
 ## 6. 计划替换和整组关闭的额外保护
 

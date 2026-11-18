@@ -1,5 +1,5 @@
 #include "matching_engine/market_data/spread_market.hpp"
-#include "matching_engine/spreads/protocol.hpp"
+#include "matching_engine/spreads/transport/protocol.hpp"
 
 namespace marketlab::orders::spreads {
 MarketBookSnapshot merged_market(const MatchingEngine& core,

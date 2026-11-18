@@ -33,6 +33,19 @@ Bytes identity_bytes(const ConnectionIdentity&);
 ConnectionIdentity read_identity(persistence::Reader&);
 void put_boundary(Bytes&, const persistence::Boundary&);
 persistence::Boundary read_boundary(persistence::Reader&);
+enum class DepthEncoding : std::uint8_t {
+  Snapshot = 1,
+  Delta = 2
+};
+// One source-side record. Explicit LE fields; no native padding on the wire.
+void encode_depth(Bytes&,
+                  std::uint8_t source,
+                  const DepthSide& before,
+                  const DepthSide& after,
+                  bool initial = false);
+// Install only a fully validated record. Initial snapshots require a fresh join.
+std::uint8_t apply_depth(std::span<const std::uint8_t>, Sources&, bool initial = false);
+
 void put_views(Bytes&, std::uint8_t targets, const Views&);
 std::uint8_t read_views(persistence::Reader&, Views&, std::uint8_t allowed_targets);
 void put_sources(

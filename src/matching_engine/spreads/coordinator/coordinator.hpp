@@ -1,21 +1,8 @@
 #pragma once
-#include "matching_engine/spreads/protocol.hpp"
+#include "matching_engine/spreads/transport/protocol.hpp"
 
 namespace marketlab::orders::spreads {
 inline constexpr std::uint8_t router_destination = 4;
-
-constexpr std::uint8_t member_targets(std::uint8_t member) {
-  return member == 0 ? (1U << AB) | (1U << AC) : member <= 3 ? 1U << (member - 1) : 0;
-}
-
-constexpr std::uint16_t member_sources(std::uint8_t member) {
-  std::uint16_t mask = 0;
-  const auto targets = member_targets(member);
-  for (unsigned slot = 0; slot < 5; ++slot)
-    if (targets & (1U << slot))
-      mask |= 3U << (2 * slot);
-  return mask;
-}
 
 // Single-owner control state. No command FIFO, remote orders, trade identities,
 // result payloads or persistence threads live here.

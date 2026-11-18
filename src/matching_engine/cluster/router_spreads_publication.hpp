@@ -1,6 +1,6 @@
 #pragma once
 #include <deque>
-#include "matching_engine/spreads/protocol.hpp"
+#include "matching_engine/spreads/transport/protocol.hpp"
 
 namespace marketlab::orders::spreads {
 class Publication {

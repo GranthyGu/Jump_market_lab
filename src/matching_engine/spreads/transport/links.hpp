@@ -1,5 +1,5 @@
 #pragma once
-#include "matching_engine/spreads/protocol.hpp"
+#include "matching_engine/spreads/transport/protocol.hpp"
 #include "shared_data/orders/tcp_reactor.hpp"
 
 namespace marketlab::orders::spreads {

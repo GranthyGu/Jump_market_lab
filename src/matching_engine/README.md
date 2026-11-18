@@ -12,7 +12,8 @@
 | 成交历史 | [trade_history/](trade_history/)：`history_store.*` | 已提交成交日志的异步索引、索引快照与恢复、有界分页查询 |
 | 历史索引实现 | [trade_history/index/](trade_history/index/)：`trade_index.hpp`、`page_file.*`、`cmu/` | 按用户与成交位置查找的 B+ 树、页文件、Buffer Pool、ARC；`cmu/` 保留 BusTub 来源与许可证 |
 | 路由与计划重启 | [cluster/](cluster/)：`router.*`、`router_spreads.*`、`router_spreads_publication.*`、`worker.*`、`rpc.*`、`run.py` | C++ 订单路由与引擎控制；价差组调度及实际参与者结果汇总在主 Router 内完成；Python 协调复制、排空与接管 |
-| 跨片价差 | [spreads/](spreads/) | 固定三档/12 路推导、原 FIFO 上的执行计划、多轮 Session、共享组协议与连接接入 |
+| 跨片价差 | [spreads/](spreads/)：`depth.*`、`execution.*`、`session.*` | 固定三档/12 路推导、共享成员映射、原 FIFO 上的执行计划和多轮 Session |
+| 组通信 | [spreads/transport/](spreads/transport/)：`protocol.*`、`links.*`、`join.*` | 组帧、来源与持久化结果编解码，握手/心跳和恢复报告；Router、Coordinator、shard 共用 |
 | 组协调器 | [spreads/coordinator/](spreads/coordinator/)：`coordinator.*`、`server.*`、`main.cpp` | 组来源/视图/内存完成状态机、TCP 服务与接入维护、独立 Coordinator 程序入口 |
 
 `MatchingEngine` 保留纯内存接口，供原核心测试使用；`DurableEngine` 包装它并控制对外可见性。两个写线程只借用不可变结果，不访问工作订单簿。所有后台线程退出后才能销毁结果和快照页。

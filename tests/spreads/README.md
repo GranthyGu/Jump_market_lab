@@ -10,6 +10,8 @@ ctest --test-dir build/task3 --output-on-failure -R '^spread_'
 
 统一 `tests/run_all.sh --regression-only` 自动包含这些 CTest。网络测试使用临时配置、动态 loopback 端口和独立持久化目录，不使用默认交易目录。
 
+实现按组件分组：Router 发布控制在 `src/matching_engine/cluster/router_spreads_publication.*`，shard 接入在 `runtime/spread_worker.*`，组行情在 `market_data/spread_market.*`，通信在 `spreads/transport/`。测试仍按行为保留本目录分组；`spread_publication_tests` 与 Router 编译同一个发布源文件，`session.cpp` 显式包含 Coordinator 测试依赖。`tests/build.sh`、`tests/run_all.sh` 和运行程序构建脚本继续通过 CMake 目标定位源码，不依赖旧文件路径。
+
 | 文件 | 验证内容 |
 | --- | --- |
 | `depth.cpp` | 固定三档、12 条推导、依赖位图、more、版本、紧凑 delta/snapshot、百万次推导 |

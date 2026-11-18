@@ -1,4 +1,5 @@
 #include "matching_engine/spreads/depth.hpp"
+#include "matching_engine/spreads/transport/protocol.hpp"
 #include "harness.hpp"
 #include <random>
 

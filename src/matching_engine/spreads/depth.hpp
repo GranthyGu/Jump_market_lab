@@ -1,10 +1,9 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
-#include <span>
 #include "shared_data/orders/config.hpp"
-#include "shared_data/orders/engine_link.hpp"
 
 namespace marketlab::orders::spreads {
 inline constexpr std::size_t source_depth = 3, route_depth = 5;
@@ -90,21 +89,21 @@ struct Topology {
   }
 };
 
+constexpr std::uint8_t member_targets(std::uint8_t member) {
+  return member == 0 ? (1U << AB) | (1U << AC) : member <= 3 ? 1U << (member - 1) : 0;
+}
+
+constexpr std::uint16_t member_sources(std::uint8_t member) {
+  std::uint16_t mask = 0;
+  const auto targets = member_targets(member);
+  for (unsigned slot = 0; slot < 5; ++slot)
+    if (targets & (1U << slot))
+      mask |= 3U << (2 * slot);
+  return mask;
+}
+
 void validate(const DepthSide&, BookSide);
 Implied derive(const Route&, const Sources&);
 // Returns the changed target-symbol mask, including replacements with empty views.
 std::uint8_t recompute(const Sources&, std::uint16_t dirty_sources, Views&);
-
-enum class DepthEncoding : std::uint8_t {
-  Snapshot = 1,
-  Delta = 2
-};
-// One source-side record. Explicit LE fields; no native padding on the wire.
-void encode_depth(Bytes&,
-                  std::uint8_t source,
-                  const DepthSide& before,
-                  const DepthSide& after,
-                  bool initial = false);
-// Install only a fully validated record. Initial snapshots require a fresh join.
-std::uint8_t apply_depth(std::span<const std::uint8_t>, Sources&, bool initial = false);
 }  // namespace marketlab::orders::spreads

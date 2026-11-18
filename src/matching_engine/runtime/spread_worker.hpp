@@ -1,6 +1,6 @@
 #pragma once
-#include "matching_engine/spreads/join.hpp"
-#include "matching_engine/spreads/links.hpp"
+#include "matching_engine/spreads/transport/join.hpp"
+#include "matching_engine/spreads/transport/links.hpp"
 #include "matching_engine/market_data/spread_market.hpp"
 #include "matching_engine/spreads/session.hpp"
 

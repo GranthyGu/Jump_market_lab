@@ -1,4 +1,5 @@
 #include "matching_engine/spreads/session.hpp"
+#include "matching_engine/spreads/coordinator/coordinator.hpp"
 #include "fixtures.hpp"
 #include <deque>
 #include <random>
