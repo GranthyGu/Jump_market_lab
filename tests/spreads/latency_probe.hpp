@@ -13,7 +13,8 @@
 namespace marketlab::testing::latency {
 inline std::uint64_t now_ns() {
   timespec value{};
-  if (clock_gettime(CLOCK_MONOTONIC, &value))
+  // macOS CLOCK_MONOTONIC rounds to microseconds; RAW retains the hardware clock resolution.
+  if (clock_gettime(CLOCK_MONOTONIC_RAW, &value))
     throw std::runtime_error("Latency clock failed");
   return std::uint64_t(value.tv_sec) * 1'000'000'000ULL + value.tv_nsec;
 }

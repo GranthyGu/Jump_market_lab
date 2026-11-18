@@ -146,6 +146,8 @@ int main(int argc, char** argv) {
     const auto root = std::filesystem::absolute(argv[2]);
     const std::string scenario = argv[3];
     const unsigned count = number(argv[4]), window = number(argv[5]), warmup = number(argv[6]);
+    timespec resolution{};
+    require(clock_getres(CLOCK_MONOTONIC_RAW, &resolution) == 0, "Cannot read clock resolution");
     require(window <= count && count + warmup <= 60000, "Invalid load window/count");
     (void)product(scenario, 0);
     require(!std::filesystem::exists(root / "probes") &&
@@ -178,7 +180,9 @@ int main(int argc, char** argv) {
     std::ofstream metadata(root / "run.json");
     metadata << std::setprecision(12) << "{\"scenario\":" << demo::json(scenario)
              << ",\"count\":" << count << ",\"window\":" << window
-             << ",\"warmup\":" << warmup << ",\"seconds\":" << seconds << "}\n";
+             << ",\"warmup\":" << warmup << ",\"seconds\":" << seconds
+             << ",\"clock\":\"CLOCK_MONOTONIC_RAW\",\"clock_resolution_ns\":"
+             << std::uint64_t(resolution.tv_sec) * 1'000'000'000ULL + resolution.tv_nsec << "}\n";
     metadata.close();
     require(bool(metadata), "Cannot write run metadata");
     std::cout << "PASS " << scenario << " orders=" << count << " window=" << window

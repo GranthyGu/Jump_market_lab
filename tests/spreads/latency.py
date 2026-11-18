@@ -41,6 +41,8 @@ def statistics(values):
 
 def analyze(directory):
     run = json.loads((directory / "run.json").read_text())
+    check(run.get("clock") == "CLOCK_MONOTONIC_RAW" and run.get("clock_resolution_ns", 0) > 0,
+          "Use a raw-clock benchmark build with recorded clock resolution")
     clients = rows(directory / "client.csv")
     requests = {row["request"] for row in clients}
     check(len(clients) == len(requests) == run["count"], "Missing/duplicate client samples")
@@ -136,7 +138,7 @@ def main():
         "created": datetime.now().astimezone().isoformat(), "platform": platform.platform(),
         "build_dir": str(binary), "count_per_run": args.count, "warmup": args.warmup,
         "windows": args.windows, "repeats": args.repeats, "trace": False,
-        "clock": "CLOCK_MONOTONIC nanoseconds, same host", "results": {},
+        "clock": "CLOCK_MONOTONIC_RAW nanoseconds, same host", "results": {},
     }
     totals = {}
     for repeat in range(args.repeats):

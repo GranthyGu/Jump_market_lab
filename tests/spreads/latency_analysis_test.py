@@ -20,6 +20,7 @@ class LatencyAnalysisTest(unittest.TestCase):
         shard = 1 if ordinary else 5
         (self.root / "run.json").write_text(json.dumps({
             "scenario": scenario, "count": 1, "window": 1, "warmup": 1, "seconds": 0.001,
+            "clock": "CLOCK_MONOTONIC_RAW", "clock_resolution_ns": 42,
         }))
         with (self.root / "client.csv").open("w", newline="") as stream:
             writer = csv.writer(stream)
@@ -66,6 +67,15 @@ class LatencyAnalysisTest(unittest.TestCase):
     def test_unexpected_participants(self):
         self.fixture(mask=1)
         with self.assertRaisesRegex(RuntimeError, "participant mask"):
+            analyze(self.root)
+
+    def test_clock_metadata(self):
+        self.fixture()
+        path = self.root / "run.json"
+        run = json.loads(path.read_text())
+        run["clock"] = "CLOCK_MONOTONIC"
+        path.write_text(json.dumps(run))
+        with self.assertRaisesRegex(RuntimeError, "raw-clock benchmark"):
             analyze(self.root)
 
 
