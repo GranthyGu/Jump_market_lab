@@ -1,4 +1,7 @@
 #include "matching_engine/spreads/session.hpp"
+#ifdef MARKETLAB_LATENCY_PROBES
+#include "spreads/latency_probe.hpp"
+#endif
 #include <algorithm>
 
 namespace marketlab::orders::spreads {
@@ -195,6 +198,10 @@ bool Session::run(const Header& h, const LinkHeader& context, std::span<const st
     return false;
   if (context.kind == LinkKind::NewOrder) {
     const auto request = copy_record<NewOrderRequest>(bytes);
+#ifdef MARKETLAB_LATENCY_PROBES
+    testing::latency::record(testing::latency::Kind::GroupStart, h.seq,
+                            request.header.requestId, topology_.shards[member_]);
+#endif
     const bool implied =
         std::any_of(topology_.symbols.begin(), topology_.symbols.end(), [&](auto symbol) {
           return std::memcmp(request.symbol, durable_.dictionary().symbol(symbol).data(), 32) == 0;

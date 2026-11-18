@@ -1,4 +1,7 @@
 #include "matching_engine/persistence/durable_engine.hpp"
+#ifdef MARKETLAB_LATENCY_PROBES
+#include "spreads/latency_probe.hpp"
+#endif
 
 #include <iostream>
 #include <utility>
@@ -334,7 +337,18 @@ void DurableEngine::command(const LinkHeader& h,
     }
     auto batch = acquire_batch();
     batch->emit = emit;
+#ifdef MARKETLAB_LATENCY_PROBES
+    const auto request = h.kind == LinkKind::NewOrder
+                             ? copy_record<NewOrderRequest>(bytes).header.requestId
+                             : 0;
+    if (h.kind == LinkKind::NewOrder)
+      testing::latency::record(testing::latency::Kind::OrdinaryStart, executed_ + 1, request, shard_);
+#endif
     working_.execute(h, bytes, batch->result);
+#ifdef MARKETLAB_LATENCY_PROBES
+    if (h.kind == LinkKind::NewOrder)
+      testing::latency::record(testing::latency::Kind::OrdinaryMemory, executed_ + 1, request, shard_);
+#endif
     batch->b = {executed_ + 1, working_.next_order(), working_.next_trade(), 0, 0};
     enqueue(std::move(batch));
   } catch (...) {

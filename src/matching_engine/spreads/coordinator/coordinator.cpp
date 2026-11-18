@@ -1,4 +1,7 @@
 #include "matching_engine/spreads/coordinator/coordinator.hpp"
+#ifdef MARKETLAB_LATENCY_PROBES
+#include "spreads/latency_probe.hpp"
+#endif
 #include <bit>
 
 namespace marketlab::orders::spreads {
@@ -119,6 +122,9 @@ void Coordinator::finish_views() {
 }
 
 void Coordinator::memory_done() {
+#ifdef MARKETLAB_LATENCY_PROBES
+  testing::latency::record(testing::latency::Kind::GroupMemory, active_seq_, 0, 0, participants_);
+#endif
   scratch_.clear();
   integer(scratch_, participants_, 1);
   integer(scratch_, market_members_, 1);
