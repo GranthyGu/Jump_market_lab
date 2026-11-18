@@ -63,6 +63,8 @@ void RouterGroup::pause(std::string_view reason) {
 
 void RouterGroup::worker_lost() {
   pause("worker business connection lost");
+  if (!epoch_)
+    return;  // Initial connection failures cannot carry an established epoch.
   const std::string_view reason = "Router lost worker business connection";
   links_.send(coordinator_,
               {MessageKind::Pause, epoch_, publication_.dispatched()},
@@ -119,6 +121,11 @@ void RouterGroup::initial_publication() {
 
 void RouterGroup::control(const FrameView& message) {
   const auto& h = message.header;
+  if (h.kind == MessageKind::Pause && !epoch_ &&
+      h.epoch == links_.identity(coordinator_).instance) {
+    pause("Coordinator paused before initial recovery");
+    return;
+  }
   if (h.kind == MessageKind::Recovered) {
     if (!h.epoch || !h.seq || h.flags || h.round || !message.body.empty() || !settled() ||
         (epoch_ && (epoch_ != h.epoch || h.seq <= join_)))

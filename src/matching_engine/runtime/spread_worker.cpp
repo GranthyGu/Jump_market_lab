@@ -165,6 +165,13 @@ void Worker::recover() {
 
 void Worker::control(const FrameView& message) {
   const auto& h = message.header;
+  // Other members may still be connecting before the first recovery request.
+  // A pause from the authenticated Coordinator does not establish a join.
+  if (h.kind == MessageKind::Pause && !epoch_ &&
+      h.epoch == links_.identity(coordinator_).instance) {
+    pause("Coordinator paused before initial recovery", false);
+    return;
+  }
   if (h.kind == MessageKind::Recovered) {
     if (!h.epoch || !h.seq || h.round || h.flags || !message.body.empty() || failed_ ||
         (epoch_ && epoch_ != h.epoch) || session_.active() || deferred_ ||
