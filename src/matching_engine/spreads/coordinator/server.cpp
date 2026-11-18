@@ -201,7 +201,7 @@ class Server {
         targets |= member_targets(i);
     }
     if (accepted_[0].instance)
-      for (unsigned i = 0; i < 10; ++i)
+      for (unsigned i = 0; i < source_count; ++i)
         if (!sources_[i].same_levels(core_.sources()[i]))
           throw std::runtime_error("Recovered real window differs from confirmed group boundary");
     installing_ = true;

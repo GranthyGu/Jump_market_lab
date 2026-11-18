@@ -42,7 +42,8 @@ MatchingEngine::MatchingEngine(const OrderConfig& config, std::uint16_t shard)
     book.lower = limits.lower;
     book.upper = limits.upper;
     book.signed_price = config.spreads && (product.symbol == config.spread_symbols[3] ||
-                                           product.symbol == config.spread_symbols[4]);
+                                           product.symbol == config.spread_symbols[4] ||
+                                           product.symbol == config.spread_symbols[5]);
     symbols_.emplace(std::string_view(book.symbol, product.symbol.size()), books_.size() - 1);
   }
   usernames_.resize(config.accounts.size() + 1);

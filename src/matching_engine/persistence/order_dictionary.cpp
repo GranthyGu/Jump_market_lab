@@ -39,7 +39,8 @@ OrderDictionary::OrderDictionary(const OrderConfig& config) {
     policies_[i + 1] = {config.products[i].shard,
                         product_limits(config, i),
                         config.spreads && (symbol == config.spread_symbols[3] ||
-                                           symbol == config.spread_symbols[4])};
+                                           symbol == config.spread_symbols[4] ||
+                                           symbol == config.spread_symbols[5])};
     if (!symbol_ids_.emplace(symbol, static_cast<std::uint16_t>(i + 1)).second) {
       throw std::invalid_argument("Duplicate order dictionary symbol");
     }
@@ -124,16 +125,30 @@ void OrderDictionary::validate_execution(const ExecutionRecord& record,
             known_user(t.buyer);
             known_user(t.seller);
           } else {
-            if (slot != spreads::AB && slot != spreads::AC)
+            if (slot != spreads::AB && slot != spreads::AC && slot != spreads::BF)
               throw std::runtime_error("Combination record must name a spread");
             id(t.order, spread_owner);
             id(t.a.order, topology_->shards[1]);
-            id(t.x.order, topology_->shards[slot == spreads::AB ? 2 : 3]);
+            id(t.x.order, topology_->shards[slot == spreads::AC ? 3 : 2]);
             known_user(t.user);
             known_user(t.a.user);
             known_user(t.x.user);
-            if (t.execution.aggressor != t.order && t.execution.aggressor != t.a.order &&
-                t.execution.aggressor != t.x.order)
+            bool participating = t.execution.aggressor == t.order ||
+                                 t.execution.aggressor == t.a.order ||
+                                 t.execution.aggressor == t.x.order;
+            if constexpr (std::is_same_v<T, ButterflyExecution>) {
+              if (slot != spreads::BF)
+                throw std::runtime_error("Butterfly record names a calendar spread");
+              id(t.b_second.order, topology_->shards[2]);
+              id(t.c.order, topology_->shards[3]);
+              known_user(t.b_second.user);
+              known_user(t.c.user);
+              participating |=
+                  t.execution.aggressor == t.b_second.order || t.execution.aggressor == t.c.order;
+            } else if (slot == spreads::BF) {
+              throw std::runtime_error("Calendar record names a butterfly");
+            }
+            if (!participating)
               throw std::runtime_error("Execution key does not identify a participating order");
           }
         }

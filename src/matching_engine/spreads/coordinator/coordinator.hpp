@@ -13,7 +13,7 @@ class Coordinator {
   Coordinator(std::uint64_t epoch, Send);
   void initialize(const Sources&,
                   const std::array<std::uint64_t, 4>& local_batches,
-                  std::uint8_t reinstall_targets = 31);
+                  std::uint8_t reinstall_targets = all_targets);
   void receive(std::uint8_t member, const Header&, std::span<const std::uint8_t>);
   void pause(std::string_view reason);
 

@@ -15,6 +15,22 @@ Side opposite(Side side) {
   return side == Side::Buy ? Side::Sell : Side::Buy;
 }
 
+unsigned owned_leg(const Route& route, const Topology& topology, unsigned member) {
+  for (unsigned leg = 0; leg < route.legs(); ++leg)
+    if (topology.owner(route.source(leg) / 2) == member)
+      return leg;
+  throw std::runtime_error("Execution route has no source on this member");
+}
+
+Quantity leg_quantity(const Route& route, unsigned leg, Quantity target_quantity) {
+  if (target_quantity <= 0 || target_quantity % route.target_weight)
+    throw std::runtime_error("Execution does not contain whole ratio units");
+  const auto quantity = std::int64_t(target_quantity / route.target_weight) * route.weight(leg);
+  if (quantity > INT32_MAX)
+    throw std::runtime_error("Real leg quantity exceeds command chunk capacity");
+  return static_cast<Quantity>(quantity);
+}
+
 SourcePiece piece(const MatchingEngine::FillPiece& p) {
   return {p.after.id, p.after.user, p.after.price, p.quantity};
 }
@@ -126,6 +142,8 @@ void Session::reset_round() {
   for (auto& bytes : allocations_)
     bytes.clear();
   allocation_at_.fill(0);
+  allocation_counts_.fill(0);
+  pending_b_second_ = false;
   round_members_ = executed_ = 0;
   round_ready_ = details_ready_ = false;
   plan_ = {};
@@ -135,7 +153,7 @@ Sources Session::real_sources() const {
   auto next = sources_;
   const auto own = member_sources(member_);
   for (unsigned i = 0; i < next.size(); ++i)
-    if (own & (1U << i)) {
+    if ((own & (1U << i)) && topology_.symbols[i / 2]) {
       next[i] = core_.source_depth(topology_.symbols[i / 2], i % 2 == Bid ? Side::Buy : Side::Sell);
       next[i].version = sources_[i].version;
     }
@@ -199,8 +217,10 @@ bool Session::run(const Header& h, const LinkHeader& context, std::span<const st
   if (context.kind == LinkKind::NewOrder) {
     const auto request = copy_record<NewOrderRequest>(bytes);
 #ifdef MARKETLAB_LATENCY_PROBES
-    testing::latency::record(testing::latency::Kind::GroupStart, h.seq,
-                            request.header.requestId, topology_.shards[member_]);
+    testing::latency::record(testing::latency::Kind::GroupStart,
+                             h.seq,
+                             request.header.requestId,
+                             topology_.shards[member_]);
 #endif
     const bool implied =
         std::any_of(topology_.symbols.begin(), topology_.symbols.end(), [&](auto symbol) {
@@ -231,8 +251,8 @@ void Session::select_round() {
   auto members = std::uint8_t(1U << member_);
   for (unsigned route = 0; route < routes.size(); ++route)
     if (plan_.prefixes[route]) {
-      members |= 1U << topology_.owner(routes[route].first / 2);
-      members |= 1U << topology_.owner(routes[route].second / 2);
+      for (unsigned leg = 0; leg < routes[route].legs(); ++leg)
+        members |= 1U << topology_.owner(routes[route].source(leg) / 2);
     }
   if (members == (1U << member_)) {
     if (plan_.direct) {
@@ -264,13 +284,19 @@ void Session::select_round() {
     }
     const auto count_at = scratch_.size();
     integer(scratch_, 0, 1);
-    for (std::uint8_t route = 0; route < routes.size(); ++route)
-      if (plan_.prefixes[route] && (topology_.owner(routes[route].first / 2) == member ||
-                                    topology_.owner(routes[route].second / 2) == member)) {
-        integer(scratch_, route, 1);
-        integer(scratch_, plan_.prefixes[route], 4);
-        ++scratch_[count_at];
-      }
+    for (unsigned i = 0; i < plan_.count; ++i) {
+      const auto& slice = plan_.slices[i];
+      if (slice.route == no_slot)
+        continue;
+      const auto& route = routes[slice.route];
+      for (unsigned leg = 0; leg < route.legs(); ++leg)
+        if (topology_.owner(route.source(leg) / 2) == member) {
+          integer(scratch_, slice.route, 1);
+          integer(scratch_, slice.quantity, 4);
+          ++scratch_[count_at];
+          break;
+        }
+    }
     callbacks_.peer(member, message(MessageKind::ExecutePrefix), scratch_);
   }
   if (plan_.direct)
@@ -378,7 +404,7 @@ bool Session::execute(std::uint8_t from, const Header& h, std::span<const std::u
     incoming.original = incoming.remaining = Quantity(reader.number(4));
     const auto target = topology_.slot(incoming.symbol);
     validate_identity(incoming.id, incoming.user, from);
-    if (target >= 5 || topology_.owner(target) != from || incoming.original <= 0 ||
+    if (target >= product_count || topology_.owner(target) != from || incoming.original <= 0 ||
         (incoming.side != Side::Buy && incoming.side != Side::Sell) ||
         incoming.price < topology_.limits[target].lower ||
         incoming.price > topology_.limits[target].upper)
@@ -387,22 +413,28 @@ bool Session::execute(std::uint8_t from, const Header& h, std::span<const std::u
              !allocations_complete_) {
     throw std::runtime_error("Peer advanced before ordered allocations completed");
   }
-  std::array<Quantity, 12> prefixes{};
+  Plan plan;
   const auto count = reader.number(1);
-  if (!count || count > 2)
-    throw std::runtime_error("Invalid peer prefix count");
+  if (!count || count > plan.slices.size())
+    throw std::runtime_error("Invalid peer execution segment count");
   std::uint64_t total = 0;
+  std::array<std::uint64_t, source_count> consumed{};
   for (unsigned i = 0; i < count; ++i) {
     const auto route = reader.number(1);
     const auto quantity = Quantity(reader.number(4));
-    if (route >= routes.size() || quantity <= 0 || prefixes[route])
-      throw std::runtime_error("Invalid/duplicate execution prefix");
+    if (route >= routes.size() || quantity <= 0 || quantity > INT32_MAX - plan.prefixes[route])
+      throw std::runtime_error("Invalid execution segment quantity");
     const auto& r = routes[route];
     if (r.target != topology_.slot(incoming.symbol) ||
-        r.side != (incoming.side == Side::Buy ? Ask : Bid) ||
-        (topology_.owner(r.first / 2) != member_ && topology_.owner(r.second / 2) != member_))
-      throw std::runtime_error("Execution prefix does not belong to source");
-    prefixes[route] = quantity;
+        r.side != (incoming.side == Side::Buy ? Ask : Bid))
+      throw std::runtime_error("Execution segment belongs to another target");
+    const auto leg = owned_leg(r, topology_, member_);
+    const auto source = r.source(leg);
+    consumed[source] += leg_quantity(r, leg, quantity);
+    if (consumed[source] > sources_[source].total())
+      throw std::runtime_error("Execution overdraws advertised shared source");
+    plan.slices[plan.count++] = {quantity, static_cast<std::uint8_t>(route)};
+    plan.prefixes[route] += quantity;
     total += quantity;
   }
   reader.finish();
@@ -416,23 +448,22 @@ bool Session::execute(std::uint8_t from, const Header& h, std::span<const std::u
   incoming_ = incoming;
   remote_quantity_ += total;
   allocations_complete_ = false;
-  plan_.prefixes = prefixes;
-  for (std::uint8_t route = 0; route < routes.size(); ++route)
-    if (prefixes[route]) {
-      const auto& r = routes[route];
-      const auto source = topology_.owner(r.first / 2) == member_ ? r.first : r.second;
-      if (std::uint64_t(prefixes[route]) > sources_[source].total())
-        throw std::runtime_error("Peer prefix exceeds advertised real source window");
-      take(topology_.symbols[source / 2],
-           source % 2 == Bid ? Side::Buy : Side::Sell,
-           prefixes[route],
-           local_[route]);
-    }
+  plan_ = plan;
+  for (unsigned i = 0; i < plan_.count; ++i) {
+    const auto& slice = plan_.slices[i];
+    const auto& route = routes[slice.route];
+    const auto leg = owned_leg(route, topology_, member_);
+    const auto source = route.source(leg);
+    take(topology_.symbols[source / 2],
+         source % 2 == Bid ? Side::Buy : Side::Sell,
+         leg_quantity(route, leg, slice.quantity),
+         local_[slice.route]);
+  }
   // Real state is complete now; identities and allocations proceed independently.
   source_done();
   callbacks_.peer(from, message(MessageKind::ExecutionDone), {});
   for (std::uint8_t route = 0; route < routes.size(); ++route)
-    if (prefixes[route])
+    if (plan_.prefixes[route])
       send_details(route);
   return true;
 }
@@ -467,8 +498,8 @@ void Session::receive_details(std::uint8_t from,
       bytes.size() != 7 + count * 20 || (h.flags & ~group::final_part))
     throw std::runtime_error("Invalid source detail chunk");
   const auto& r = routes[route];
-  const unsigned side = topology_.owner(r.first / 2) == from ? 0 : 1;
-  const auto source = side ? r.second : r.first;
+  const unsigned side = owned_leg(r, topology_, from);
+  const auto source = r.source(side);
   if (topology_.owner(source / 2) != from)
     throw std::runtime_error("Foreign source detail route");
   auto& details = details_[route][side];
@@ -487,12 +518,12 @@ void Session::receive_details(std::uint8_t from,
     validate_identity(p.order, p.user, from);
     const auto& limits = topology_.limits[source / 2];
     if (p.quantity <= 0 || p.price < limits.lower || p.price > limits.upper ||
-        details.quantity + p.quantity > std::uint64_t(plan_.prefixes[route]))
+        details.quantity + p.quantity > std::uint64_t(leg_quantity(r, side, plan_.prefixes[route])))
       throw std::runtime_error("Source details exceed price/quantity limits");
     if (!details.pieces.empty()) {
       const auto& previous = details.pieces.back();
       if ((source % 2 == Bid ? p.price > previous.price : p.price < previous.price) ||
-          (p.price == previous.price && p.order <= previous.order))
+          (p.price == previous.price && p.order < previous.order))
         throw std::runtime_error("Source details violate price/FIFO order");
     }
     details.pieces.push_back(p);
@@ -500,7 +531,7 @@ void Session::receive_details(std::uint8_t from,
   }
   reader.finish();
   if (h.flags & group::final_part) {
-    if (details.quantity != std::uint64_t(plan_.prefixes[route]))
+    if (details.quantity != std::uint64_t(leg_quantity(r, side, plan_.prefixes[route])))
       throw std::runtime_error("Incomplete final source detail chunk");
     details.complete = true;
   }
@@ -511,22 +542,24 @@ void Session::send_allocations(std::uint8_t member, bool final) {
   auto& bytes = allocations_[member];
   if (bytes.empty())
     bytes.resize(2);
-  const auto count = (bytes.size() - 2) / 37;
+  const auto count = allocation_counts_[member];
   bytes[0] = count & 255;
   bytes[1] = count >> 8;
   callbacks_.peer(member, message(MessageKind::Allocations, final ? group::final_part : 0), bytes);
   bytes.clear();
+  allocation_counts_[member] = 0;
 }
 
 void Session::queue_allocation(std::uint8_t route,
                                unsigned side,
                                std::uint32_t index,
                                const Combination& fill,
-                               const SourcePiece& other) {
+                               const SourcePiece& other,
+                               unsigned part) {
   const auto& r = routes[route];
-  const auto member = topology_.owner((side ? r.second : r.first) / 2);
+  const auto member = topology_.owner(r.source(side) / 2);
   auto& bytes = allocations_[member];
-  if (bytes.size() + 37 > body_limit)
+  if (bytes.size() + (r.spread == BF ? 102 : 37) > body_limit)
     send_allocations(member, false);
   if (bytes.empty())
     bytes.resize(2);
@@ -535,9 +568,19 @@ void Session::queue_allocation(std::uint8_t route,
   integer(bytes, fill.key.fill, 4);
   integer(bytes, fill.quantity, 4);
   integer(bytes, fill.timestamp, 8);
-  integer(bytes, other.order, 8);
-  integer(bytes, other.user, 4);
-  integer(bytes, std::uint32_t(other.price), 4);
+  if (r.spread == BF) {
+    integer(bytes, part, 1);
+    for (const auto* identity : {&fill.spread, &fill.a, &fill.x, &fill.b_second, &fill.c}) {
+      integer(bytes, identity->order, 8);
+      integer(bytes, identity->user, 4);
+      integer(bytes, std::uint32_t(identity->price), 4);
+    }
+  } else {
+    integer(bytes, other.order, 8);
+    integer(bytes, other.user, 4);
+    integer(bytes, std::uint32_t(other.price), 4);
+  }
+  ++allocation_counts_[member];
   check_budget();
 }
 
@@ -545,11 +588,13 @@ void Session::pair_details() {
   if (details_ready_ || executed_ != (round_members_ & ~(1U << member_)))
     return;
   for (unsigned route = 0; route < routes.size(); ++route)
-    if (plan_.prefixes[route] && (!details_[route][0].complete || !details_[route][1].complete))
-      return;
-  std::array<std::array<PieceCursor, 2>, 12> cursors{};
+    if (plan_.prefixes[route])
+      for (unsigned leg = 0; leg < routes[route].legs(); ++leg)
+        if (!details_[route][leg].complete)
+          return;
+  std::array<std::array<PieceCursor, 3>, route_count> cursors{};
   for (unsigned route = 0; route < routes.size(); ++route)
-    for (unsigned side = 0; side < 2; ++side)
+    for (unsigned side = 0; side < routes[route].legs(); ++side)
       cursors[route][side] = PieceCursor(details_[route][side].pieces);
   std::size_t direct_at = 0;
   for (unsigned s = 0; s < plan_.count; ++s) {
@@ -563,6 +608,60 @@ void Session::pair_details() {
         if (p.allocated == p.quantity)
           ++direct_at;
         remaining -= quantity;
+      } else if (routes[slice.route].spread == BF) {
+        const auto& route = routes[slice.route];
+        auto units = remaining / route.target_weight;
+        for (unsigned leg = 0; leg < route.legs(); ++leg) {
+          const auto available = cursors[slice.route][leg].remaining() / route.weight(leg);
+          units = std::min(units, static_cast<Quantity>(available ? available : 1));
+        }
+        if (units <= 0)
+          throw std::runtime_error("Butterfly allocation left a fractional unit");
+        Combination fill;
+        fill.route = slice.route;
+        fill.quantity = units;
+        fill.key = {incoming_.id, next_fill()};
+        fill.timestamp = unix_ns();
+
+        struct Allocation {
+          unsigned leg, index, part;
+        };
+
+        std::array<Allocation, 4> assignments{};
+        unsigned count = 0;
+        for (unsigned leg = 0; leg < route.legs(); ++leg) {
+          auto& cursor = cursors[slice.route][leg];
+          const auto slot = route.source(leg) / 2;
+          auto install = [&](unsigned part) {
+            const auto& p = cursor.head();
+            set_participant(fill, slot, {p.order, p.user, p.price}, part);
+            assignments[count++] = {leg, cursor.index(), part};
+          };
+          install(0);
+          if (route.weight(leg) == 2) {
+            if (cursor.remaining() >= 2 * units) {
+              set_participant(fill, B, participant(fill, B), 1);
+              cursor.consume(2 * units);
+            } else {
+              cursor.consume(units);
+              install(1);
+              cursor.consume(units);
+            }
+          } else {
+            cursor.consume(units);
+          }
+        }
+        complete_butterfly(fill, incoming_);
+        const auto parts = route.target == B && fill.x != fill.b_second ? 2U : 1U;
+        for (unsigned part = 0; part < parts; ++part) {
+          fill_incoming(pairing_, participant_quantity(fill, route.target, part));
+          record(core_, *result_, topology_, fill, pairing_, part);
+        }
+        for (unsigned i = 0; i < count; ++i) {
+          const auto& a = assignments[i];
+          queue_allocation(slice.route, a.leg, a.index, fill, {}, a.part);
+        }
+        remaining -= units * route.target_weight;
       } else {
         auto& first = cursors[slice.route][0];
         auto& second = cursors[slice.route][1];
@@ -601,7 +700,7 @@ void Session::receive_allocations(std::uint8_t from,
     throw std::runtime_error("Unexpected peer allocation");
   Reader reader{bytes};
   const auto count = reader.number(2);
-  if (bytes.size() != 2 + count * 37 || (!count && !(h.flags & group::final_part)))
+  if ((!count && !(h.flags & group::final_part)) || count > bytes.size() / 37)
     throw std::runtime_error("Invalid allocation chunk size");
   for (unsigned i = 0; i < count; ++i) {
     const auto route = reader.number(1);
@@ -609,37 +708,87 @@ void Session::receive_allocations(std::uint8_t from,
     const auto fill = reader.number(4);
     const auto quantity = Quantity(reader.number(4));
     const auto time = reader.number(8);
-    const SourcePiece other{
-        reader.number(8), std::uint32_t(reader.number(4)), Price(reader.number(4)), quantity};
     if (route >= routes.size() || !plan_.prefixes[route] || index != allocation_at_[route] ||
-        index >= local_[route].size() || !fill || fill <= fill_ || !time)
+        index >= local_[route].size() || !fill || fill < fill_ || !time || quantity <= 0)
       throw std::runtime_error("Invalid/duplicate FIFO allocation");
     auto& p = local_[route][index];
-    if (quantity <= 0 || quantity > p.quantity - p.allocated)
-      throw std::runtime_error("Allocation exceeds local FIFO piece");
     const auto& r = routes[route];
-    const bool first = topology_.owner(r.first / 2) == member_;
-    const auto other_source = first ? r.second : r.first;
-    validate_identity(other.order, other.user, topology_.owner(other_source / 2));
-    const auto& limits = topology_.limits[other_source / 2];
-    if (other.price < limits.lower || other.price > limits.upper)
-      throw std::runtime_error("Remote allocation price is outside source limits");
-    const auto own = piece(p);
-    const auto combination = pair(route,
-                                  incoming_,
-                                  first ? own : other,
-                                  first ? other : own,
-                                  quantity,
-                                  {incoming_.id, std::uint32_t(fill)},
-                                  time);
-    p.allocated += quantity;
-    record(core_, *result_, topology_, combination, allocated(p, p.allocated));
+    const auto leg = owned_leg(r, topology_, member_);
+    const auto slot = r.source(leg) / 2;
+    Combination combination;
+    unsigned part = 0;
+    if (r.spread == BF) {
+      combination.route = route;
+      combination.quantity = quantity;
+      combination.key = {incoming_.id, std::uint32_t(fill)};
+      combination.timestamp = time;
+      part = reader.number(1);
+      if (part > 1 || (part && slot != B))
+        throw std::runtime_error("Invalid butterfly allocation part");
+      for (auto* identity : {&combination.spread,
+                             &combination.a,
+                             &combination.x,
+                             &combination.b_second,
+                             &combination.c})
+        *identity = {reader.number(8), std::uint32_t(reader.number(4)), Price(reader.number(4))};
+      auto completed = combination;
+      complete_butterfly(completed, incoming_);
+      combination.spread_side = completed.spread_side;
+      if (combination != completed)
+        throw std::runtime_error("Butterfly aggressor price/identity differs from its sources");
+      for (const auto target : {BF, A, B, C})
+        for (unsigned n = 0; n < (target == B ? 2U : 1U); ++n) {
+          const auto& value = participant(combination, target, n);
+          validate_identity(value.order, value.user, topology_.owner(target));
+          const auto limits = topology_.limits[target];
+          if (value.price < limits.lower || value.price > limits.upper)
+            throw std::runtime_error("Butterfly participant price outside limits");
+        }
+      if (part) {
+        if (!pending_b_second_ || combination != pending_b_ || fill != fill_)
+          throw std::runtime_error("Butterfly second B piece lacks its first piece");
+        pending_b_second_ = false;
+      } else {
+        if (pending_b_second_ || fill <= fill_)
+          throw std::runtime_error("Butterfly allocation order mismatch");
+        if (slot == B && combination.x != combination.b_second) {
+          pending_b_ = combination;
+          pending_b_second_ = true;
+        }
+      }
+    } else {
+      if (pending_b_second_ || fill <= fill_)
+        throw std::runtime_error("Calendar allocation order mismatch");
+      const SourcePiece other{
+          reader.number(8), std::uint32_t(reader.number(4)), Price(reader.number(4)), quantity};
+      const auto other_source = r.source(1 - leg);
+      validate_identity(other.order, other.user, topology_.owner(other_source / 2));
+      const auto& limits = topology_.limits[other_source / 2];
+      if (other.price < limits.lower || other.price > limits.upper)
+        throw std::runtime_error("Remote allocation price is outside source limits");
+      const auto own = piece(p);
+      combination = pair(route,
+                         incoming_,
+                         leg == 0 ? own : other,
+                         leg == 0 ? other : own,
+                         quantity,
+                         {incoming_.id, std::uint32_t(fill)},
+                         time);
+    }
+    const auto amount = participant_quantity(combination, slot, part);
+    if (amount > p.quantity - p.allocated ||
+        participant(combination, slot, part).price != p.after.price)
+      throw std::runtime_error("Allocation exceeds local FIFO piece/price");
+    p.allocated += amount;
+    record(core_, *result_, topology_, combination, allocated(p, p.allocated), part);
     fill_ = fill;
     if (p.allocated == p.quantity)
       ++allocation_at_[route];
   }
   reader.finish();
   if (h.flags & group::final_part) {
+    if (pending_b_second_)
+      throw std::runtime_error("Final allocation omitted second B piece");
     for (unsigned route = 0; route < routes.size(); ++route)
       if (allocation_at_[route] != local_[route].size())
         throw std::runtime_error("Final allocations left an unpaired real prefix");

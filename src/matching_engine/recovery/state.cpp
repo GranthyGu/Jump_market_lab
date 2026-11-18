@@ -14,7 +14,8 @@ CommittedState::CommittedState(const OrderConfig& c, std::uint16_t shard)
                         {},
                         {},
                         c.spreads && (c.products[i].symbol == c.spread_symbols[3] ||
-                                      c.products[i].symbol == c.spread_symbols[4])});
+                                      c.products[i].symbol == c.spread_symbols[4] ||
+                                      c.products[i].symbol == c.spread_symbols[5])});
     }
   }
 }

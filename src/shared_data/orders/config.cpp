@@ -80,8 +80,8 @@ OrderConfig load_order_config(const std::string& path) {
     } else if (key == "coordinator")
       c.coordinator = address(f);
     else if (key == "spread_symbols") {
-      if (f.size() != c.spread_symbols.size())
-        throw std::runtime_error("spread_symbols requires A,B,C,SP_AB,SP_AC");
+      if (f.size() != 5 && f.size() != c.spread_symbols.size())
+        throw std::runtime_error("spread_symbols requires A,B,C,SP_AB,SP_AC[,BF_ABC]");
       std::copy(f.begin(), f.end(), c.spread_symbols.begin());
     } else if (key == "spread_peer") {
       if (f.size() != 3)
@@ -159,7 +159,8 @@ PriceLimits product_limits(const OrderConfig& c, std::size_t index) {
     return PriceLimits{std::int64_t(product.previous_close) * 90 / 100,
                        std::int64_t(product.previous_close) * 110 / 100};
   };
-  if (!c.spreads || (p.symbol != c.spread_symbols[3] && p.symbol != c.spread_symbols[4]))
+  if (!c.spreads || (p.symbol != c.spread_symbols[3] && p.symbol != c.spread_symbols[4] &&
+                     p.symbol != c.spread_symbols[5]))
     return outright(p);
   auto find = [&](std::size_t slot) -> const Product& {
     const auto it = std::find_if(c.products.begin(), c.products.end(), [&](const auto& product) {
@@ -170,6 +171,10 @@ PriceLimits product_limits(const OrderConfig& c, std::size_t index) {
     return *it;
   };
   const auto a = outright(find(0));
+  if (p.symbol == c.spread_symbols[5]) {
+    const auto b = outright(find(1)), far = outright(find(2));
+    return {a.lower - 2 * b.upper + far.lower, a.upper - 2 * b.lower + far.upper};
+  }
   const auto x = outright(find(p.symbol == c.spread_symbols[3] ? 1 : 2));
   return {a.lower - x.upper, a.upper - x.lower};
 }

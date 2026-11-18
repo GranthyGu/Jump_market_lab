@@ -225,7 +225,7 @@ void HistoryStore::index_worker() {
           std::visit(
               [&](const auto& trade) {
                 using T = std::decay_t<decltype(trade)>;
-                if constexpr (std::is_same_v<T, SpreadExecution>) {
+                if constexpr (std::is_base_of_v<SpreadExecution, T>) {
                   index_->insert(users_.at(fixed_string(trade.user)), where);
                 } else {
                   const auto buyer = users_.at(fixed_string(trade.buyer));
@@ -357,7 +357,7 @@ void HistoryStore::query_worker() {
             const bool participant = std::visit(
                 [&](const auto& trade) {
                   using T = std::decay_t<decltype(trade)>;
-                  if constexpr (std::is_same_v<T, SpreadExecution>)
+                  if constexpr (std::is_base_of_v<SpreadExecution, T>)
                     return fixed_string(trade.user) == name;
                   else
                     return fixed_string(trade.buyer) == name || fixed_string(trade.seller) == name;
@@ -408,7 +408,7 @@ void HistoryStore::poll() {
       std::visit(
           [&](const auto& trade) {
             using T = std::decay_t<decltype(trade)>;
-            if constexpr (std::is_same_v<T, SpreadExecution>) {
+            if constexpr (std::is_base_of_v<SpreadExecution, T>) {
               SpreadExecutionHistory record{};
               record.header = {MessageType::SpreadExecutionHistory,
                                sizeof(record),
@@ -430,7 +430,17 @@ void HistoryStore::poll() {
               };
               leg(record.a, trade.a);
               leg(record.x, trade.x);
-              task.emit(LinkKind::Event, task.context, record_bytes(record));
+              if constexpr (std::is_same_v<T, ButterflyExecution>) {
+                ButterflyExecutionHistory butterfly{};
+                butterfly.spread = record;
+                butterfly.spread.header.messageType = MessageType::ButterflyExecutionHistory;
+                butterfly.spread.header.messageLength = sizeof(butterfly);
+                leg(butterfly.bSecond, trade.b_second);
+                leg(butterfly.c, trade.c);
+                task.emit(LinkKind::Event, task.context, record_bytes(butterfly));
+              } else {
+                task.emit(LinkKind::Event, task.context, record_bytes(record));
+              }
             } else {
               TradeHistoryRecord record{};
               record.header = {

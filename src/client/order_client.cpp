@@ -446,7 +446,8 @@ class Console {
             << "  " << std::setw(12) << fixed_string(value.symbol) << "  " << std::right
             << std::setw(8) << value.quantity << "  " << std::setw(10) << value.price << "  "
             << value.tradeId;
-        std::cout << console::Label{implied ? "LEG" : "TRADE", console::magenta} << ' ' << row.str();
+        std::cout << console::Label{implied ? "LEG" : "TRADE", console::magenta} << ' '
+                  << row.str();
         if (implied) {
           const auto leg = copy_record<ImpliedLegHistory>(bytes);
           std::cout << "  execution=" << leg.aggressorOrderId << ':' << leg.fillNo;
@@ -454,25 +455,34 @@ class Console {
         std::cout << '\n';
         break;
       }
-      case MessageType::SpreadExecutionHistory: {
+      case MessageType::SpreadExecutionHistory:
+      case MessageType::ButterflyExecutionHistory: {
         if (!history_ || h.requestId != waiting_)
           throw std::runtime_error("Unexpected spread history record");
-        const auto value = copy_record<SpreadExecutionHistory>(bytes);
+        const bool butterfly = h.messageType == MessageType::ButterflyExecutionHistory;
+        const auto value = butterfly ? copy_record<ButterflyExecutionHistory>(bytes).spread
+                                     : copy_record<SpreadExecutionHistory>(bytes);
         const auto shard = static_cast<std::uint16_t>(value.tradeId >> 48);
         if (value.tradeId <= history_last_ids_[shard] || fixed_string(value.user) != options_.user)
           throw std::runtime_error("Spread history identity/order mismatch");
         history_last_ids_[shard] = value.tradeId;
         ++history_page_counts_[shard];
         ++history_total_;
-        std::cout << console::Label{"SPREAD", console::magenta} << ' ' << history_total_
-                  << "  " << console::time(value.timestamp, true) << "  "
+        std::cout << console::Label{butterfly ? "BUTTERFLY" : "SPREAD", console::magenta} << ' '
+                  << history_total_ << "  " << console::time(value.timestamp, true) << "  "
                   << (value.side == Side::Buy ? "BUY " : "SELL ") << fixed_string(value.symbol)
                   << "  qty=" << value.quantity << "  price=" << value.price
-                  << "  trade=" << value.tradeId
-                  << "  execution=" << value.aggressorOrderId << ':' << value.fillNo
-                  << "  A=" << fixed_string(value.a.user) << '/' << value.a.orderId
-                  << '@' << value.a.price << "  X=" << fixed_string(value.x.user)
-                  << '/' << value.x.orderId << '@' << value.x.price << '\n';
+                  << "  trade=" << value.tradeId << "  execution=" << value.aggressorOrderId << ':'
+                  << value.fillNo << "  A=" << fixed_string(value.a.user) << '/' << value.a.orderId
+                  << '@' << value.a.price << (butterfly ? "  B1=" : "  X=")
+                  << fixed_string(value.x.user) << '/' << value.x.orderId << '@' << value.x.price;
+        if (butterfly) {
+          const auto full = copy_record<ButterflyExecutionHistory>(bytes);
+          std::cout << "  B2=" << fixed_string(full.bSecond.user) << '/' << full.bSecond.orderId
+                    << '@' << full.bSecond.price << "  C=" << fixed_string(full.c.user) << '/'
+                    << full.c.orderId << '@' << full.c.price;
+        }
+        std::cout << '\n';
         break;
       }
       case MessageType::TradeHistoryEnd: {

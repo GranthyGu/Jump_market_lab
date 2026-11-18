@@ -5,7 +5,7 @@
 #include <span>
 
 namespace marketlab::orders::group {
-inline constexpr std::uint16_t version = 1;
+inline constexpr std::uint16_t version = 2;
 inline constexpr std::size_t header_size = 26, maximum_frame = 64 * 1024;
 inline constexpr std::uint8_t final_part = 1, initial_view = 2;
 

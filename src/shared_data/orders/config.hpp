@@ -37,7 +37,7 @@ struct OrderConfig {
   std::vector<Product> products;
   bool spreads = false;
   Address coordinator{"127.0.0.1", 7120};
-  std::array<std::string, 5> spread_symbols{"A", "B", "C", "SP_AB", "SP_AC"};
+  std::array<std::string, 6> spread_symbols{"A", "B", "C", "SP_AB", "SP_AC", "BF_ABC"};
   std::vector<EngineShard> spread_peers;
   std::size_t max_connections = 4096;
   std::size_t max_pending = 65536;

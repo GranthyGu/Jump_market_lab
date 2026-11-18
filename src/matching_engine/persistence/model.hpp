@@ -90,12 +90,21 @@ struct SpreadExecution {
   bool operator==(const SpreadExecution&) const = default;
 };
 
+// Each B identity contributes quantity contracts; identical identities represent
+// two contracts from the same order. Half-tick B targets use adjacent prices.
+struct ButterflyExecution : SpreadExecution {
+  SpreadLeg b_second, c;
+  bool operator==(const ButterflyExecution&) const = default;
+};
+
 enum class TradeType : std::uint8_t {
   Direct = 1,
   Leg = 2,
-  Spread = 3
+  Spread = 3,
+  Butterfly = 4
 };
-using ExecutionRecord = std::variant<TradeRecord, ImpliedLegTrade, SpreadExecution>;
+using ExecutionRecord =
+    std::variant<TradeRecord, ImpliedLegTrade, SpreadExecution, ButterflyExecution>;
 
 inline TradeType trade_type(const ExecutionRecord& record) {
   return static_cast<TradeType>(record.index() + 1);

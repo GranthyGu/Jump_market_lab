@@ -75,10 +75,13 @@ class Session {
   Sources sources_{};
   Views views_{};
   std::vector<FillPiece> direct_;
-  std::array<std::vector<FillPiece>, 12> local_;
-  std::array<std::uint32_t, 12> allocation_at_{};
-  std::array<std::array<Details, 2>, 12> details_;
+  std::array<std::vector<FillPiece>, route_count> local_;
+  std::array<std::uint32_t, route_count> allocation_at_{};
+  std::array<std::array<Details, 3>, route_count> details_;
   std::array<Bytes, 4> allocations_;
+  std::array<std::uint16_t, 4> allocation_counts_{};
+  Combination pending_b_{};
+  bool pending_b_second_ = false;
   Bytes scratch_;
   bool begin(const Header&, std::uint8_t origin);
   void reset_round();
@@ -103,7 +106,8 @@ class Session {
                         unsigned source,
                         std::uint32_t index,
                         const Combination&,
-                        const SourcePiece& other);
+                        const SourcePiece& other,
+                        unsigned part = 0);
   bool execute(std::uint8_t, const Header&, std::span<const std::uint8_t>);
   void receive_details(std::uint8_t, const Header&, std::span<const std::uint8_t>);
   void receive_allocations(std::uint8_t, const Header&, std::span<const std::uint8_t>);

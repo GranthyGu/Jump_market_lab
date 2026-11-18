@@ -46,6 +46,8 @@ std::size_t message_size(MessageType type) {
       return sizeof(ImpliedLegHistory);
     case MessageType::SpreadExecutionHistory:
       return sizeof(SpreadExecutionHistory);
+    case MessageType::ButterflyExecutionHistory:
+      return sizeof(ButterflyExecutionHistory);
     case MessageType::TradeHistoryEnd:
       return sizeof(TradeHistoryEnd);
   }

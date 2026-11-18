@@ -137,6 +137,8 @@ std::size_t execution_bytes(TradeType type) {
     case TradeType::Leg:
       return stored_trade_bytes + 12;
     case TradeType::Spread:
+      return 197;
+    case TradeType::Butterfly:
       return maximum_execution_bytes;
   }
   throw std::runtime_error("Unknown trade record type");
@@ -149,7 +151,7 @@ void encode_execution(Bytes& out, const ExecutionRecord& record) {
   std::visit(
       [&](const auto& t) {
         using T = std::decay_t<decltype(t)>;
-        if constexpr (std::is_same_v<T, SpreadExecution>) {
+        if constexpr (std::is_base_of_v<SpreadExecution, T>) {
           integer(out, t.id, 8);
           integer(out, t.timestamp, 8);
           name(out, t.symbol.data());
@@ -164,6 +166,13 @@ void encode_execution(Bytes& out, const ExecutionRecord& record) {
             integer(out, leg->order, 8);
             name(out, leg->user.data());
             integer(out, static_cast<std::uint32_t>(leg->price), 4);
+          }
+          if constexpr (std::is_same_v<T, ButterflyExecution>) {
+            for (const auto* leg : {&t.b_second, &t.c}) {
+              integer(out, leg->order, 8);
+              name(out, leg->user.data());
+              integer(out, static_cast<std::uint32_t>(leg->price), 4);
+            }
           }
         } else {
           encode_trade(out, t);
@@ -187,9 +196,9 @@ ExecutionRecord decode_execution_body(Reader& r, TradeType type) {
       throw std::runtime_error("Invalid implied leg trade");
     return t;
   }
-  if (type != TradeType::Spread)
+  if (type != TradeType::Spread && type != TradeType::Butterfly)
     throw std::runtime_error("Unknown typed trade");
-  SpreadExecution t;
+  ButterflyExecution t;
   t.id = r.number(8);
   t.timestamp = r.number(8);
   t.symbol = r.name();
@@ -206,10 +215,28 @@ ExecutionRecord decode_execution_body(Reader& r, TradeType type) {
   }
   if (!t.id || !t.timestamp || t.quantity <= 0 || !t.execution.aggressor || !t.execution.fill ||
       !t.order || !t.a.order || !t.x.order || t.a.price <= 0 || t.x.price <= 0 ||
-      (t.side != Side::Buy && t.side != Side::Sell) ||
-      std::int64_t(t.price) != std::int64_t(t.a.price) - t.x.price || t.order == t.a.order ||
+      (t.side != Side::Buy && t.side != Side::Sell) || t.order == t.a.order ||
       t.order == t.x.order || t.a.order == t.x.order)
     throw std::runtime_error("Invalid spread execution");
+  if (type == TradeType::Spread) {
+    if (std::int64_t(t.price) != std::int64_t(t.a.price) - t.x.price)
+      throw std::runtime_error("Spread execution prices do not balance");
+    return static_cast<SpreadExecution>(t);
+  }
+  for (auto* leg : {&t.b_second, &t.c}) {
+    leg->order = r.number(8);
+    leg->user = r.name();
+    leg->price = signed32(r);
+  }
+  if (!t.b_second.order || !t.c.order || t.b_second.price <= 0 || t.c.price <= 0 ||
+      t.quantity > INT32_MAX / 2 || t.c.order == t.order || t.c.order == t.a.order ||
+      t.c.order == t.x.order || t.c.order == t.b_second.order || t.b_second.order == t.a.order ||
+      t.b_second.order == t.order ||
+      (t.x.order == t.b_second.order &&
+       (t.x.user != t.b_second.user ||
+        (t.x.price != t.b_second.price && t.execution.aggressor != t.x.order))) ||
+      std::int64_t(t.price) != std::int64_t(t.a.price) - t.x.price - t.b_second.price + t.c.price)
+    throw std::runtime_error("Butterfly execution prices/identities do not balance");
   return t;
 }
 

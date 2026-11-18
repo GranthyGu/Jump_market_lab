@@ -27,8 +27,8 @@ void Coordinator::initialize(const Sources& sources,
     validate(sources[i], static_cast<BookSide>(i % 2));
   sources_ = sources;
   batches_ = batches;
-  const auto changed = recompute(sources_, 1023, views_);
-  if (reinstall_targets & ~31U)
+  const auto changed = recompute(sources_, all_sources, views_);
+  if (reinstall_targets & ~unsigned(all_targets))
     throw std::runtime_error("Invalid initial view target mask");
   initializing_ = true;
   initialized_ = true;
@@ -96,10 +96,7 @@ void Coordinator::install(std::uint8_t targets, bool initial) {
 void Coordinator::finish_sources() {
   if (!declared_ || done_ != expected_)
     return;
-  std::uint16_t affected = 0;
-  for (unsigned i = 0; i < sources_.size(); ++i)
-    if (dirty_ & (1U << i))
-      affected |= dependencies[i];
+  const auto affected = affected_routes(dirty_);
   counters.route_recomputations += std::popcount(affected);
   const auto changed = recompute(sources_, dirty_, views_);
   install(changed, false);

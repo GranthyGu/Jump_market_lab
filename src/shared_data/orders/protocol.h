@@ -39,6 +39,7 @@ enum class MessageType : std::uint16_t {
   TradeHistoryEnd = 11,
   ImpliedLegHistory = 12,
   SpreadExecutionHistory = 13,
+  ButterflyExecutionHistory = 14,
 };
 
 enum class Side : std::uint8_t {
@@ -190,6 +191,11 @@ struct SpreadExecutionHistory {
   SpreadHistoryLeg a, x;
 };
 
+struct ButterflyExecutionHistory {
+  SpreadExecutionHistory spread;
+  SpreadHistoryLeg bSecond, c;
+};
+
 struct TradeHistoryEnd {
   Header header;
   Timestamp timestamp;
@@ -219,6 +225,7 @@ static_assert(sizeof(TradeHistoryRequest) == 34);
 static_assert(sizeof(TradeHistoryRecord) == 150);
 static_assert(sizeof(ImpliedLegHistory) == 162);
 static_assert(sizeof(SpreadExecutionHistory) == 211);
+static_assert(sizeof(ButterflyExecutionHistory) == 299);
 static_assert(sizeof(TradeHistoryEnd) == 46);
 
 template <typename T>
@@ -232,11 +239,12 @@ static_assert(is_wire_record<Header> && is_wire_record<OrderState> &&
               is_wire_record<ActiveOrderSnapshot> && is_wire_record<RequestRejected> &&
               is_wire_record<TradeHistoryRequest> && is_wire_record<TradeHistoryRecord> &&
               is_wire_record<TradeHistoryEnd> && is_wire_record<ImpliedLegHistory> &&
-              is_wire_record<SpreadExecutionHistory>);
+              is_wire_record<SpreadExecutionHistory> && is_wire_record<ButterflyExecutionHistory>);
 
 constexpr bool is_history_record(MessageType type) {
   return type == MessageType::TradeHistoryRecord || type == MessageType::ImpliedLegHistory ||
-         type == MessageType::SpreadExecutionHistory;
+         type == MessageType::SpreadExecutionHistory ||
+         type == MessageType::ButterflyExecutionHistory;
 }
 
 // Value-initialize records to zero before assigning fields. Character fields

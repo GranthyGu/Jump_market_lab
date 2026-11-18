@@ -40,7 +40,7 @@ void encode_order(Bytes&, const StoredOrder&);
 StoredOrder decode_order(Reader&, bool signed_price = false);
 void encode_trade(Bytes&, const TradeRecord&);
 TradeRecord decode_trade(Reader&, bool signed_price = false);
-inline constexpr std::size_t execution_prefix_bytes = 3, maximum_execution_bytes = 197;
+inline constexpr std::size_t execution_prefix_bytes = 3, maximum_execution_bytes = 285;
 std::size_t execution_bytes(TradeType);
 void encode_execution(Bytes&, const ExecutionRecord&);
 ExecutionRecord decode_execution(Reader&);

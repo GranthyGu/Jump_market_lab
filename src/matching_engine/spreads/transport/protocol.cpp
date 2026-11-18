@@ -95,22 +95,51 @@ persistence::Boundary read_boundary(Reader& r) {
   return b;
 }
 
+namespace {
+void put_view(Bytes& out, unsigned id, const Implied& view) {
+  integer(out, id, 1);
+  integer(out, view.count, 1);
+  integer(out, view.more, 1);
+  for (unsigned j = 0; j < view.count; ++j) {
+    integer(out, static_cast<std::uint32_t>(view.price[j]), 4);
+    integer(out, view.quantity[j], 8);
+  }
+}
+
+Implied read_view(Reader& r, unsigned id) {
+  if (r.number(1) != id)
+    throw std::runtime_error("Missing/duplicate implied route");
+  Implied view;
+  const auto count = r.number(1), more = r.number(1);
+  if (count > route_depth || more > 1 || (!count && more))
+    throw std::runtime_error("Invalid implied count/more");
+  view.count = count;
+  view.more = more;
+  std::uint64_t total = 0;
+  for (unsigned j = 0; j < count; ++j) {
+    view.price[j] = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(r.number(4)));
+    view.quantity[j] = r.number(8);
+    if (!view.quantity[j] || view.quantity[j] % routes[id].target_weight ||
+        view.quantity[j] > UINT64_MAX - total ||
+        (j && (routes[id].side == Bid ? view.price[j] >= view.price[j - 1]
+                                      : view.price[j] <= view.price[j - 1])))
+      throw std::runtime_error("Invalid implied ordering/quantity");
+    total += view.quantity[j];
+  }
+  return view;
+}
+}  // namespace
+
 void put_views(Bytes& out, std::uint8_t targets, const Views& views) {
-  if (!targets || (targets & ~31U))
+  if (!targets || (targets & ~unsigned(all_targets)))
     throw std::runtime_error("Invalid implied target mask");
   integer(out, targets, 1);
-  for (unsigned i = 0; i < routes.size(); ++i) {
-    if (!(targets & (1U << routes[i].target)))
-      continue;
-    const auto& view = views[i];
-    integer(out, i, 1);
-    integer(out, view.count, 1);
-    integer(out, view.more, 1);
-    for (unsigned j = 0; j < view.count; ++j) {
-      integer(out, static_cast<std::uint32_t>(view.price[j]), 4);
-      integer(out, view.quantity[j], 8);
-    }
-  }
+  for (unsigned i = 0; i < routes.size(); ++i)
+    if (targets & (1U << routes[i].target))
+      put_view(out, i, views[i]);
+  if (targets & (1U << B))
+    for (unsigned side = 0; side < 2; ++side)
+      put_view(out, 4 + side, views.single_b[side]);
 }
 
 std::uint8_t read_views(Reader& r, Views& views, std::uint8_t allowed) {
@@ -118,29 +147,12 @@ std::uint8_t read_views(Reader& r, Views& views, std::uint8_t allowed) {
   if (!targets || (targets & ~allowed))
     throw std::runtime_error("Implied replacement targets another owner");
   auto next = views;
-  for (unsigned i = 0; i < routes.size(); ++i) {
-    if (!(targets & (1U << routes[i].target)))
-      continue;
-    if (r.number(1) != i)
-      throw std::runtime_error("Missing/duplicate implied route");
-    Implied view;
-    const auto count = r.number(1), more = r.number(1);
-    if (count > route_depth || more > 1 || (!count && more))
-      throw std::runtime_error("Invalid implied count/more");
-    view.count = count;
-    view.more = more;
-    std::uint64_t total = 0;
-    for (unsigned j = 0; j < count; ++j) {
-      view.price[j] = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(r.number(4)));
-      view.quantity[j] = r.number(8);
-      if (!view.quantity[j] || view.quantity[j] > UINT64_MAX - total ||
-          (j && (routes[i].side == Bid ? view.price[j] >= view.price[j - 1]
-                                       : view.price[j] <= view.price[j - 1])))
-        throw std::runtime_error("Invalid implied ordering/quantity");
-      total += view.quantity[j];
-    }
-    next[i] = view;
-  }
+  for (unsigned i = 0; i < routes.size(); ++i)
+    if (targets & (1U << routes[i].target))
+      next[i] = read_view(r, i);
+  if (targets & (1U << B))
+    for (unsigned side = 0; side < 2; ++side)
+      next.single_b[side] = read_view(r, 4 + side);
   views = next;
   return targets;
 }
@@ -150,7 +162,7 @@ void encode_depth(Bytes& out,
                   const DepthSide& before,
                   const DepthSide& after,
                   bool initial) {
-  if (source >= 10)
+  if (source >= source_count)
     throw std::invalid_argument("Invalid depth source");
   validate(after, static_cast<BookSide>(source % 2));
   if (!initial && (before.version == UINT64_MAX || after.version != before.version + 1))
@@ -264,10 +276,10 @@ std::uint8_t apply_depth(std::span<const std::uint8_t> bytes, Sources& sources, 
 
 void put_sources(
     Bytes& out, std::uint16_t mask, const Sources& before, const Sources& after, bool initial) {
-  if (mask & ~1023U)
+  if (mask & ~unsigned(all_sources))
     throw std::runtime_error("Invalid source mask");
   integer(out, std::popcount(mask), 1);
-  for (std::uint8_t source = 0; source < 10; ++source) {
+  for (std::uint8_t source = 0; source < source_count; ++source) {
     if (!(mask & (1U << source)))
       continue;
     const auto length_at = out.size();
@@ -279,7 +291,7 @@ void put_sources(
 
 std::uint16_t read_sources(Reader& r, Sources& sources, std::uint16_t allowed, bool initial) {
   const auto count = r.number(1);
-  if (count > 10)
+  if (count > source_count)
     throw std::runtime_error("Invalid source-side count");
   auto next = sources;
   std::uint16_t seen = 0;

@@ -115,6 +115,14 @@ set_tests_properties(client_reconnect_process PROPERTIES TIMEOUT 120 RUN_SERIAL 
 add_dependencies(demo_tests gateway_client)
 
 add_executable(spread_depth_tests spreads/depth.cpp)
+add_executable(spread_shared_depth_tests spreads/shared_depth.cpp)
+target_include_directories(spread_shared_depth_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_shared_depth_tests PRIVATE marketlab_matching_core)
+target_compile_options(spread_shared_depth_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_shared_depth_correctness_stress
+  COMMAND spread_shared_depth_tests "${CMAKE_BINARY_DIR}/shared-depth-results")
+set_tests_properties(spread_shared_depth_correctness_stress PROPERTIES TIMEOUT 60
+  LABELS "spreads;correctness;cornercase;performance")
 target_include_directories(spread_depth_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(spread_depth_tests PRIVATE marketlab_matching_core)
 target_compile_options(spread_depth_tests PRIVATE -Wall -Wextra -Wpedantic)
@@ -175,6 +183,14 @@ set_tests_properties(spread_coordinator_correctness_stress PROPERTIES TIMEOUT 60
 add_dependencies(demo_tests spread_coordinator_tests)
 
 add_executable(spread_session_tests spreads/session.cpp)
+add_executable(spread_butterfly_session_tests spreads/butterfly_session.cpp)
+target_include_directories(spread_butterfly_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(spread_butterfly_session_tests PRIVATE marketlab_matching_core)
+target_compile_options(spread_butterfly_session_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME spread_butterfly_session_correctness_stress
+  COMMAND spread_butterfly_session_tests "${CMAKE_BINARY_DIR}/butterfly-session-results")
+set_tests_properties(spread_butterfly_session_correctness_stress PROPERTIES TIMEOUT 120
+  LABELS "spreads;recovery;correctness;cornercase;performance")
 target_include_directories(spread_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(spread_session_tests PRIVATE marketlab_matching_core)
 target_compile_options(spread_session_tests PRIVATE -Wall -Wextra -Wpedantic)

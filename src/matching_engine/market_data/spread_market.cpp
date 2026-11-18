@@ -22,7 +22,7 @@ MarketBookSnapshot merged_market(const MarketBookSnapshot& real,
     const auto wire_side = side == Bid ? md::Side::Buy : md::Side::Sell;
     const auto prices = side == Bid ? levels.first(bids) : levels.subspan(bids);
     std::size_t real_at = 0;
-    std::array<std::uint8_t, 2> candidates{}, at{};
+    std::array<std::uint8_t, maximum_routes_per_side> candidates{}, at{};
     std::uint8_t count = 0;
     for (std::uint8_t i = 0; i < routes.size(); ++i)
       if (routes[i].target == target && routes[i].side == side)
@@ -107,9 +107,9 @@ void MarketPublication::capture(std::uint64_t seq, const Views& views) {
         real.count != previous.count ||
         !std::equal(real.levels.begin(), real.levels.begin() + real.count, previous.levels.begin());
     const auto slot = topology_.slot(real.symbol_id);
-    const bool changed_implied = slot < 5 && (changed_views & (1U << slot));
+    const bool changed_implied = slot < product_count && (changed_views & (1U << slot));
     if (!same_command || changed_real || changed_implied)
-      candidate.snapshot.books[i] = slot < 5 ? merged_market(real, slot, views) : real;
+      candidate.snapshot.books[i] = slot < product_count ? merged_market(real, slot, views) : real;
     if (changed_real)
       previous = real;
   }

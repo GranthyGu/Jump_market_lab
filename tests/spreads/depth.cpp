@@ -7,28 +7,25 @@ using namespace marketlab::orders;
 using namespace marketlab::orders::spreads;
 using demo::require;
 
-template <class F> void rejects(F fn) {
+template <class F>
+void rejects(F fn) {
   bool failed = false;
   try {
     fn();
-  } catch (const std::exception &) {
+  } catch (const std::exception&) {
     failed = true;
   }
   require(failed, "Malformed source was accepted");
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   demo::Suite suite(argc > 1 ? argv[1] : "depth-results");
   suite.test("derived-spread-price-limits-and-topology-identity", [] {
     OrderConfig c;
     c.direct = false;
     c.spreads = true;
     c.accounts = {{"ab", "p"}, {"c", "p"}};
-    c.products = {{"A", 120, 6},
-                  {"B", 110, 7},
-                  {"C", 105, 8},
-                  {"SP_AB", 10, 5},
-                  {"SP_AC", 15, 5}};
+    c.products = {{"A", 120, 6}, {"B", 110, 7}, {"C", 105, 8}, {"SP_AB", 10, 5}, {"SP_AC", 15, 5}};
     const Topology topology(c);
     require(topology.limits[AB].lower == -13 && topology.limits[AB].upper == 33,
             "SP_AB must derive its signed interval from both legs");
@@ -38,7 +35,9 @@ int main(int argc, char **argv) {
     require(Topology(c).fingerprint != topology.fingerprint,
             "User dictionary boundaries must affect the topology fingerprint");
     c.products[4].shard = 8;
-    rejects([&] { Topology invalid(c); });
+    rejects([&] {
+      Topology invalid(c);
+    });
   });
   suite.test("documented-five-segment-example", [] {
     Sources sources{};
@@ -46,9 +45,13 @@ int main(int argc, char **argv) {
     sources[2 * AB + Bid] = {1, {30, 40, 30}, {6, 5, 4}, 3, false};
     auto view = derive(routes[5], sources);
     require(view.count == 5 && !view.more, "Expected five finite segments");
-    require(view.price == std::array<std::int32_t, 5>{94, 95, 96, 97, 98},
+    require(std::equal(view.price.begin(),
+                       view.price.begin() + 5,
+                       std::array<std::int32_t, 5>{94, 95, 96, 97, 98}.begin()),
             "Example prices");
-    require(view.quantity == std::array<std::uint64_t, 5>{20, 10, 30, 10, 30},
+    require(std::equal(view.quantity.begin(),
+                       view.quantity.begin() + 5,
+                       std::array<std::uint64_t, 5>{20, 10, 30, 10, 30}.begin()),
             "Example quantities");
   });
   suite.test("all-twelve-routes-vs-unit-quantity-oracle", [] {
@@ -56,7 +59,7 @@ int main(int argc, char **argv) {
     for (unsigned trial = 0; trial < 15000; ++trial) {
       Sources sources{};
       for (unsigned n = 0; n < sources.size(); ++n) {
-        auto &w = sources[n];
+        auto& w = sources[n];
         w.count = random() % 4;
         w.more = w.count == 3 && (random() % 2);
         for (unsigned i = 0; i < w.count; ++i) {
@@ -64,9 +67,9 @@ int main(int argc, char **argv) {
           w.quantity[i] = random() % 12 + 1;
         }
       }
-      for (const auto &route : routes) {
-        const auto &a = sources[route.first];
-        const auto &b = sources[route.second];
+      for (const auto& route : std::span(routes).first(12)) {
+        const auto& a = sources[route.first];
+        const auto& b = sources[route.second];
         std::vector<std::int32_t> first, second, expected, actual;
         for (unsigned i = 0; i < a.count; ++i)
           first.insert(first.end(), a.quantity[i], a.price[i]);
@@ -77,13 +80,11 @@ int main(int argc, char **argv) {
         auto out = derive(route, sources);
         for (unsigned i = 0; i < out.count; ++i)
           actual.insert(actual.end(), out.quantity[i], out.price[i]);
-        require(
-            actual == expected,
-            "Price/quantity allocation differs from independent unit oracle");
+        require(actual == expected,
+                "Price/quantity allocation differs from independent unit oracle");
         require(out.count <= 5, "Implied window overflow");
         const auto q = std::min(first.size(), second.size());
-        require(out.more == ((first.size() > q || a.more) &&
-                             (second.size() > q || b.more)),
+        require(out.more == ((first.size() > q || a.more) && (second.size() > q || b.more)),
                 "more mismatch");
       }
     }
@@ -106,13 +107,13 @@ int main(int argc, char **argv) {
       }
       wire.clear();
       encode_depth(wire, source, old, next);
-      require(wire.size() <= 48,
-              "Adaptive encoding exceeded full snapshot size");
+      require(wire.size() <= 48, "Adaptive encoding exceeded full snapshot size");
       apply_depth(wire, receiver);
-      require(receiver[source].same_levels(next) &&
-                  receiver[source].version == next.version,
+      require(receiver[source].same_levels(next) && receiver[source].version == next.version,
               "Depth roundtrip mismatch");
-      rejects([&] { apply_depth(wire, receiver); });
+      rejects([&] {
+        apply_depth(wire, receiver);
+      });
     }
   });
   suite.test("truncated-versions-and-invalid-windows-do-not-mutate-cache", [] {
@@ -121,22 +122,31 @@ int main(int argc, char **argv) {
     Bytes wire;
     encode_depth(wire, 1, {}, next);
     for (unsigned n = 0; n < wire.size(); ++n) {
-      rejects([&] { apply_depth(std::span(wire).first(n), sources); });
-      require(sources[1].version == 0 && sources[1].count == 0,
-              "Failed frame mutated cache");
+      rejects([&] {
+        apply_depth(std::span(wire).first(n), sources);
+      });
+      require(sources[1].version == 0 && sources[1].count == 0, "Failed frame mutated cache");
     }
     auto wrong = next;
     wrong.count = 2;
-    rejects([&] { validate(wrong, Ask); });
+    rejects([&] {
+      validate(wrong, Ask);
+    });
     wrong = next;
     wrong.quantity[0] = 0;
-    rejects([&] { validate(wrong, Ask); });
+    rejects([&] {
+      validate(wrong, Ask);
+    });
     wrong = next;
     wrong.price[1] = wrong.price[0];
-    rejects([&] { validate(wrong, Ask); });
+    rejects([&] {
+      validate(wrong, Ask);
+    });
     // Snapshot header is 12 bytes; each price/quantity pair is 12 bytes.
     std::copy_n(wire.begin() + 12, 4, wire.begin() + 24);
-    rejects([&] { apply_depth(wire, sources); });
+    rejects([&] {
+      apply_depth(wire, sources);
+    });
     require(sources[1].version == 0, "Duplicate price mutated source cache");
   });
   suite.test("quantity-over-uint32-and-price-overflow", [] {
@@ -144,15 +154,15 @@ int main(int argc, char **argv) {
     const auto quantity = std::uint64_t(UINT32_MAX) + 100;
     sources[0] = {1, {quantity, 0, 0}, {100, 0, 0}, 1, false};
     sources[3] = {1, {quantity, 0, 0}, {100, 0, 0}, 1, false};
-    require(derive(routes[0], sources).quantity[0] == quantity,
-            "Truncated level total");
+    require(derive(routes[0], sources).quantity[0] == quantity, "Truncated level total");
     sources[0].price[0] = INT32_MAX;
     sources[3].price[0] = -1;
-    rejects([&] { derive(routes[0], sources); });
+    rejects([&] {
+      derive(routes[0], sources);
+    });
   });
   suite.test("fixed-cache-and-dirty-source-recompute-stress", [&] {
-    require(sizeof(Sources) == 480 && sizeof(Views) == 768,
-            "Fixed cache footprint changed");
+    require(sizeof(Sources) == 576 && sizeof(Views) == 2464, "Fixed cache footprint changed");
     Sources sources{};
     Views views{};
     for (unsigned i = 0; i < 10; ++i) {
@@ -177,8 +187,10 @@ int main(int argc, char **argv) {
       samples.push_back(demo::us(lap) / 1000);
     }
     require(checksum != 0, "Stress computation optimized away");
-    suite.metric("dirty-source-recompute", std::move(samples),
-                 demo::us(start) / 1e6, 1000000,
+    suite.metric("dirty-source-recompute",
+                 std::move(samples),
+                 demo::us(start) / 1e6,
+                 1000000,
                  "One source change; dependent route recomputation and view "
                  "comparison, no I/O");
   });
