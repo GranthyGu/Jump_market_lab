@@ -12,12 +12,13 @@ struct Deployment {
   std::array<unsigned, 8> orders{}, markets{}, controls{};
   std::array<demo::Child, 8> engines;
   demo::Child coordinator, router, front;
+  bool trace;
   unsigned request = 10;
   unsigned admin_port = 0;
   std::unique_ptr<demo::Trader> client;
   Deployment(const std::filesystem::path &binaries,
-             const std::filesystem::path &path)
-      : root(path), binary(binaries) {
+             const std::filesystem::path &path, bool tracing = true)
+      : root(path), binary(binaries), trace(tracing) {
     std::filesystem::create_directories(root);
     demo::Ports ports;
     gateway = {"127.0.0.1", ports.take()};
@@ -53,12 +54,12 @@ struct Deployment {
     for (unsigned i = 0; i < 8; ++i)
       start_engine(i);
     coordinator.launch(binary / "market_group_coordinator",
-                       {"--config", path_config.string(), "--stats",
-                        (root / "coordinator.json").string(), "--trace"},
+                       traced({"--config", path_config.string(), "--stats",
+                               (root / "coordinator.json").string()}),
                        root / "coordinator.log");
     router.launch(binary / "market_engine_router",
-                  {"--config", path_config.string(), "--admin-port",
-                   std::to_string(admin), "--trace"},
+                  traced({"--config", path_config.string(), "--admin-port",
+                          std::to_string(admin)}),
                   root / "router.log");
     front.launch(binary / "market_gateway",
                  {"gateway", "--config", path_config.string()},
@@ -84,13 +85,18 @@ struct Deployment {
     for (auto &engine : engines)
       engine.stop();
   }
+  std::vector<std::string> traced(std::vector<std::string> args) const {
+    if (trace)
+      args.push_back("--trace");
+    return args;
+  }
   void start_engine(unsigned index, std::string suffix = "") {
     engines[index].launch(
         binary / "market_matching_engine",
-        {"--config", (root / "exchange.conf").string(), "--shard",
-         std::to_string(index + 1), "--data-dir", (root / "data").string(),
-         "--market-port", std::to_string(markets[index]), "--control-port",
-         std::to_string(controls[index]), "--trace"},
+        traced({"--config", (root / "exchange.conf").string(), "--shard",
+                std::to_string(index + 1), "--data-dir", (root / "data").string(),
+                "--market-port", std::to_string(markets[index]), "--control-port",
+                std::to_string(controls[index])}),
         root / ("shard-" + std::to_string(index + 1) + suffix + ".log"));
   }
   std::string admin(std::string_view command) {
@@ -334,29 +340,33 @@ void routes(Deployment &d) {
   }
 }
 
-void latency(Deployment &d, demo::Suite &suite) {
-  constexpr unsigned count = 100;
+void latency(Deployment &d, demo::Suite &suite, unsigned count = 100,
+             unsigned warmup = 0) {
   std::vector<double> local, implied;
+  local.reserve(count);
+  implied.reserve(count);
   // Four stable levels keep top-three and hasMore unchanged for the fifth
   // level.
   std::vector<m::OrderId> anchors;
   for (int price = 109; price < 113; ++price)
     anchors.push_back(d.add("C", m::Side::Sell, price, 1));
-  for (unsigned i = 0; i < count; ++i) {
+  for (unsigned i = 0; i < count + warmup; ++i) {
     const auto start = demo::Clock::now();
     const auto id = d.add("C", m::Side::Sell, 113, 1);
-    local.push_back(demo::us(start));
+    if (i >= warmup)
+      local.push_back(demo::us(start));
     d.client->cancel(++d.request, id);
   }
   for (auto id : anchors)
     d.client->cancel(++d.request, id);
-  d.add("A", m::Side::Sell, 120, count);
-  d.add("B", m::Side::Buy, 110, count);
-  for (unsigned i = 0; i < count; ++i) {
+  d.add("A", m::Side::Sell, 120, count + warmup);
+  d.add("B", m::Side::Buy, 110, count + warmup);
+  for (unsigned i = 0; i < count + warmup; ++i) {
     const auto start = demo::Clock::now();
     d.add("SP_AB", m::Side::Buy, 10, 1);
     require(d.fills(3).size() == 3, "Single-outstanding implied fills lost");
-    implied.push_back(demo::us(start));
+    if (i >= warmup)
+      implied.push_back(demo::us(start));
   }
   const auto seconds = [](const auto &values) {
     double total = 0;
@@ -460,13 +470,27 @@ void stress(Deployment &d, demo::Suite &suite) {
 } // namespace
 
 int main(int argc, char **argv) {
-  require(argc >= 3, "Expected binary and result directories");
+  require(argc == 3 || (argc == 4 && std::string_view(argv[3]) == "--benchmark"),
+          "Expected binary and result directories, optionally --benchmark");
+  const bool benchmark = argc == 4;
   demo::Suite suite(argv[2]);
   const auto root = suite.output / ("run-" + std::to_string(::getpid()) + "-" +
                                     std::to_string(o::unix_ns()));
   std::unique_ptr<Deployment> deployment;
   suite.test("native-eight-shards-coordinator-router-gateway-bootstrap",
-             [&] { deployment = std::make_unique<Deployment>(argv[1], root); });
+             [&] {
+               deployment = std::make_unique<Deployment>(argv[1], root, !benchmark);
+             });
+  if (benchmark) {
+    if (deployment) {
+      suite.test("warmed-no-trace-single-outstanding-latency",
+                 [&] { latency(*deployment, suite, 2000, 200); });
+      suite.test("no-trace-pipeline-and-five-thousand-piece-stress",
+                 [&] { stress(*deployment, suite); });
+    }
+    deployment.reset();
+    return suite.finish();
+  }
   if (deployment) {
     suite.test("ordinary-shards-and-butterfly-reuse-original-path",
                [&] { baseline(*deployment); });

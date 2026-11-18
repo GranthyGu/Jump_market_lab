@@ -29,6 +29,14 @@ ctest --test-dir build/task3 --output-on-failure -R '^spread_'
 
 性能口径必须分开：核心循环为进程内批次平均；单请求测量包含 Gateway TCP、组通信、fsync 和回复；5000 请求同时入队的分位数包含排队时间；一个 5000 片段扫单只有一个样本，不能当作每订单 p99。`--trace` 会增加日志开销。详细实测见 [验证报告](../../docs/task3_spreads/06_validation_results.md)。
 
+独立延迟测试使用相同进程程序的 `--benchmark` 模式，关闭逐消息 trace；短路径和 implied 场景各预热 200 次、采样 2000 次，另运行 5000 请求突发及 5000 片段扫单。默认重复五次并汇总原始样本：
+
+```sh
+python3 tests/spreads/benchmark.py --build-dir build/task3/bin \
+  --output build/task3/spread-benchmark --repeats 5
+```
+
+可加 `--reference-dir <另一份完整二进制目录>`，交替运行两个构建；结果分别保存在 `current/`、`reference/`，`summary.json` 保存合并后的分位数与每轮数据，`comparison.json` 保存比较比例。测试串行运行，每轮使用新的隔离数据目录；不同时运行构建或其他压力测试。普通 CTest 继续开启 trace 并覆盖完整故障流程。
+
 故障测试中的 SIGSTOP/SIGKILL 只针对测试创建的进程。部分跨片执行发生故障时，正确结果是保留未完成状态并暂停，且不发布片面成交；此测试不声称已有跨片自动回滚或分布式故障原子提交。
 
-2026-11-18 目录整理后的完整回归、编译耗时与逐项结果见 [组件整理验证](../../docs/task3_spreads/08_component_layout_and_validation.md)。
