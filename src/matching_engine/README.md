@@ -2,6 +2,8 @@
 
 运行程序默认采用方案 2 持久化；当前提交、快照与恢复路径见 [订单状态与双日志一致性](../../docs/task2_recovery/11_orderbook_delta_snapshot_consistency.md)。默认启动脚本由 `cluster/run.py` 管理 Router、独立 GroupCoordinator 与各 shard 的 A/B 进程，正常交易路径由 C++ 执行。
 
+演示配置包含 20 个普通商品 `ITEM0001`—`ITEM0020`，按轮询分到 shard1—4，每片五个；shard5—8 承载 A、B、C 和三个价差品种，共 26 个商品。缩减商品列表后，A/B/C/SP_AB/SP_AC/BF_ABC 的全局 ID 为 21—26。已有 1000 商品的持久化数据不兼容新的品种字典，演示请使用独立目录：`./src/scripts/run_matching_engine.sh --data-dir src/config/.marketlab-data/exchange-demo20`；旧数据保留。
+
 | 分组 | 文件 | 职责 |
 | --- | --- | --- |
 | 撮合核心 | [core/](core/)：`engine.*`、`active_index.hpp`、`backend.hpp` | 单线程价格/FIFO 撮合、活动订单定位、结果收集，以及状态所有者调用的后端接口 |
@@ -12,7 +14,7 @@
 | 成交历史 | [trade_history/](trade_history/)：`history_store.*` | 已提交成交日志的异步索引、索引快照与恢复、有界分页查询 |
 | 历史索引实现 | [trade_history/index/](trade_history/index/)：`trade_index.hpp`、`page_file.*`、`cmu/` | 按用户与成交位置查找的 B+ 树、页文件、Buffer Pool、ARC；`cmu/` 保留 BusTub 来源与许可证 |
 | 路由与计划重启 | [cluster/](cluster/)：`router.*`、`router_spreads.*`、`router_spreads_publication.*`、`worker.*`、`rpc.*`、`run.py` | C++ 订单路由与引擎控制；价差组调度及实际参与者结果汇总在主 Router 内完成；Python 协调复制、排空与接管 |
-| 跨片价差 | [spreads/](spreads/)：`depth.*`、`execution.*`、`session.*` | 固定三档/12 路推导、共享成员映射、原 FIFO 上的执行计划和多轮 Session |
+| 跨片价差 | [spreads/](spreads/)：`depth.*`、`execution.*`、`session.*` | 固定三档/20 路推导、共享来源分配、原 FIFO 上的执行计划和多轮 Session |
 | 组通信 | [spreads/transport/](spreads/transport/)：`protocol.*`、`links.*`、`join.*` | 组帧、来源与持久化结果编解码，握手/心跳和恢复报告；Router、Coordinator、shard 共用 |
 | 组协调器 | [spreads/coordinator/](spreads/coordinator/)：`coordinator.*`、`server.*`、`main.cpp` | 组来源/视图/内存完成状态机、TCP 服务与接入维护、独立 Coordinator 程序入口 |
 
