@@ -77,6 +77,41 @@ template <class F> void pump(o::TcpReactor &a, o::TcpReactor &b, F done) {
   }
 }
 
+void buffered_parts() {
+  demo::Ports ports;
+  const o::Address address{"127.0.0.1", ports.take()};
+  ports.release();
+  o::TcpReactor server, client(32);
+  server.listen(address, o::Framing::Group, 1);
+  const auto id = client.connect(address, o::Framing::Group);
+  const auto peer = client.peer(id);
+  o::Bytes prefix{1, 2, 3}, body{4, 5, 6, 7};
+  const o::Bytes expected{1, 2, 3, 4, 5, 6, 7};
+  require(client.send_parts(id, {prefix, {}, body}), "Multipart enqueue failed");
+  std::fill(prefix.begin(), prefix.end(), 0);
+  std::fill(body.begin(), body.end(), 0);
+  require(peer->output == expected, "Queued frame borrowed reusable input buffers");
+  const auto storage = peer->output.data();
+  peer->output.clear();
+  require(client.send_parts(id, {std::span(expected).first(3), std::span(expected).subspan(3)}) &&
+              peer->output == expected && peer->output.data() == storage,
+          "Cleared output capacity was not reused");
+  // Model a partially flushed frame without relying on OS socket buffer sizes.
+  peer->sent = 3;
+  const o::Bytes tail(27, 0x5a);
+  require(client.send_parts(id, {tail}), "Valid pending-byte limit rejected");
+  o::Bytes pending(expected.begin() + 3, expected.end());
+  pending.insert(pending.end(), tail.begin(), tail.end());
+  require(peer->sent == 0 && peer->output == pending,
+          "Compaction changed unsent byte order");
+  const std::array<std::uint8_t, 1> byte{8};
+  require(!client.send_parts(id, {byte, byte}) && !client.contains(id) &&
+              peer->output == pending,
+          "Multipart overflow appended a partial message before rejecting it");
+  rejects([&] { s::wire_header({s::MessageKind::SourceDone, 1, 1, 1, 128}, 0); });
+  rejects([&] { s::wire_header({s::MessageKind::SourceDone}, o::group::maximum_frame); });
+}
+
 void roles_and_framing() {
   auto c = config();
   const s::Topology topology(c);
@@ -146,14 +181,15 @@ void roles_and_framing() {
           "Separate listeners mixed connection roles");
 
   o::Bytes payload(50000, 0x5a);
+  const auto expected_payload = payload;
   server_group.on_message = [&](auto id, const auto &message) {
     require(
         id == server_peer &&
             message.header.kind == s::MessageKind::ResultDetails &&
             message.header.epoch == 1 && message.header.seq == 2 &&
             message.header.round == 3 &&
-            message.body.size() == payload.size() &&
-            std::equal(payload.begin(), payload.end(), message.body.begin()),
+            message.body.size() == expected_payload.size() &&
+            std::equal(expected_payload.begin(), expected_payload.end(), message.body.begin()),
         "Split/coalesced large group frame corrupted");
     ++messages;
   };
@@ -169,6 +205,24 @@ void roles_and_framing() {
               client.send(peer, packet),
           "Coalesced send failed");
   pump(server, client, [&] { return messages == 2; });
+
+  require(client_group.send(peer, {s::MessageKind::ResultDetails, 1, 2, 3}, payload),
+          "Direct group-header/body enqueue failed");
+  std::fill(payload.begin(), payload.end(), 0);
+  pump(server, client, [&] { return messages == 3; });
+  bool business_received = false;
+  server_business.on_message = [&](auto, const auto &h, auto bytes) {
+    require(h.kind == o::LinkKind::Group && bytes.size() == packet.size() &&
+                std::equal(bytes.begin(), bytes.end(), packet.begin()),
+            "Business envelope changed group header/body bytes");
+    business_received = true;
+  };
+  const auto wire = s::wire_header({s::MessageKind::ResultDetails, 1, 2, 3}, expected_payload.size());
+  require(client_business.send(regular, o::LinkKind::Group, {},
+                               {reinterpret_cast<const std::uint8_t *>(&wire), sizeof(wire)},
+                               expected_payload),
+          "Business multipart enqueue failed");
+  pump(server, client, [&] { return business_received; });
 
   o::TcpReactor bad_io;
   s::Links wrong_role(bad_io, c,
@@ -195,6 +249,7 @@ void roles_and_framing() {
 int main(int argc, char **argv) {
   demo::Suite suite(argc > 1 ? argv[1] : "spread-network-results");
   suite.test("group-headers-identities-and-atomic-source-view-codecs", codec);
+  suite.test("owned-send-parts-capacity-reuse-compaction-and-atomic-limit", buffered_parts);
   suite.test("independent-business-peer-listeners-split-coalesced-frames-and-"
              "role-fencing",
              roles_and_framing);

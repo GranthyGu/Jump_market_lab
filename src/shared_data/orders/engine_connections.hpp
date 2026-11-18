@@ -89,15 +89,32 @@ class EngineLinks {
             LinkKind kind,
             const LinkHeader& h,
             std::span<const std::uint8_t> payload) {
+    return send(id, kind, h, {}, payload);
+  }
+
+  bool send(ConnectionId id,
+            LinkKind kind,
+            const LinkHeader& h,
+            std::span<const std::uint8_t> prefix,
+            std::span<const std::uint8_t> payload) {
     if (!ready(id))
       return false;
+    if (prefix.size() > max_link_frame - link_header_size ||
+        payload.size() > max_link_frame - link_header_size - prefix.size())
+      throw std::runtime_error("Engine frame exceeds part limit");
+    const WireLinkHeader wire{
+        static_cast<std::uint32_t>(link_header_size + prefix.size() + payload.size()),
+        kind,
+        h.token,
+        h.user,
+        h.session};
     if (config_.trace)
       std::cout << console::dim << "LINK TX connection=" << id
                 << " kind=" << static_cast<unsigned>(kind) << " token=" << h.token
-                << " user=" << h.user << " session=" << h.session
-                << " bytes=" << link_header_size + payload.size() << " loggedAtNs=" << unix_ns()
-                << console::reset << std::endl;
-    return io_.send(id, link_frame(kind, h.token, h.user, h.session, payload));
+                << " user=" << h.user << " session=" << h.session << " bytes=" << wire.length
+                << " loggedAtNs=" << unix_ns() << console::reset << std::endl;
+    return io_.send_parts(
+        id, {{reinterpret_cast<const std::uint8_t*>(&wire), sizeof(wire)}, prefix, payload});
   }
 
   void tick() {

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <poll.h>
 #include <unordered_map>
@@ -41,6 +42,9 @@ class TcpReactor {
   void listen(const Address& address, Framing framing, std::size_t limit);
   ConnectionId connect(const Address& address, Framing framing);
   bool send(ConnectionId id, std::span<const std::uint8_t> bytes);
+  // Copy all parts before returning. Inputs can be reused immediately and
+  // must not alias this connection's output buffer.
+  bool send_parts(ConnectionId id, std::initializer_list<std::span<const std::uint8_t>> parts);
   void close(ConnectionId id);
   void enable_reads(ConnectionId id, bool enabled);
 

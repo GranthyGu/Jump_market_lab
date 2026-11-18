@@ -39,4 +39,3 @@ python3 tests/spreads/benchmark.py --build-dir build/task3/bin \
 可加 `--reference-dir <另一份完整二进制目录>`，交替运行两个构建；结果分别保存在 `current/`、`reference/`，`summary.json` 保存合并后的分位数与每轮数据，`comparison.json` 保存比较比例。测试串行运行，每轮使用新的隔离数据目录；不同时运行构建或其他压力测试。普通 CTest 继续开启 trace 并覆盖完整故障流程。
 
 故障测试中的 SIGSTOP/SIGKILL 只针对测试创建的进程。部分跨片执行发生故障时，正确结果是保留未完成状态并暂停，且不发布片面成交；此测试不声称已有跨片自动回滚或分布式故障原子提交。
-

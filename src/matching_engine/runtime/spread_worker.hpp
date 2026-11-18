@@ -7,7 +7,8 @@
 namespace marketlab::orders::spreads {
 class Worker final : public EngineBackend {
  public:
-  using Business = std::function<bool(const LinkHeader&, std::span<const std::uint8_t>)>;
+  using Business = std::function<bool(
+      const LinkHeader&, std::span<const std::uint8_t>, std::span<const std::uint8_t>)>;
   Worker(persistence::DurableEngine&,
          const OrderConfig&,
          std::uint16_t,

@@ -141,7 +141,8 @@ void Worker::send_business(const Header& h,
                            const LinkHeader& context) {
   auto envelope = context;
   envelope.kind = LinkKind::Group;
-  if (!business_(envelope, frame(h, bytes)))
+  const auto wire = wire_header(h, bytes.size());
+  if (!business_(envelope, {reinterpret_cast<const std::uint8_t*>(&wire), sizeof(wire)}, bytes))
     throw std::runtime_error("Router result send failed");
 }
 

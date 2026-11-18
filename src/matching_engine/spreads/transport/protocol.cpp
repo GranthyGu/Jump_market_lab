@@ -7,16 +7,25 @@ using persistence::integer;
 using persistence::Reader;
 using persistence::Event;
 
-Bytes frame(const Header& h, std::span<const std::uint8_t> body) {
-  if (body.size() > group::maximum_frame - group::header_size)
+group::WireHeader wire_header(const Header& h, std::size_t body_size) {
+  if (body_size > group::maximum_frame - group::header_size)
     throw std::runtime_error("Group frame exceeds part limit");
-  Bytes bytes(group::header_size + body.size());
-  const group::WireHeader wire{
-      static_cast<std::uint32_t>(bytes.size()), h.kind, h.flags, h.epoch, h.seq, h.round};
+  const group::WireHeader wire{static_cast<std::uint32_t>(group::header_size + body_size),
+                               h.kind,
+                               h.flags,
+                               h.epoch,
+                               h.seq,
+                               h.round};
+  if (!group::valid_header(wire, wire.length))
+    throw std::runtime_error("Invalid outgoing group frame");
+  return wire;
+}
+
+Bytes frame(const Header& h, std::span<const std::uint8_t> body) {
+  const auto wire = wire_header(h, body.size());
+  Bytes bytes(wire.length);
   std::memcpy(bytes.data(), &wire, sizeof(wire));
   std::copy(body.begin(), body.end(), bytes.begin() + group::header_size);
-  if (!group::valid_frame(bytes))
-    throw std::runtime_error("Invalid outgoing group frame");
   return bytes;
 }
 

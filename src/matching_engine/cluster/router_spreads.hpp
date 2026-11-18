@@ -9,7 +9,11 @@ namespace marketlab::orders::spreads {
 class RouterGroup {
  public:
   struct Callbacks {
-    std::function<bool(std::uint8_t, const LinkHeader&, std::span<const std::uint8_t>)> send;
+    std::function<bool(std::uint8_t,
+                       const LinkHeader&,
+                       std::span<const std::uint8_t>,
+                       std::span<const std::uint8_t>)>
+        send;
     std::function<void(std::uint8_t, const persistence::Event&)> event;
     std::function<void(std::uint64_t token, std::uint64_t sequence)> capture;
   };

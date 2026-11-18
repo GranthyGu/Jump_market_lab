@@ -26,7 +26,7 @@ void Links::outgoing(ConnectionId id,
 void Links::connected(ConnectionId id) {
   if (!links_.at(id).outgoing)
     throw std::logic_error("Connected callback for incoming group link");
-  io_.send(id, frame({MessageKind::Hello}, identity_bytes(self_)));
+  write(id, {MessageKind::Hello}, identity_bytes(self_));
 }
 
 bool Links::ready(ConnectionId id) const {
@@ -45,6 +45,11 @@ void Links::lost(ConnectionId id) {
     on_lost(id);
 }
 
+bool Links::write(ConnectionId id, const Header& h, std::span<const std::uint8_t> body) {
+  const auto wire = wire_header(h, body.size());
+  return io_.send_parts(id, {{reinterpret_cast<const std::uint8_t*>(&wire), sizeof(wire)}, body});
+}
+
 bool Links::send(ConnectionId id, const Header& h, std::span<const std::uint8_t> body) {
   if (!ready(id))
     return false;
@@ -52,7 +57,7 @@ bool Links::send(ConnectionId id, const Header& h, std::span<const std::uint8_t>
     std::cout << "GROUP_TX shard=" << self_.shard << " peer=" << identity(id).shard
               << " type=" << message_name(h.kind) << " epoch=" << h.epoch << " seq=" << h.seq
               << " round=" << h.round << " bytes=" << group::header_size + body.size() << '\n';
-  return io_.send(id, frame(h, body));
+  return write(id, h, body);
 }
 
 void Links::receive(ConnectionId id, std::span<const std::uint8_t> bytes) {
@@ -76,7 +81,7 @@ void Links::receive(ConnectionId id, std::span<const std::uint8_t> bytes) {
         throw std::runtime_error("Group role/instance/configuration mismatch");
       state.remote = remote;
       state.ready = true;
-      if (!state.outgoing && !io_.send(id, frame({MessageKind::Welcome}, identity_bytes(self_))))
+      if (!state.outgoing && !write(id, {MessageKind::Welcome}, identity_bytes(self_)))
         return;
       if (on_ready)
         on_ready(id, remote);

@@ -40,9 +40,9 @@ class Router {
           c,
           io,
           spreads::RouterGroup::Callbacks{
-              [&](auto member, const auto& h, auto bytes) {
+              [&](auto member, const auto& h, auto prefix, auto bytes) {
                 return links.send(
-                    shards[group_index[member]].connection, LinkKind::Group, h, bytes);
+                    shards[group_index[member]].connection, LinkKind::Group, h, prefix, bytes);
               },
               [&](auto member, const auto& event) {
                 result(shards[group_index[member]].connection,

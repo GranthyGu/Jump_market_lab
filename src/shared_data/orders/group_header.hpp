@@ -63,12 +63,17 @@ static_assert(sizeof(WireHeader) == header_size);
 
 // This check is shared by framing and the business envelope. Role, instance,
 // epoch and state-machine preconditions are validated by the owning endpoint.
+inline bool valid_header(const WireHeader& h, std::size_t frame_size) {
+  return frame_size >= header_size && frame_size <= maximum_frame && h.length == frame_size &&
+         h.kind >= Kind::Hello && h.kind <= Kind::Fenced &&
+         !(h.flags & ~(final_part | initial_view));
+}
+
 inline bool valid_frame(std::span<const std::uint8_t> bytes) {
   if (bytes.size() < header_size || bytes.size() > maximum_frame)
     return false;
   WireHeader h{};
   std::memcpy(&h, bytes.data(), sizeof(h));
-  return h.length == bytes.size() && h.kind >= Kind::Hello && h.kind <= Kind::Fenced &&
-         !(h.flags & ~(final_part | initial_view));
+  return valid_header(h, bytes.size());
 }
 }  // namespace marketlab::orders::group

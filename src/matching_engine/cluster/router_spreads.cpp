@@ -49,7 +49,9 @@ bool RouterGroup::send(std::uint8_t member,
                        std::span<const std::uint8_t> bytes) {
   auto envelope = context;
   envelope.kind = LinkKind::Group;
-  return callbacks_.send(member, envelope, frame(h, bytes));
+  const auto wire = wire_header(h, bytes.size());
+  return callbacks_.send(
+      member, envelope, {reinterpret_cast<const std::uint8_t*>(&wire), sizeof(wire)}, bytes);
 }
 
 void RouterGroup::pause(std::string_view reason) {

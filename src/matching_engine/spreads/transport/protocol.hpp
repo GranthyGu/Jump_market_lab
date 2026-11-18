@@ -19,6 +19,7 @@ struct FrameView {
   std::span<const std::uint8_t> body;
 };
 
+group::WireHeader wire_header(const Header&, std::size_t body_size);
 Bytes frame(const Header&, std::span<const std::uint8_t> body = {});
 FrameView parse_frame(std::span<const std::uint8_t>);
 const char* message_name(MessageKind);

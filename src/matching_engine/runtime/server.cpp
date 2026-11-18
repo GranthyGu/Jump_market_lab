@@ -52,8 +52,8 @@ void serve_order_engine(EngineBackend& book,
         c,
         shard,
         io,
-        [&](const auto& h, auto bytes) {
-          return links.send(router, LinkKind::Group, h, bytes);
+        [&](const auto& h, auto prefix, auto bytes) {
+          return links.send(router, LinkKind::Group, h, prefix, bytes);
         },
         [&](auto kind, const auto& h, auto bytes) {
           links.send(router, kind, h, bytes);

@@ -32,6 +32,8 @@ class Links {
   std::function<void(ConnectionId, const FrameView&)> on_message;
 
  private:
+  bool write(ConnectionId, const Header&, std::span<const std::uint8_t>);
+
   struct State {
     bool outgoing = false, ready = false;
     ConnectionIdentity expected{}, remote{};

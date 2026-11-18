@@ -183,22 +183,40 @@ void TcpReactor::enable_reads(ConnectionId id, bool enabled) {
 }
 
 bool TcpReactor::send(ConnectionId id, std::span<const std::uint8_t> bytes) {
+  return send_parts(id, {bytes});
+}
+
+bool TcpReactor::send_parts(ConnectionId id,
+                            std::initializer_list<std::span<const std::uint8_t>> parts) {
   auto p = peer(id);
   if (!p)
     return false;
   const auto remaining = p->output.size() - p->sent;
-  if (bytes.size() > max_buffer_ || remaining > max_buffer_ - bytes.size()) {
-    close(id);
-    return false;
+  std::size_t added = 0;
+  for (const auto bytes : parts) {
+    if (bytes.size() > max_buffer_ - remaining - added) {
+      close(id);
+      return false;
+    }
+    added += bytes.size();
   }
-  if (p->sent &&
-      (p->sent >= p->output.size() / 2 || p->output.size() + bytes.size() > max_buffer_)) {
+  if (!added)
+    return true;
+  if (p->sent && (p->sent >= p->output.size() / 2 || added > max_buffer_ - p->output.size())) {
     p->output.erase(p->output.begin(), p->output.begin() + static_cast<std::ptrdiff_t>(p->sent));
     p->sent = 0;
   }
+  const auto required = p->output.size() + added;
+  if (required > p->output.capacity()) {
+    const auto capacity = p->output.capacity();
+    const auto grown = capacity > max_buffer_ / 2 ? max_buffer_ : capacity * 2;
+    p->output.reserve(std::max(required, grown));
+  }
   if (remaining == 0)
     p->last_progress = Clock::now();
-  p->output.insert(p->output.end(), bytes.begin(), bytes.end());
+  for (const auto bytes : parts)
+    if (!bytes.empty())
+      p->output.insert(p->output.end(), bytes.begin(), bytes.end());
   if (remaining == 0)
     watch(*p, false);
   return true;
