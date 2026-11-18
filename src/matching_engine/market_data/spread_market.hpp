@@ -2,13 +2,10 @@
 #include "matching_engine/core/engine.hpp"
 
 namespace marketlab::orders::spreads {
-// Read aggregated real prices, merge at most two route views, then truncate.
+// Reuse captured real five-level prices, merge at most two routes, then truncate.
 // The returned value owns every byte, so a later publish permit cannot expose
 // working state from a newer command.
-MarketBookSnapshot merged_market(const MatchingEngine&,
-                                 std::uint16_t symbol,
-                                 std::uint8_t target,
-                                 const Views&);
+MarketBookSnapshot merged_market(const MarketBookSnapshot& real, std::uint8_t target, const Views&);
 
 // Owner-thread immutable market candidates. All storage is allocated at startup;
 // a later permit can never sample the newer working order book.
@@ -37,6 +34,10 @@ class MarketPublication {
   MatchingEngine& core_;
   Topology topology_;
   MarketSnapshot visible_;
+  // Compare the latest capture's inputs; retained candidates own their merged
+  // books. A new sequence always populates its own slot, even for equal inputs.
+  MarketSnapshot real_, last_real_;
+  Views last_views_{};
   std::vector<Candidate> slots_;
   std::size_t head_ = 0, size_ = 0;
   std::uint64_t permitted_ = 0;

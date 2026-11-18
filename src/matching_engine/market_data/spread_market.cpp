@@ -1,29 +1,27 @@
 #include "matching_engine/market_data/spread_market.hpp"
 #include "matching_engine/spreads/transport/protocol.hpp"
+#include <algorithm>
 
 namespace marketlab::orders::spreads {
-MarketBookSnapshot merged_market(const MatchingEngine& core,
-                                 std::uint16_t symbol,
+MarketBookSnapshot merged_market(const MarketBookSnapshot& real,
                                  std::uint8_t target,
                                  const Views& views) {
   MarketBookSnapshot out;
-  out.symbol_id = symbol;
+  out.symbol_id = real.symbol_id;
   out.extended = true;
   auto add = [](std::uint64_t& total, std::uint64_t amount) {
     if (amount > UINT64_MAX - total)
       throw std::overflow_error("Merged market quantity overflow");
     total += amount;
   };
+  const auto levels = std::span(real.levels).first(real.count);
+  std::size_t bids = 0;
+  while (bids < levels.size() && levels[bids].side == md::Side::Buy)
+    ++bids;
   for (const auto side : {Bid, Ask}) {
     const auto wire_side = side == Bid ? md::Side::Buy : md::Side::Sell;
-    std::array<md::Level, md::depth> real{};
-    std::uint8_t real_count = 0, real_at = 0;
-    core.visit_levels(symbol,
-                      side == Bid ? Side::Buy : Side::Sell,
-                      [&](Price price, std::uint64_t quantity, std::uint64_t count) {
-                        real[real_count++] = {wire_side, price, quantity, count};
-                        return real_count < md::depth;
-                      });
+    const auto prices = side == Bid ? levels.first(bids) : levels.subspan(bids);
+    std::size_t real_at = 0;
     std::array<std::uint8_t, 2> candidates{}, at{};
     std::uint8_t count = 0;
     for (std::uint8_t i = 0; i < routes.size(); ++i)
@@ -35,16 +33,16 @@ MarketBookSnapshot merged_market(const MatchingEngine& core,
         if (!price || (side == Bid ? value > *price : value < *price))
           price = value;
       };
-      if (real_at < real_count)
-        consider(real[real_at].price);
+      if (real_at < prices.size())
+        consider(prices[real_at].price);
       for (unsigned i = 0; i < count; ++i)
         if (at[i] < views[candidates[i]].count)
           consider(views[candidates[i]].price[at[i]]);
       if (!price)
         break;
       md::Level merged{wire_side, *price, 0, 0};
-      if (real_at < real_count && real[real_at].price == *price)
-        merged = real[real_at++];
+      if (real_at < prices.size() && prices[real_at].price == *price)
+        merged = prices[real_at++];
       for (unsigned i = 0; i < count; ++i) {
         const auto& view = views[candidates[i]];
         if (at[i] < view.count && view.price[at[i]] == *price) {
@@ -65,7 +63,9 @@ MarketPublication::MarketPublication(MatchingEngine& core,
                                      std::uint16_t shard)
     : core_(core),
       topology_(config),
-      visible_(core.symbol_count()) {
+      visible_(core.symbol_count()),
+      real_(core.symbol_count()),
+      last_real_(core.symbol_count()) {
   if (topology_.member(shard) >= 4)
     throw std::invalid_argument("Unknown group market owner");
   slots_.reserve(command_window + 1);
@@ -80,7 +80,8 @@ void MarketPublication::reset() {
 
 void MarketPublication::capture(std::uint64_t seq, const Views& views) {
   std::size_t at;
-  if (size_ && slots_[(head_ + size_ - 1) % slots_.size()].seq == seq) {
+  const bool same_command = size_ && slots_[(head_ + size_ - 1) % slots_.size()].seq == seq;
+  if (same_command) {
     at = (head_ + size_ - 1) % slots_.size();
   } else {
     if (size_ == slots_.size() || (seq && seq <= permitted_) ||
@@ -90,11 +91,27 @@ void MarketPublication::capture(std::uint64_t seq, const Views& views) {
   }
   auto& candidate = slots_[at];
   candidate.seq = seq;
-  core_.copy_market(candidate.snapshot);
-  for (auto& book : candidate.snapshot.books) {
-    const auto slot = topology_.slot(book.symbol_id);
-    if (slot < 5)
-      book = merged_market(core_, book.symbol_id, slot, views);
+  core_.copy_market(real_);
+  candidate.snapshot.epoch = real_.epoch;
+  std::uint8_t changed_views = 0;
+  for (unsigned route = 0; route < routes.size(); ++route)
+    if (views[route] != last_views_[route]) {
+      changed_views |= 1U << routes[route].target;
+      last_views_[route] = views[route];
+    }
+  for (std::size_t i = 0; i < real_.books.size(); ++i) {
+    const auto& real = real_.books[i];
+    auto& previous = last_real_.books[i];
+    const bool changed_real =
+        real.symbol_id != previous.symbol_id || real.extended != previous.extended ||
+        real.count != previous.count ||
+        !std::equal(real.levels.begin(), real.levels.begin() + real.count, previous.levels.begin());
+    const auto slot = topology_.slot(real.symbol_id);
+    const bool changed_implied = slot < 5 && (changed_views & (1U << slot));
+    if (!same_command || changed_real || changed_implied)
+      candidate.snapshot.books[i] = slot < 5 ? merged_market(real, slot, views) : real;
+    if (changed_real)
+      previous = real;
   }
 }
 

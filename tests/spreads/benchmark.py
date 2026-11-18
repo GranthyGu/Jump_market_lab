@@ -51,7 +51,7 @@ def main():
     if args.reference_dir:
         builds = {"reference": args.reference_dir.resolve(), **builds}
     for directory in builds.values():
-        for name in ("spread_process_tests", "market_matching_engine", "market_engine_router",
+        for name in ("spread_process_tests", "spread_market_tests", "market_matching_engine", "market_engine_router",
                      "market_group_coordinator", "market_gateway"):
             if not (directory / name).is_file():
                 parser.error(f"Missing binary: {directory / name}")
@@ -67,15 +67,21 @@ def main():
         for label in order:
             directory = output / label / f"run-{repeat + 1:02d}"
             directory.mkdir(parents=True, exist_ok=True)
-            command = [str(builds[label] / "spread_process_tests"), str(builds[label]),
-                       str(directory), "--benchmark"]
             print(f"RUN {label} {repeat + 1}/{args.repeats}", flush=True)
             begin = time.monotonic()
-            with (directory / "process.log").open("w") as log:
-                result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=180)
-            if result.returncode:
-                raise RuntimeError(f"Benchmark exited {result.returncode}: {directory / 'process.log'}")
-            runs[label].append(directory)
+            commands = [
+                (directory, [str(builds[label] / "spread_process_tests"), str(builds[label]),
+                             str(directory), "--benchmark"]),
+                (directory / "market", [str(builds[label] / "spread_market_tests"),
+                                        str(directory / "market"), "--benchmark"]),
+            ]
+            for target, command in commands:
+                target.mkdir(parents=True, exist_ok=True)
+                with (target / "process.log").open("w") as log:
+                    result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+                if result.returncode:
+                    raise RuntimeError(f"Benchmark exited {result.returncode}: {target / 'process.log'}")
+                runs[label].append(target)
             durations[label].append(time.monotonic() - begin)
     summary = {
         "trace": False, "warmup_per_latency_scenario": 200,

@@ -17,8 +17,8 @@ ctest --test-dir build/task3 --output-on-failure -R '^spread_'
 | `depth.cpp` | 固定三档、12 条推导、依赖位图、more、版本、紧凑 delta/snapshot、百万次推导 |
 | `execution.cpp` | 价格/真实 FIFO/AB 优先、补档屏障、固定选择计划、FIFO 片段配对及百万次选择 |
 | `persistence.cpp` | 旧/新类型混合帧、负价/零价、未封闭 Result 不落盘、显式公开边界 0、索引分页、原样复制及重启 |
-| `market.cpp` | D/I 合并、纯 implied 档、route 订单计数、空视图、V1/V2 编码和客户端 delta |
-| `network.cpp` | 独立组头、TCP 分帧、多监听器、连接/epoch/实例约束 |
+| `market.cpp` | 复用真实五档合并 D/I、同命令候选刷新、第四／五档及订单数变化、纯 implied／空视图、V1/V2 编码和客户端 delta |
+| `network.cpp` | 独立组头、分段入发送队列、输入生命周期、容量复用与压缩、整体容量检查、TCP 分帧、多监听器、连接/epoch/实例约束 |
 | `coordinator.cpp` | 来源/视图完成乱序、脏路径重算、view-only、正常结束/短路径、百万次控制循环 |
 | `session.cpp` | 四个真实 DurableEngine、12 路所有权、不同 FIFO 切片、延后明细与先行视图、多轮、5000 小单、随机参考模型 |
 | `publication.cpp` | MEM_DONE 与落盘乱序、参与者集合、分块完整性、有界窗口、每片历史游标、不可变行情候选 |
@@ -37,5 +37,7 @@ python3 tests/spreads/benchmark.py --build-dir build/task3/bin \
 ```
 
 可加 `--reference-dir <另一份完整二进制目录>`，交替运行两个构建；结果分别保存在 `current/`、`reference/`，`summary.json` 保存合并后的分位数与每轮数据，`comparison.json` 保存比较比例。测试串行运行，每轮使用新的隔离数据目录；不同时运行构建或其他压力测试。普通 CTest 继续开启 trace 并覆盖完整故障流程。
+
+每轮另调用 `spread_market_tests <结果目录> --benchmark`：预热 1000 次后，对真实五档和 implied 不变的同命令候选捕获执行 100 万次。该微基准的样本是每批 1000 次的平均调用时间，不是端到端延迟。
 
 故障测试中的 SIGSTOP/SIGKILL 只针对测试创建的进程。部分跨片执行发生故障时，正确结果是保留未完成状态并暂停，且不发布片面成交；此测试不声称已有跨片自动回滚或分布式故障原子提交。
