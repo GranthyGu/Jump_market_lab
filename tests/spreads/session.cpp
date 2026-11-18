@@ -90,8 +90,10 @@ void overlap(const std::filesystem::path& root) {
   f.run(s::AB, m::Side::Buy, 10, 4);
   require(f.coordinator->counters.rounds == 1 && f.coordinator->completed() == 0,
           "Source/view progress waited for FIFO identity transmission");
-  require(f.delivered.back().header.kind == s::MessageKind::RoundReady,
-          "Did not reach independent source-refresh barrier");
+  require(std::none_of(f.delivered.begin(), f.delivered.end(), [](const auto& message) {
+            return message.header.kind == s::MessageKind::RoundReady;
+          }),
+          "Terminal round sent an unnecessary round-ready message");
   for (unsigned member = 0; member < 3; ++member) {
     require(f.sessions[member]->active(), "RoundReady prematurely sealed a Batch");
     f.engines[member]->poll();
@@ -110,6 +112,98 @@ void overlap(const std::filesystem::path& root) {
     });
     require(allocation < end, "CommandEnd overtook final allocation on peer TCP");
   }
+}
+
+void terminal_overlap(const std::filesystem::path& root) {
+  for (unsigned scenario = 0; scenario < 3; ++scenario)
+    for (bool hold_ack : {false, true}) {
+      Fixture f(root / (std::to_string(scenario) + (hold_ack ? "-ack" : "-view")));
+      if (scenario < 2) {
+        f.seed(s::A, m::Side::Sell, 120, 2);
+        f.seed(s::B, m::Side::Buy, 110, 4);
+        if (scenario == 1)
+          f.seed(s::C, m::Side::Sell, 105, 2);
+      } else {
+        f.seed(s::B, m::Side::Buy, 110, 2);
+      }
+      f.start();
+      f.hold_views = !hold_ack;
+      f.hold_view_acks = hold_ack;
+      if (scenario < 2)
+        f.run(scenario == 0 ? s::AB : s::BF, m::Side::Buy, scenario == 0 ? 10 : 5, 2);
+      else
+        f.run(s::A, m::Side::Sell, 120, 2);
+      require(f.coordinator->in_flight() && f.coordinator->completed() == 0,
+              "Terminal closure bypassed a pending view or its acknowledgement");
+      for (unsigned member = 0; member < 4; ++member) {
+        require(!f.sessions[member]->active(), "Terminal result waited for implied installation");
+        f.engines[member]->drain();
+      }
+      require(f.receipts.size() == (scenario == 0 ? 3U : scenario == 1 ? 4U : 1U),
+              "Terminal closure did not produce exactly one batch per participant");
+      f.hold_views = f.hold_view_acks = false;
+      f.settle();
+      for (const auto& message : f.delivered) {
+        require(message.header.kind != s::MessageKind::RoundReady,
+                "Terminal round retained a redundant round-ready message");
+        if (message.header.kind == s::MessageKind::ImpliedReplace) {
+          require(f.captures[message.to] == f.sequence,
+                  "Late implied installation omitted the final market candidate");
+          rejects([&] { f.sessions[message.to]->control(message.header, message.body); });
+          auto invalid = message.header;
+          ++invalid.round;
+          if (message.to == (scenario < 2 ? 0U : 1U))
+            rejects([&] { f.sessions[message.to]->control(invalid, message.body); });
+        }
+      }
+    }
+}
+
+void early_local_source(const std::filesystem::path& root) {
+  Fixture f(root);
+  f.seed(s::A, m::Side::Sell, 120, 2);
+  f.seed(s::B, m::Side::Buy, 110, 2);
+  f.seed(s::AB, m::Side::Sell, 9, 1);
+  f.start();
+  f.hold_execution = true;
+  f.run(s::AB, m::Side::Buy, 10, 3);
+  require(f.coordinator->counters.rounds == 1 && f.coordinator->completed() == 0,
+          "Source barrier waited for peer execution confirmations at the initiator");
+  for (auto source : {s::A * 2 + s::Ask, s::B * 2 + s::Bid, s::AB * 2 + s::Ask})
+    require(f.coordinator->sources()[source].count == 0,
+            "Early source report omitted a direct or remote real mutation");
+  for (unsigned member = 0; member < 3; ++member) {
+    require(f.sessions[member]->active(), "Source completion sealed unpaired execution");
+    f.engines[member]->poll();
+  }
+  require(f.receipts.empty(), "Unconfirmed peer execution produced a durable receipt");
+  f.hold_execution = false;
+  f.settle();
+  require(f.records(0).size() == 2, "Mixed direct/implied pairing lost an execution");
+}
+
+void reordered_links(const std::filesystem::path& root) {
+  Fixture f(root);
+  f.reorder_links = true;
+  f.seed(s::A, m::Side::Sell, 120, 2000);
+  f.seed(s::B, m::Side::Buy, 110, 4000);
+  f.seed(s::C, m::Side::Sell, 105, 2000);
+  f.start();
+  for (unsigned i = 0; i < 500; ++i) {
+    f.run(i % 2 ? s::BF : s::AB, m::Side::Buy, i % 2 ? 5 : 10, 1 + (i % 7 == 0));
+    require(f.coordinator->completed() == f.sequence,
+            "Cross-link reordering left a terminal command incomplete");
+    for (unsigned route = 0; route < s::routes.size(); ++route) {
+      const auto member = f.topology.owner(s::routes[route].target);
+      require(f.sessions[member]->views()[route] == f.coordinator->views()[route],
+              "MEM_DONE overtook a target's final installed view");
+    }
+    if (i % 32 == 31)
+      f.settle();
+  }
+  f.settle();
+  require(f.receipts.size() == 1750 && f.coordinator->counters.terminal_rounds == 500,
+          "Cross-link reordering lost or duplicated a participant batch");
 }
 
 void priority(const std::filesystem::path& root) {
@@ -325,6 +419,15 @@ int main(int argc, char** argv) {
   });
   suite.test("source-refresh-overlaps-delayed-details-and-ordered-end", [&] {
     overlap(root / "overlap");
+  });
+  suite.test("terminal-batches-overlap-views-without-early-memory-completion", [&] {
+    terminal_overlap(root / "terminal");
+  });
+  suite.test("local-source-completes-before-peer-execution-confirmations", [&] {
+    early_local_source(root / "early-source");
+  });
+  suite.test("five-hundred-terminal-commands-with-random-tcp-link-interleavings", [&] {
+    reordered_links(root / "reordered");
   });
   suite.test("documented-direct-ab-ac-priority-and-command-wide-fill-numbers", [&] {
     priority(root / "priority");

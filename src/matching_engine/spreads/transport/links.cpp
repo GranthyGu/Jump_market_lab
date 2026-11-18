@@ -56,7 +56,8 @@ bool Links::send(ConnectionId id, const Header& h, std::span<const std::uint8_t>
   if (config_.trace && h.kind != MessageKind::Ping && h.kind != MessageKind::Pong)
     std::cout << "GROUP_TX shard=" << self_.shard << " peer=" << identity(id).shard
               << " type=" << message_name(h.kind) << " epoch=" << h.epoch << " seq=" << h.seq
-              << " round=" << h.round << " bytes=" << group::header_size + body.size() << '\n';
+              << " round=" << h.round << " flags=" << unsigned(h.flags)
+              << " bytes=" << group::header_size + body.size() << '\n';
   return write(id, h, body);
 }
 
@@ -99,7 +100,8 @@ void Links::receive(ConnectionId id, std::span<const std::uint8_t> bytes) {
     if (config_.trace)
       std::cout << "GROUP_RX shard=" << self_.shard << " peer=" << state.remote.shard
                 << " type=" << message_name(h.kind) << " epoch=" << h.epoch << " seq=" << h.seq
-                << " round=" << h.round << " bytes=" << bytes.size() << '\n';
+                << " round=" << h.round << " flags=" << unsigned(h.flags)
+                << " bytes=" << bytes.size() << '\n';
     if (on_message)
       on_message(id, message);
   } catch (const std::exception& error) {

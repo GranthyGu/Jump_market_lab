@@ -121,7 +121,6 @@ bool Session::begin(const Header& h, std::uint8_t origin) {
   origin_ = origin;
   initiator_ = origin == member_;
   participants_ = 1U << member_;
-  finished_ = false;
   allocations_complete_ = true;
   remote_quantity_ = 0;
   fill_ = 0;
@@ -145,7 +144,7 @@ void Session::reset_round() {
   allocation_counts_.fill(0);
   pending_b_second_ = false;
   round_members_ = executed_ = 0;
-  round_ready_ = details_ready_ = false;
+  round_ready_ = details_ready_ = terminal_round_ = false;
   plan_ = {};
 }
 
@@ -185,15 +184,17 @@ void Session::source_done() {
   callbacks_.capture(current_.seq);
 }
 
-void Session::declare_round(std::uint8_t members) {
+void Session::declare_round(std::uint8_t members, bool terminal) {
   if (current_.round == UINT32_MAX)
     throw std::overflow_error("Group round exhausted");
   ++current_.round;
   round_members_ = members;
   participants_ |= members;
   round_ready_ = false;
+  terminal_round_ = terminal;
   const std::array<std::uint8_t, 1> body{members};
-  callbacks_.coordinator(message(MessageKind::RoundBegin), body);
+  callbacks_.coordinator(message(MessageKind::RoundBegin, terminal ? group::terminal_round : 0),
+                         body);
 }
 
 void Session::take(std::uint16_t symbol,
@@ -239,7 +240,6 @@ bool Session::run(const Header& h, const LinkHeader& context, std::span<const st
   } else {
     core_.execute(context, bytes, *result_);
   }
-  finished_ = true;
   complete_local();
   return true;
 }
@@ -262,12 +262,12 @@ void Session::select_round() {
     }
     incoming_ = pairing_;
     core_.finish_group(incoming_, *result_);
-    finished_ = true;
     complete_local();
     return;
   }
   const auto previous = participants_;
-  declare_round(members);
+  // With no quantity left, a refreshed view cannot cause another execution.
+  declare_round(members, plan_.remaining == 0);
   for (std::uint8_t member = 0; member < 4; ++member) {
     if (member == member_ || !(members & (1U << member)))
       continue;
@@ -301,13 +301,18 @@ void Session::select_round() {
   }
   if (plan_.direct)
     take(incoming_.symbol, opposite(incoming_.side), plan_.direct, direct_);
+  // Each owner reports its own completed real mutations. Remote SOURCE_DONE
+  // messages already gate recomputation; waiting for their ExecutionDone here
+  // would add a peer -> initiator -> Coordinator hop to the source barrier.
+  source_done();
 }
 
 void Session::complete_local() {
   details_ready_ = true;
   if (sources_changed()) {
-    declare_round(1U << member_);
+    declare_round(1U << member_, true);
     source_done();
+    close();
   } else if (!current_.round) {
     seal(MessageKind::LocalComplete);
   } else {
@@ -334,18 +339,22 @@ void Session::close() {
 }
 
 void Session::advance() {
-  if (!round_ready_ || !details_ready_)
+  if (!details_ready_)
     return;
-  if (finished_) {
+  if (terminal_round_) {
+    if (incoming_.remaining)
+      throw std::logic_error("Terminal execution left an incoming remainder");
+    core_.finish_group(incoming_, *result_);
     close();
     return;
   }
+  if (!round_ready_)
+    return;
   if (plan_.refill && incoming_.remaining) {
     select_round();
     return;
   }
   core_.finish_group(incoming_, *result_);
-  finished_ = true;
   complete_local();
 }
 
@@ -819,10 +828,8 @@ bool Session::peer(std::uint8_t from, const Header& h, std::span<const std::uint
       if (h.flags || !bytes.empty() || (executed_ & (1U << from)))
         throw std::runtime_error("Duplicate/invalid execution completion");
       executed_ |= 1U << from;
-      if (executed_ == (round_members_ & ~(1U << member_))) {
+      if (executed_ == (round_members_ & ~(1U << member_)))
         fill_incoming(incoming_, incoming_.remaining - plan_.remaining);
-        source_done();
-      }
       pair_details();
     } else if (h.kind == MessageKind::ResultDetails)
       receive_details(from, h, bytes);
@@ -840,9 +847,13 @@ void Session::control(const Header& h, std::span<const std::uint8_t> bytes) {
     throw std::runtime_error("Control epoch mismatch");
   if (h.kind == MessageKind::ImpliedReplace) {
     const bool initial = h.flags == group::initial_view;
+    // The final view can arrive after sealing. It updates only the candidate
+    // market snapshot, never the frozen Result; MEM_DONE still waits for it.
+    const bool sealed_round =
+        !active() && h.seq == closed_ && h.seq == current_.seq && h.round == current_.round;
     if ((h.flags && !initial) || (initial && (active() || h.seq || h.round)) ||
         (!initial &&
-         (!h.seq || !h.round || h.seq <= closed_ || h.seq < view_sequence_ ||
+         (!h.seq || !h.round || (h.seq <= closed_ && !sealed_round) || h.seq < view_sequence_ ||
           (h.seq == view_sequence_ && h.round <= view_round_) ||
           (active() && (h.seq != current_.seq || (initiator_ && h.round != current_.round))))))
       throw std::runtime_error("Stale/invalid implied replacement");

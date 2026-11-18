@@ -67,8 +67,8 @@ class Session {
   // incoming_ tracks confirmed real execution; pairing_ builds incremental
   // owned-order events while detail transfer runs behind the source refresh.
   persistence::CompactOrder incoming_{}, pairing_{};
-  bool initiator_ = false, finished_ = false, round_ready_ = false, details_ready_ = false,
-       allocations_complete_ = true;
+  bool initiator_ = false, round_ready_ = false, details_ready_ = false,
+       allocations_complete_ = true, terminal_round_ = false;
   Quantity remote_quantity_ = 0;
   std::uint32_t fill_ = 0;
   Plan plan_{};
@@ -86,7 +86,7 @@ class Session {
   bool begin(const Header&, std::uint8_t origin);
   void reset_round();
   void select_round();
-  void declare_round(std::uint8_t participants);
+  void declare_round(std::uint8_t participants, bool terminal = false);
   Sources real_sources() const;
   bool sources_changed() const;
   void source_done();

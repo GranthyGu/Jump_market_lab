@@ -48,7 +48,7 @@ void Coordinator::pause(std::string_view reason) {
 void Coordinator::reset_round() {
   expected_ = done_ = awaiting_views_ = 0;
   dirty_ = 0;
-  declared_ = round_ready_ = false;
+  declared_ = round_ready_ = terminal_round_ = false;
 }
 
 void Coordinator::prepare_round(const Header& h) {
@@ -64,7 +64,7 @@ void Coordinator::prepare_round(const Header& h) {
     reset_round();
   } else if (h.seq == active_seq_ && round_ready_ && round_ != UINT32_MAX &&
              h.round == round_ + 1) {
-    if (ended_)
+    if (ended_ || terminal_round_)
       throw std::runtime_error("New round after a participant sealed its batch");
     round_ = h.round;
     reset_round();
@@ -114,7 +114,13 @@ void Coordinator::finish_views() {
   } else if (ready_ && declared_ && done_ == expected_ && !round_ready_) {
     round_ready_ = true;
     ++counters.rounds;
-    send_(initiator_, {MessageKind::RoundReady, epoch_, active_seq_, round_}, {});
+    if (terminal_round_) {
+      ++counters.terminal_rounds;
+      if (ended_ == participants_)
+        memory_done();
+    } else {
+      send_(initiator_, {MessageKind::RoundReady, epoch_, active_seq_, round_}, {});
+    }
   }
 }
 
@@ -147,20 +153,24 @@ void Coordinator::receive(std::uint8_t member,
   Reader body{bytes};
   switch (h.kind) {
     case MessageKind::RoundBegin: {
-      if (h.flags)
+      if (h.flags & ~group::terminal_round)
         throw std::runtime_error("Unexpected round flags");
       const auto expected = body.number(1);
       body.finish();
       if (expected & ~15U || !(expected & (1U << member)))
         throw std::runtime_error("Invalid round participant mask");
       prepare_round(h);
-      if (declared_ || (initiator_ != no_slot && initiator_ != member) || (done_ & ~expected))
+      const bool terminal = h.flags & group::terminal_round;
+      if (declared_ || (initiator_ != no_slot && initiator_ != member) || (done_ & ~expected) ||
+          (ended_ && !terminal) || (ended_ & ~(participants_ | expected)) ||
+          (ended_ & expected & ~done_))
         throw std::runtime_error("Round initiator/participant conflict");
       initiator_ = member;
       expected_ = expected;
       participants_ |= expected;
       market_members_ |= expected;
       declared_ = true;
+      terminal_round_ = terminal;
       finish_sources();
       return;
     }
@@ -193,13 +203,21 @@ void Coordinator::receive(std::uint8_t member,
     case MessageKind::EndAck: {
       const auto batch = body.number(8);
       body.finish();
-      if (!ready_ || !round_ready_ || h.flags || h.seq != active_seq_ || h.round != round_ ||
-          !(participants_ & (1U << member)) || (ended_ & (1U << member)) ||
+      if (!ready_ || !active_seq_ || h.flags || h.seq != active_seq_)
+        throw std::runtime_error("Command-end outside active group command");
+      // Other TCP links may deliver the final seal before ROUND_BEGIN. A new
+      // participant's SOURCE_DONE precedes its seal on the same control link;
+      // earlier-round participants are already in participants_.
+      if (h.round != round_)
+        prepare_round(h);
+      if ((declared_ && !terminal_round_ && !round_ready_) ||
+          !((participants_ | done_) & (1U << member)) || (ended_ & (1U << member)) ||
+          ((expected_ & (1U << member)) && !(done_ & (1U << member))) ||
           batches_[member] == UINT64_MAX || batch != batches_[member] + 1)
         throw std::runtime_error("Invalid command-end/local-batch acknowledgement");
       batches_[member] = batch;
       ended_ |= 1U << member;
-      if (ended_ == participants_)
+      if (round_ready_ && ended_ == participants_)
         memory_done();
       return;
     }

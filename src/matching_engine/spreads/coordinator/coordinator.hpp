@@ -46,8 +46,8 @@ class Coordinator {
   }
 
   struct Counters {
-    std::uint64_t rounds = 0, local_complete = 0, memory_done = 0, route_recomputations = 0,
-                  view_installs = 0;
+    std::uint64_t rounds = 0, terminal_rounds = 0, local_complete = 0, memory_done = 0,
+                  route_recomputations = 0, view_installs = 0;
   } counters;
 
  private:
@@ -57,7 +57,7 @@ class Coordinator {
                market_members_ = 0, awaiting_views_ = 0;
   std::uint16_t dirty_ = 0;
   bool ready_ = false, initializing_ = false, initialized_ = false, declared_ = false,
-       round_ready_ = false;
+       round_ready_ = false, terminal_round_ = false;
   Sources sources_{};
   Views views_{};
   std::array<std::uint64_t, 4> batches_{};

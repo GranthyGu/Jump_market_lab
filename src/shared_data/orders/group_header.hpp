@@ -5,9 +5,9 @@
 #include <span>
 
 namespace marketlab::orders::group {
-inline constexpr std::uint16_t version = 2;
+inline constexpr std::uint16_t version = 3;
 inline constexpr std::size_t header_size = 26, maximum_frame = 64 * 1024;
-inline constexpr std::uint8_t final_part = 1, initial_view = 2;
+inline constexpr std::uint8_t final_part = 1, initial_view = 2, terminal_round = 4;
 
 enum class Kind : std::uint8_t {
   Hello = 1,
@@ -66,7 +66,7 @@ static_assert(sizeof(WireHeader) == header_size);
 inline bool valid_header(const WireHeader& h, std::size_t frame_size) {
   return frame_size >= header_size && frame_size <= maximum_frame && h.length == frame_size &&
          h.kind >= Kind::Hello && h.kind <= Kind::Fenced &&
-         !(h.flags & ~(final_part | initial_view));
+         !(h.flags & ~(final_part | initial_view | terminal_round));
 }
 
 inline bool valid_frame(std::span<const std::uint8_t> bytes) {

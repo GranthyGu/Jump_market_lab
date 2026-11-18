@@ -110,6 +110,7 @@ class Server {
     std::ofstream out(path);
     const auto& n = core_.counters;
     out << "{\"epoch\":" << epoch_ << ",\"joins\":" << join_ << ",\"rounds\":" << n.rounds
+        << ",\"terminal_rounds\":" << n.terminal_rounds
         << ",\"local_complete\":" << n.local_complete << ",\"memory_done\":" << n.memory_done
         << ",\"route_recomputations\":" << n.route_recomputations
         << ",\"view_installs\":" << n.view_installs

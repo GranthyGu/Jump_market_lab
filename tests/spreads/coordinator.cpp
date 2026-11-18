@@ -45,8 +45,9 @@ struct Fixture {
   }
 
   void begin(unsigned member, std::uint64_t seq, unsigned round,
-             std::uint8_t participants) {
-    coordinator.receive(member, {s::MessageKind::RoundBegin, 42, seq, round},
+             std::uint8_t participants, bool terminal = false) {
+    coordinator.receive(member, {s::MessageKind::RoundBegin, 42, seq, round,
+                                std::uint8_t(terminal ? o::group::terminal_round : 0)},
                         {&participants, 1});
   }
 
@@ -217,6 +218,58 @@ void empty_replacement() {
   require(f.coordinator.counters.memory_done == 1,
           "Empty replacement blocked command completion");
 }
+
+void terminal_overlap() {
+  s::Sources sources{};
+  sources[1] = {0, {5}, {120}, 1, false};
+  sources[2] = {0, {5}, {110}, 1, false};
+  Fixture f;
+  f.start(sources);
+  auto next = sources;
+  next[1].quantity[0] = 3;
+  next[1].version = 1;
+  // The A control connection can overtake the initiator's ROUND_BEGIN.
+  f.source(1, 1, 1, next, 1U << 1);
+  rejects([&] { f.end(3, 1, 1, 1); });
+  f.end(1, 1, 1, 1);
+  rejects([&] { f.end(1, 1, 1, 1); });
+  rejects([&] { f.begin(0, 1, 1, 7); });
+  f.begin(0, 1, 1, 7, true);
+  rejects([&] { f.end(2, 1, 1, 1); });
+  f.source(0, 1, 1);
+  f.source(2, 1, 1);
+  f.end(0, 1, 1, 1);
+  f.end(2, 1, 1, 1);
+  require(f.coordinator.completed() == 0 && f.coordinator.in_flight(),
+          "Sealed batches bypassed outstanding view installation");
+  require(!f.sent.empty(), "Terminal round did not install its changed views");
+  f.ack_views();
+  require(f.sent.size() == 1 && f.sent[0].header.kind == s::MessageKind::MemDone &&
+              f.coordinator.completed() == 1,
+          "Terminal round did not join seals and views without ROUND_READY");
+}
+
+void terminal_previous_participant() {
+  Fixture f;
+  f.start();
+  f.begin(0, 1, 1, 7);
+  for (unsigned member : {0, 1, 2})
+    f.source(member, 1, 1);
+  f.sent.clear();
+  // B only participated in the preceding round. Its final seal can open the
+  // next round before that round's declaration or sources arrive.
+  f.end(2, 1, 2, 1);
+  f.begin(0, 1, 2, 9, true);
+  f.source(0, 1, 2);
+  f.source(3, 1, 2);
+  require(f.sent.empty() && f.coordinator.completed() == 0,
+          "Views alone completed a terminal round");
+  rejects([&] { f.begin(0, 1, 3, 1); });
+  for (unsigned member : {0, 1, 3})
+    f.end(member, 1, 2, 1);
+  require(f.sent.size() == 1 && f.sent[0].body[0] == 15,
+          "Terminal round lost an earlier participant");
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -229,6 +282,8 @@ int main(int argc, char **argv) {
   suite.test("local-complete-epoch-sequence-fences-and-unresolved-pause",
              local_and_fences);
   suite.test("explicit-empty-implied-replacement", empty_replacement);
+  suite.test("terminal-seals-before-declaration-and-delayed-view-install", terminal_overlap);
+  suite.test("terminal-previous-round-seal-before-declaration", terminal_previous_participant);
   suite.test("million-local-completion-control-messages", [&] {
     std::uint64_t completions = 0;
     std::vector<std::pair<std::uint8_t, s::Header>> acks;

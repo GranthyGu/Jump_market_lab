@@ -155,6 +155,8 @@ def main():
     builds = parser.add_mutually_exclusive_group(required=True)
     builds.add_argument("--build-dir", type=Path, help="Existing probe-enabled bin directory")
     builds.add_argument("--prepare-build", type=Path, help="Normal build; prepare an isolated Release probe build automatically")
+    parser.add_argument("--reference-dir", type=Path,
+                        help="Existing baseline probe bin; alternate baseline/candidate runs on the same workloads")
     parser.add_argument("--output", type=Path, required=True, help="New output directory")
     parser.add_argument("--count", type=int, default=5000)
     parser.add_argument("--warmup", type=int, default=200)
@@ -172,10 +174,14 @@ def main():
     binary = (prepare_build(args.prepare_build, output / "build.log") if args.prepare_build
               else args.build_dir.resolve())
     build_seconds = time.monotonic() - preparation
-    for name in ("spread_latency_tests", "market_matching_engine", "market_engine_router",
-                 "market_group_coordinator", "market_gateway"):
-        if not (binary / name).is_file():
-            parser.error(f"Missing binary: {binary / name}")
+    variants = [("candidate", binary)]
+    if args.reference_dir:
+        variants.append(("reference", args.reference_dir.resolve()))
+    for _, variant_binary in variants:
+        for name in ("spread_latency_tests", "market_matching_engine", "market_engine_router",
+                     "market_group_coordinator", "market_gateway"):
+            if not (variant_binary / name).is_file():
+                parser.error(f"Missing binary: {variant_binary / name}")
     started = time.monotonic()
     summary = {
         "created": datetime.now().astimezone().isoformat(), "platform": platform.platform(),
@@ -183,29 +189,35 @@ def main():
         "windows": args.windows, "repeats": args.repeats, "trace": False,
         "clock": "CLOCK_MONOTONIC_RAW nanoseconds, same host", "results": {},
     }
+    if args.reference_dir:
+        summary["reference_dir"] = str(args.reference_dir.resolve())
     totals = {}
     for repeat in range(args.repeats):
         # Alternate scenario order between repeats; deployments never overlap.
         scenarios = args.scenarios if repeat % 2 == 0 else list(reversed(args.scenarios))
         for window in args.windows:
             for scenario in scenarios:
-                key = f"{scenario}/window-{window}"
-                directory = output / key / f"run-{repeat + 1:02d}"
-                directory.mkdir(parents=True)
-                print(f"RUN {key} repeat={repeat + 1}/{args.repeats}", flush=True)
-                before = time.monotonic()
-                execute([str(binary / "spread_latency_tests"), str(binary), str(directory), scenario,
-                         str(args.count), str(window), str(args.warmup)], directory / "process.log")
-                run, samples = analyze(directory)
-                run["wall_seconds"] = time.monotonic() - before
-                total = totals.setdefault(key, {"runs": [], "values": {name: [] for name in METRICS}})
-                total["runs"].append(run)
-                for name in METRICS:
-                    total["values"][name].extend(sample[name] for sample in samples)
-                print(f"PASS orders={run['validated_orders']} memory_start_mean_us="
-                      f"{run['latency']['start_to_memory_us']['mean_us']:.3f} client_mean_us="
-                      f"{run['latency']['client_us']['mean_us']:.3f} "
-                      f"orders/s={run['orders_per_second']:.2f}", flush=True)
+                for variant, variant_binary in (variants if repeat % 2 == 0 else reversed(variants)):
+                    key = f"{scenario}/window-{window}"
+                    if args.reference_dir:
+                        key = f"{variant}/{key}"
+                    directory = output / key / f"run-{repeat + 1:02d}"
+                    directory.mkdir(parents=True)
+                    print(f"RUN {key} repeat={repeat + 1}/{args.repeats}", flush=True)
+                    before = time.monotonic()
+                    execute([str(variant_binary / "spread_latency_tests"), str(variant_binary),
+                             str(directory), scenario, str(args.count), str(window), str(args.warmup)],
+                            directory / "process.log")
+                    run, samples = analyze(directory)
+                    run["wall_seconds"] = time.monotonic() - before
+                    total = totals.setdefault(key, {"runs": [], "values": {name: [] for name in METRICS}})
+                    total["runs"].append(run)
+                    for name in METRICS:
+                        total["values"][name].extend(sample[name] for sample in samples)
+                    print(f"PASS orders={run['validated_orders']} memory_start_mean_us="
+                          f"{run['latency']['start_to_memory_us']['mean_us']:.3f} client_mean_us="
+                          f"{run['latency']['client_us']['mean_us']:.3f} "
+                          f"orders/s={run['orders_per_second']:.2f}", flush=True)
     for key, total in totals.items():
         runs = total["runs"]
         count = sum(run["validated_orders"] for run in runs)
@@ -216,6 +228,19 @@ def main():
         }
     summary["wall_seconds"] = time.monotonic() - started
     summary["validated_orders"] = sum(result["validated_orders"] for result in summary["results"].values())
+    if args.reference_dir:
+        summary["comparison"] = {}
+        for window in args.windows:
+            for scenario in args.scenarios:
+                key = f"{scenario}/window-{window}"
+                candidate = summary["results"]["candidate/" + key]["latency"]
+                reference = summary["results"]["reference/" + key]["latency"]
+                summary["comparison"][key] = {
+                    name: {"reference_mean_us": reference[name]["mean_us"],
+                           "candidate_mean_us": candidate[name]["mean_us"],
+                           "reduction_percent": 100 * (1 - candidate[name]["mean_us"] /
+                                                       reference[name]["mean_us"])}
+                    for name in ("start_to_memory_us", "client_us")}
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(f"PASS total_orders={summary['validated_orders']} wall_seconds={summary['wall_seconds']:.3f} "
           f"report={output / 'summary.json'}", flush=True)

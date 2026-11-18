@@ -33,7 +33,10 @@ struct Fixture {
   std::array<std::uint64_t, 4> captures{};
   unsigned request = 0;
   std::uint64_t sequence = 0;
-  bool hold_details = false;
+  bool hold_details = false, hold_execution = false;
+  bool hold_views = false, hold_view_acks = false;
+  bool reorder_links = false;
+  std::uint64_t delivery_state = 1;
 
   explicit Fixture(std::filesystem::path path)
       : root(std::move(path)) {
@@ -100,8 +103,14 @@ struct Fixture {
     unsigned steps = 0;
     while (!messages.empty()) {
       auto selected = messages.end();
+      unsigned eligible = 0;
       for (auto it = messages.begin(); it != messages.end(); ++it) {
         if (hold_details && it->header.kind == s::MessageKind::ResultDetails)
+          continue;
+        if (hold_execution && it->header.kind == s::MessageKind::ExecutionDone)
+          continue;
+        if ((hold_views && it->header.kind == s::MessageKind::ImpliedReplace) ||
+            (hold_view_acks && it->header.kind == s::MessageKind::ViewApplied))
           continue;
         // Each TCP direction stays ordered even when a different link overtakes
         // it.
@@ -109,8 +118,13 @@ struct Fixture {
               return p.from == it->from && p.to == it->to;
             }))
           continue;
-        selected = it;
-        break;
+        if (!reorder_links) {
+          selected = it;
+          break;
+        }
+        delivery_state = delivery_state * 6364136223846793005ULL + 1442695040888963407ULL;
+        if ((delivery_state >> 32) % ++eligible == 0)
+          selected = it;
       }
       if (selected == messages.end())
         return;

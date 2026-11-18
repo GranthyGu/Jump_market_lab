@@ -22,6 +22,8 @@
 
 Task 3 继续调用同一个 `MatchingEngine`，`core/group_execution.cpp` 只提供组内执行所需的原簿操作。Shard 1—4 使用原普通路径；Shard 5—8 在启用 spreads 后使用 Session，每条命令每个实际参与者只封闭一次 Batch，MEM_DONE 与 fsync 分离。代码构造、缓存大小、报文和恢复边界见 [Task 3 实现说明](../../docs/task3_spreads/05_implementation_and_data_structures.md)，运行时检查与意外中断处理见 [工程补充](../../docs/task3_spreads/07_implementation_guards_and_interruptions.md)，测试入口见 [spreads 测试](../../tests/spreads/README.md)。
 
+已确定结束的终结轮将 Batch 封闭与最终 implied 安装重叠；Coordinator 仍等待所有来源、视图确认和累计参与者封闭后才发 MEM_DONE。各片完成本地真实修改即报告 SOURCE_DONE，主动单数量确认与 FIFO 配对继续独立校验。Group 握手版本为 3，组内程序须一致；持久化格式保持原样。流程与实测见 [延迟优化验证](../../docs/task3_spreads/11_spread_latency_optimization.md)。
+
 `trade_history/index/` 是成交历史的可重建派生索引；成交事实仍由 `trades.log` 保存。历史查询捕获每片的提交边界，等索引追齐后分页返回，索引写入不阻塞成交通知。具体见 [历史索引设计](../../docs/task2_recovery/bpt_trade_history/01_bpt_design_and_performance.md) 与 [查询 API](../../docs/task2_recovery/bpt_trade_history/02_history_api_and_client.md)。
 
 跨组件通用设施位于 [shared_data/runtime/](../shared_data/runtime/)：`io.*` 管理文件描述符与通用网络 I/O，`thread.*` 管理停止和等待，`log.*` 提供日志，`wakeup.hpp` 唤醒 reactor，`availability.hpp` 记录可用性状态。订单协议仍在 `shared_data/orders/`，行情协议与分片视图传输仍在 `shared_data/market_data/`。
