@@ -206,6 +206,18 @@ set_tests_properties(spread_native_process PROPERTIES TIMEOUT 180 RUN_SERIAL TRU
 add_dependencies(spread_process_tests market_matching_engine market_engine_router market_group_coordinator market_gateway)
 add_dependencies(demo_tests spread_process_tests)
 
+# Explicit benchmark only: instrumented binaries stay in a separate opt-in build.
+if(MARKETLAB_LATENCY_PROBES)
+  add_executable(spread_latency_tests spreads/latency.cpp)
+  target_include_directories(spread_latency_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(spread_latency_tests PRIVATE marketlab_matching_runtime)
+  target_compile_options(spread_latency_tests PRIVATE -Wall -Wextra -Wpedantic)
+  add_dependencies(spread_latency_tests market_matching_engine market_engine_router market_group_coordinator market_gateway)
+  add_test(NAME spread_latency_analysis
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/spreads/latency_analysis_test.py")
+  set_tests_properties(spread_latency_analysis PROPERTIES TIMEOUT 10 LABELS "spreads;correctness")
+endif()
+
 add_test(NAME spread_lifecycle_process
   COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/spreads/lifecycle.py"
     "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/spread-results/lifecycle")
