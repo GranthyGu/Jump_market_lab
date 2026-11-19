@@ -1,24 +1,16 @@
-# Publisher 测试
+# Publisher tests
 
-编译一次 `./tests/build.sh`，以后直接运行 `./tests/publisher/run.sh`。使用真实 `market_broadcast publish` 进程和新写的确定性 TCP 分片源。合成来源只控制输入，不替换 Publisher 的采样、编码、组播或 TCP 查询逻辑。
+| Group | Coverage |
+| --- | --- |
+| Encoding | Snapshots, net deltas, empty books, frame sizes, malformed messages |
+| Publication and queries | Periodic snapshots, size-based delta selection, multicast subscribers, concurrent TCP queries |
+| Failures and load | Source recovery, epoch changes, multiple products and shards |
 
-| Case | 具体情形 | 检查内容 |
-| --- | --- | --- |
-| P01 | 12000 组全档变化、订单数变化、空簿转换的前后视图；非法消息长度 | 编解码长度与上限；独立应用净增量后等于目标簿；非法 UDP 报文拒绝 |
-| P02 | 64 商品、1 分片，从 index=0 收到 index=10；3 个独立组播 socket；8 个并发 TCP 查询者 | 初始快照；每商品每秒仅一条消息；增量严格大于快照时改发快照，相等时保留增量；第 10 批只发快照；同一批 timestamp 一致；TCP/UDP 精确对应冻结输入 |
-| P03 × 3 | 固定 1000 商品，分别 1/4/32 分片，至少观察 index=0..3；同样 3 个组播订阅者和 8 查询者 | 固定商品数的分片对照；压力下每品种有序重建、全品种覆盖、查询正确、每个接收者字节完全相同 |
-| P04 | 2000 商品、32 分片，至少观察 index=0..3；同样并发 | 接近当前分片规模、商品数不超过 2000 的压力；没有重复、丢失或损坏包，完整 TCP 快照内容正确 |
-| P05 | 两分片中一个主动中断响应，再恢复并改变源 epoch；查询不存在的商品 | 任一源失败后查询暂停，避免提供冒充最新的视图；来源恢复后 Publisher 生成新 epoch、index=0；未知商品关闭查询连接 |
+From the repository root; tests launch their own isolated services:
 
-六类商品循环分布：空簿、固定十档、十档价格全部替换、十档数量/订单数变化、单档数量变化、空簿与完整十档交替。普通轮次分别覆盖空增量（35 字节）、较小增量（56 字节）、与快照等大的增量（245 字节）、过大的增量改发快照（455 → 245 字节），以及清空订单簿时改发空快照（35 字节）。空簿和不变簿在普通轮次仍发送空增量；周期轮次所有商品只发快照。
+```sh
+./tests/build.sh
+ctest --test-dir build/demo-tests --output-on-failure -R '^demo_publisher$'
+```
 
-每组查询压力默认持续 3 秒，4 个查询者复用连接、查询后暂停 2 ms；另 4 个每次重新连接、查询后暂停 50 ms。短连接刻意限速，方便连续多次演示，避免主机临时端口被 TIME_WAIT 耗尽。每个回复都按商品 ID 和批次序号核对完整十档内容。三路组播在启动 Publisher 前加入，逐包核对序号、精确内容、重复和覆盖数；测试条件下缺包会报错，不将 UDP 视为可靠传输。自动丢包恢复在串联套件中单独验证。
-
-性能指标分别记录：
-
-- `tcp_persistent_*`：请求发送到完整接收解码，四个长连接查询者。
-- `tcp_new_connection_*`：建连至收到完整快照并关闭连接，四个短连接查询者。
-- `udp_age_*`：同机墙钟的批次冻结时间至接收时间，包含编码和组播突发队列，不等于纯网络延迟。其吞吐分母是观察批次的名义秒数。
-- `publication_round_*`：正式日志中的 `sample_us`，覆盖分片读取至 UDP 提交调用完成；吞吐按每轮名义一秒计算。样本少，p99 通常接近最大值，不作为稳定尾延迟结论。
-
-发布耗时日志、三个接收者完全相同的报文数、查询原始样本及全部断言结果保留。任何正确性错误返回失败；没有人为吞吐门槛。此套测 TCP 输入，未覆盖本地 mmap 运输方式或远程组播路由。
+See the [test runner](../README.md) for the full suite.

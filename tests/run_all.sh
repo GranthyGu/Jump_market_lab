@@ -1,4 +1,5 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec python3 "$root/run_all.py" "$@"
+export PYTHONDONTWRITEBYTECODE=1
+exec python3 -B "$root/run_all.py" "$@"

@@ -251,3 +251,7 @@ add_test(NAME spread_lifecycle_process
     "$<TARGET_FILE_DIR:market_matching_engine>" "${CMAKE_BINARY_DIR}/spread-results/lifecycle")
 set_tests_properties(spread_lifecycle_process PROPERTIES TIMEOUT 150 RUN_SERIAL TRUE
   LABELS "spreads;recovery;integration;correctness;cornercase")
+
+# Keep source directories clean, including Python children of test runners.
+get_property(registered_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${registered_tests} APPEND PROPERTY ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")

@@ -1,24 +1,16 @@
-# Gateway 测试
+# Gateway tests
 
-编译一次 `./tests/build.sh`，以后直接运行 `./tests/gateway/run.sh`。无需手动启动 Gateway 或 Engine。每个功能用例使用独立服务实例；压力组间也重新部署。
+| Group | Coverage |
+| --- | --- |
+| Accounts and sessions | Login, invalid credentials, session replacement, snapshots, cancel permissions |
+| Networking and routing | Fragmented/coalesced frames, invalid messages, request correlation, per-shard ordering |
+| Failures and load | Backend recovery, multiple users, products, and shards |
 
-| Case | 具体情形 | 检查内容 |
-| --- | --- | --- |
-| G01 | 两用户登录；在线用户名遭遇错误密码；同用户在新连接重登；断线后再登录；其他用户尝试撤单 | 错误密码不挤掉原会话；正确重登关闭旧连接；活动订单跨会话保留；只有拥有者可撤；空快照有唯一零填充结束标记；未知商品正确拒绝 |
-| G02 | 将登录报文逐字节发送；将 64 条同分片新单拼接为一次发送；另一个连接发送非法长度 | TCP 半包、粘包分帧；64 条响应保持该分片 FIFO，requestId 不串线；坏连接被关闭，健康用户仍能登录 |
-| G03 | 在分片 2 留下挂单，停止分片 1，再启动分片 1 | 后端断开关闭客户端；恢复就绪后重登能查到存活分片唯一挂单；没有多出重复订单；该用例不声称提供已重启分片的内存恢复，也不模拟“已执行但响应丢失”的精确故障窗口 |
-| G04 × 5 | 下表五组部署，8 个用户并发，每用户最多 16 条未回复请求；每轮先发 16 新单、核对全部回复，再发对应撤单 | 每条接受/撤单回复的 requestId、商品、方向、价格、数量、状态和 orderId；跨片 ID 前缀；同用户同分片响应顺序；无重复响应；最终重登活动订单为空 |
+From the repository root; tests launch their own isolated services:
 
-| 商品数 | 分片数 | 用户数 | 每用户轮数 | 每轮新单/撤单 | 总计时请求 |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 64 | 1 | 8 | 20 | 16 + 16 | 5120 |
-| 1000 | 1 | 8 | 20 | 16 + 16 | 5120 |
-| 1000 | 4 | 8 | 20 | 16 + 16 | 5120 |
-| 1000 | 32 | 8 | 20 | 16 + 16 | 5120 |
-| 2000 | 32 | 8 | 20 | 16 + 16 | 5120 |
+```sh
+./tests/build.sh
+ctest --test-dir build/demo-tests --output-on-failure -R '^demo_gateway$'
+```
 
-所有用户有意使用相同的客户端 requestId 序列，验证用户隔离。不同分片的回复可以交错，测试按 requestId 对应请求，不要求跨分片全局回复顺序。新单为不交叉的 Buy 90、数量 7，避免将撮合成本混入这组路由压力。
-
-压力使用真实 Engine 提供正确响应，因此指标是客户端 → Gateway → Engine → 客户端的完整 RTT，不是 Gateway 单独转发耗时。每条延迟从提交前到完整接收并校验回复计时，包含请求窗口和客户端读取排队；吞吐以全部已核对的新单/撤单数除以整个压力阶段墙钟时间，包含登录及末尾订单对账。部署、故障功能用例不进入压力 RTT。`--scale 2` 将轮数变为 40，不改变最大商品数和分片数。
-
-输出见控制台打印的 `RESULT_DIR`：`report.md`、`summary.json`、本目录对应的 `suite.json`、`metrics.csv`、`samples.csv` 和各场景服务日志。任何业务核对错误使对应 case 失败；性能没有硬门槛。
+See the [test runner](../README.md) for the full suite.

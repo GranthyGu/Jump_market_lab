@@ -1,22 +1,20 @@
-# Engine 测试
+# Engine tests
 
-编译一次 `./tests/build.sh`，以后直接运行 `./tests/engine/run.sh`。本套直接调用正式 `MatchingEngine`，隔离网络与 Gateway 的开销；默认四分片的真实进程压力在串联套件中覆盖，Gateway 套件另保留更大规模测试。
+| Group | Coverage |
+| --- | --- |
+| Matching and cancellation | Input limits, price/time priority, partial fills, self-trades, order-pool reuse |
+| Reference model | Random commands checked against independent order, trade, and depth results |
+| Concurrent snapshots | Mailbox wakeup, timeout, cancellation, shutdown, consistent reads |
+| Load | Multiple products, new/cancel loops, sweeping orders, snapshot contention |
 
-| Case | 具体情形 | 检查内容 |
-| --- | --- | --- |
-| E01 | 未知商品、非法 side、非正价格/数量、昨收 101 时价格 89/90/111/112；同价两笔 int32 最大数量 | InvalidOrder；90、111 为包含边界；无效请求不留单；聚合数量超过 int32 后仍正确；活动快照及终止标记 |
-| E02 | 固定随机种子回放 8000 次命令，四用户、16 商品，混合买卖、交叉成交、撤单和错误拥有者 | 用全新平坦数组参考模型独立选择最优被动价及最早到达订单；逐笔核对接受、双方 Trade、部分/全部成交状态；周期核对每用户活动订单及完整五档 |
-| E03 × 3 | 分别配置 16、1000、2000 商品，256 对新单/撤单预热后，每组计时 20000 对 | 每个新单接受，每个撤单成功，返回数量与关联正确；最后活动订单和全部价档为空；订单池反复复用 |
-| E04 | 每轮放入 64 笔 Sell 100、每笔 2，再由同一用户 Buy 110、数量 128 扫掉，重复 100 轮 | 接受先于成交；每轮 64 个唯一成交 ID；每笔双方 Trade 使用同一成交 ID；按被动价 100 成交；同用户双方通知齐全；最终无挂单 |
-| E05 | 一个线程进行 5000 对新单/撤单，四个线程通过 SnapshotMailbox 请求 64 商品行情；订单线程在命令之间服务请求 | 五档合法；每档 quantity 始终等于 5 × numOfOrders，没有读到撕裂状态；读线程实际推进；最终无活动订单 |
-| E06 | 同价 2000 活动订单，撤掉偶数位置的 1000 单，再放入 1000 单，最后一笔卖单全部扫掉 | 超过订单池单块容量后的增长；队中删除与节点复用；原剩余订单 FIFO 不变；价档量与订单数正确；已撤订单不会再次成交 |
+From the repository root:
 
-E02 的参考模型使用线性扫描和到达序号，不调用正式活动订单索引、价格树、撮合函数或旧测试 oracle。E03 每组为 40000 个计时命令；所有计时命令也执行正确性检查。`--scale 2/3` 增加命令数、扫单轮数及并发写入数。
+```sh
+./tests/build.sh
+ctest --test-dir build/demo-tests --output-on-failure -R '^(demo_engine|snapshot_mailbox)$'
 
-E03 延迟包含 `command()`、同步输出事件复制及必要校验，不含 TCP；预热排除。E04 延迟只测每条主动扫单命令，吞吐中的一次操作是一整轮扫单，墙钟时间包含 64 笔挂单准备与结果核对，因此不能将其吞吐当作每秒成交笔数。E05 用正确性约束检查并发读取，不为读线程调度设置速度门槛。
+# Standalone snapshot contention benchmark.
+./build/demo-tests/bin/snapshot_contention_benchmark build/snapshot-results 3 3000
+```
 
-结果目录包含逐项结果、原始微秒样本及 p50/p95/p99/max、吞吐。亚微秒结果受系统计时精度和测试驱动开销影响；性能结果用于同机相同构建条件下比较。
-
-`snapshot_mailbox_tests` 另测空闲 reactor 唤醒、排队超时后的复用、容量耗尽后的恢复、写入期间取消、关闭唤醒和命令边界的新鲜快照。通过 `ctest --test-dir build/demo-tests -R snapshot_mailbox --output-on-failure` 运行。
-
-`snapshot_contention_benchmark` 固定四个核心、每片 250 个品种与完整十档，测正常采样、多个读者竞争、连续读取及快照分配延迟注入。源文件在修改撮合实现前冻结，修改前后使用同一工作负载。它测核心处理及计划到达延迟，不含 TCP；详细计时口径与结果见 [快照邮箱文档](../../docs/matching_engine/SNAPSHOT_MAILBOX_DESIGN_AND_RESULTS.md)。
+See the [test runner](../README.md) for the full suite.
