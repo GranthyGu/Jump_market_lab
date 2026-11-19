@@ -96,8 +96,10 @@ class Journal:
 
 
 class Trader:
-    def __init__(self, slot, config, journal):
+    def __init__(self, slot, config, journal, on_trade=None):
         self.slot, self.config, self.log = slot, config, journal
+        self.on_trade = on_trade
+        self.on_order = None
         self.lock, self.send_lock = threading.RLock(), threading.Lock()
         self.stop = threading.Event()
         self.thread, self.sock = None, None
@@ -105,25 +107,36 @@ class Trader:
         self.status, self.error = "Logged out", ""
         self.sequence = 0
         self.pending = {}
+        self.receipts = {}
         self.orders, self.snapshot_orders, self.overlay = {}, {}, {}
         self.fills = deque(maxlen=300)
         self.history, self.history_pages = [], deque()
         self.history_ids = set()
         self.history_busy, self.history_error = False, ""
         self.history_count = 0
+        self.history_version, self.history_auto = 0, False
         self.snapshot_request = None
         self.revision = 0
         self.session_generation = 0
         self.reconnect_until = 0
 
-    def snapshot(self):
+    def snapshot(self, history_version=None):
         with self.lock:
             return dict(slot=self.slot, username=self.username, status=self.status, error=self.error,
                         orders=copy.deepcopy(list(self.orders.values())), fills=list(self.fills),
-                        history=copy.deepcopy(self.history), history_more=bool(self.history_pages),
+                        history=None if history_version==self.history_version else copy.deepcopy(self.history),
+                        history_version=self.history_version, history_loaded=len(self.history),
+                        history_more=bool(self.history_pages),
                         history_busy=self.history_busy, history_error=self.history_error,
                         history_count=self.history_count, revision=self.revision,
                         pending=len(self.pending), can_reconnect=bool(self.password))
+
+    def progress(self):
+        """Lightweight counters for replay pacing; avoid copying entire histories."""
+        with self.lock:
+            return dict(status=self.status, orders=len(self.orders), history=len(self.history),
+                        history_more=bool(self.history_pages), history_busy=self.history_busy,
+                        history_error=self.history_error)
 
     def logout(self):
         self.stop.set()
@@ -156,6 +169,7 @@ class Trader:
                 self.fills.clear()
                 self.history.clear()
                 self.history_pages.clear()
+                self.history_version += 1
             self.username, self.password = username, password
             self.stop = threading.Event()
             self.status, self.error = "Connecting", ""
@@ -218,29 +232,50 @@ class Trader:
         self.log.add(self.slot, f"CANCEL SENT order={order_id}  request={rid}")
         return rid
 
+    def wait_receipt(self, request, timeout=8):
+        """Wait for a real exchange acknowledgement; never retry an uncertain order."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.lock:
+                result = self.receipts.get(int(request))
+                if result is not None:
+                    if "error" in result:
+                        raise RuntimeError(result["error"])
+                    return result.copy()
+                if self.status != "Ready":
+                    raise RuntimeError("Demo stopped: account disconnected; check orders before continuing")
+            time.sleep(.002)
+        raise TimeoutError("Demo acknowledgement timed out; sent orders were not replayed")
+
     def _require_ready(self):
         with self.lock:
             if self.status != "Ready":
                 raise RuntimeError("Log in and wait for the complete order snapshot")
 
-    def query_history(self, more=False):
+    def query_history(self, more=False, all_pages=False):
         self._require_ready()
         with self.lock:
             if self.history_busy:
                 raise RuntimeError("A trade query is already running")
             if more and not self.history_pages:
                 raise ValueError("All history pages have been received")
-            if more and len(self.history) >= 10000:
-                raise ValueError("The console retains 10,000 records. Refresh to start a new query")
+            if more and len(self.history) >= 20000:
+                raise ValueError("The console retains 20,000 records. Refresh to start a new query")
             self.history_busy, self.history_error = True, ""
             self.history_count = 0
             if not more:
                 self.history, self.history_ids = [], set()
                 self.history_pages.clear()
+                self.history_auto = all_pages
+                self.history_version += 1
                 page = (0, 0, 0)
             else:
                 page = self.history_pages.popleft()
             self.revision += 1
+        self._request_history(page)
+        self.log.add(self.slot, "QUERY Loading committed trade history…")
+
+    def _request_history(self, page):
         shard, after, through = page
         try:
             self._send(9, struct.pack("<HHQQ", shard, 128, after, through),
@@ -251,7 +286,6 @@ class Trader:
                 if shard:
                     self.history_pages.appendleft(page)
             raise
-        self.log.add(self.slot, "QUERY Loading committed trade history…")
 
     def _run(self):
         announced = False
@@ -311,7 +345,8 @@ class Trader:
             self.stop.wait(0.2)
 
     def _event(self, kind, request, payload):
-        message, level = None, None
+        message, level, execution, order_update = None, None, None, None
+        next_history = None
         with self.lock:
             if kind == 2:
                 message = "LOGIN ACCEPTED Waiting for active-order snapshot…"
@@ -319,6 +354,8 @@ class Trader:
                 _, reason = struct.unpack("<QH", payload)
                 pending = self.pending.pop(request, {})
                 self.error = wire.REJECTIONS.get(reason, f"Rejected ({reason})")
+                if request:
+                    self.receipts[request] = {"error": self.error}
                 message, level = f"REJECTED {self.error}  request={request}", "error"
                 if pending.get("purpose", "").startswith("history"):
                     self.history_busy, self.history_error = False, self.error
@@ -329,17 +366,20 @@ class Trader:
                     return False
             elif kind == 5:
                 value = wire.order(payload[8:])
+                order_update = value
                 self._apply_order(value)
                 if self.snapshot_request is not None:
                     self.overlay[value["id"]] = value
                 if request:
                     self.pending.pop(request, None)
+                    self.receipts[request] = value.copy()
                 message = (f"{value['status'].upper()} {value['side'].upper()} {value['symbol']}  "
                            f"qty={value['original']}  filled={value['filled']}  remaining={value['remaining']}  "
                            f"price={value['price']}  order={value['id']}")
                 level = "success" if value["status"] == "Accepted" else "warning" if value["status"] == "Canceled" else "info"
             elif kind == 6:
                 value = wire.trade(payload)
+                execution = value
                 self.fills.appendleft(value)
                 message = f"TRADE {value['side'].upper()} {value['symbol']}  qty={value['quantity']}  price={value['price']}  trade={value['id']}"
                 level = "trade"
@@ -362,11 +402,13 @@ class Trader:
                 if not self.pending.get(request, {}).get("purpose", "").startswith("history"):
                     return True
                 value = wire.history(kind, payload, self.username)
+                execution = value
                 identity = (kind, value["id"])
                 if identity not in self.history_ids:
                     self.history_ids.add(identity)
                     self.history.append(value)
                     self.history_count += 1
+                    self.history_version += 1
             elif kind == 11:
                 purpose = self.pending.get(request, {}).get("purpose", "")
                 if not purpose.startswith("history"):
@@ -376,10 +418,22 @@ class Trader:
                     self.history_pages.append((shard, after, through))
                 if (shard == 0 and flags == 2) or purpose == "history_page":
                     self.pending.pop(request, None)
-                    self.history_busy = False
-                    self.history.sort(key=lambda r: int(r["timestamp_ns"]), reverse=True)
-                    message, level = f"QUERY COMPLETE {len(self.history)} records loaded" + (" · more pages available" if self.history_pages else ""), "success"
+                    if self.history_auto and self.history_pages and len(self.history)<20000:
+                        next_history = self.history_pages.popleft()
+                    else:
+                        self.history_busy = False
+                        self.history.sort(key=lambda r: int(r["timestamp_ns"]), reverse=True)
+                        self.history_version += 1
+                        message, level = f"QUERY COMPLETE {len(self.history)} records loaded" + (" · more pages available" if self.history_pages else ""), "success"
             self.revision += 1
+            while len(self.receipts) > 2048:
+                self.receipts.pop(next(iter(self.receipts)))
+        if execution and self.on_trade:
+            self.on_trade(execution)
+        if order_update and self.on_order:
+            self.on_order(order_update)
+        if next_history:
+            self._request_history(next_history)
         if message:
             self.log.add(self.slot, message, level)
         return True

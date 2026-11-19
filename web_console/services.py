@@ -36,9 +36,10 @@ def reachable(endpoint):
 
 
 class Services:
-    def __init__(self, config, repo, runtime, data, binaries, journal, attach=False):
+    def __init__(self, config, repo, runtime, data, binaries, journal, attach=False, disposable=False):
         self.config, self.repo, self.runtime, self.data = config, repo, runtime, data
         self.bin, self.log, self.attach_only = binaries, journal, attach
+        self.disposable = disposable
         self.lock, self.operation = threading.RLock(), threading.Lock()
         self.processes, self.paused = {}, {}
         self.state = dict(cluster="Offline", gateway=False, publisher=False, shards=[],
@@ -158,6 +159,8 @@ class Services:
         except (OSError, ValueError, RuntimeError):
             current = None
         if current:
+            if self.disposable and not (self.processes.get("cluster") and self.processes["cluster"].poll() is None):
+                raise RuntimeError("Another cluster is already running. Stop its console before starting an empty demo")
             # Verify the running supervisor uses this symbol universe, when available.
             config_files = list(Path(current["log_dir"]).glob("*router*.conf"))
             if config_files:
@@ -174,6 +177,11 @@ class Services:
             if process and process.poll() is None:
                 raise RuntimeError("Owned cluster is still starting or stopping")
             cleanup_orphans(self.config, self.runtime, self.log)
+            if self.disposable:
+                for name, endpoint in (("gateway", self.config.gateway), ("publisher", self.config.query)):
+                    own = self.processes.get(name)
+                    if reachable(endpoint) and not (own and own.poll() is None):
+                        raise RuntimeError(f"Another {name} is already running. Stop that deployment before starting an empty demo")
             if reachable(self.config.address(self.config.settings["router_listen"])):
                 port = self.config.settings["router_listen"][1]
                 raise RuntimeError(f"Router port {port} is occupied by a process outside this console's ownership. Its supervisor is unavailable; see System log")
@@ -381,3 +389,4 @@ class Services:
                         self.log.add("console", f"{name} has not exited", "warning")
             self.stop.set()
         self.monitor_thread.join(3)
+        return all(process.poll() is not None for process in self.processes.values())

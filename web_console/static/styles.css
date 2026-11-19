@@ -32,7 +32,7 @@ body {
 .header-right { gap:14px; }
 .workspace {
   width:100%; max-width:none; flex:1; min-height:0;
-  grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);
+  grid-template-columns:minmax(0,1.85fr) minmax(0,1fr);
   padding:8px 10px 6px; gap:8px; overflow:hidden;
 }
 .market-column,.trading-column { display:flex; flex-direction:column; min-height:0; gap:8px; }
@@ -185,7 +185,7 @@ h2 { font-size:14px; }
   .trader-log-output,.mini-log { font-size:13px; }
 }
 @media (max-width:1250px) {
-  .workspace { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .workspace { grid-template-columns:minmax(0,1.55fr) minmax(0,1fr); }
   .book-formula { display:none; }
   .book-column-header { padding:0 5px; }
   .book-column-header h2 { font-size:12px; }
@@ -220,3 +220,49 @@ h2 { font-size:14px; }
   .operation-status { height:20px; padding-bottom:3px; }
   .trader-log-heading { height:24px; min-height:24px; }
 }
+
+/* Demo controls share the existing header; price history opens in an overlay. */
+.demo-controls { display:flex; align-items:center; gap:7px; min-width:0; margin-left:auto; padding:3px 0; border-bottom:2px solid transparent; background:linear-gradient(var(--green),var(--green)) left bottom/var(--demo-progress,0%) 2px no-repeat; }
+.demo-controls select { height:29px; font-size:12px; padding:0 6px; width:104px; }
+.demo-controls .button { height:29px; padding:0 9px; font-size:12px; }
+#demo-progress { max-width:240px; font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#demo-progress.error { color:var(--red); }
+.chart-dialog { width:min(860px,calc(100vw - 32px)); height:min(530px,86dvh); display:flex; flex-direction:column; overflow:hidden; padding:20px; }
+.chart-dialog:not([open]) { display:none; }
+.chart-dialog .dialog-heading { margin-bottom:14px; flex-shrink:0; }
+.chart-actions { display:flex; align-items:center; gap:12px; }
+.chart-actions select { font-size:13px; max-width:170px; }
+.chart-metrics { display:flex; gap:28px; flex-shrink:0; padding:0 0 16px; }
+.chart-metrics>div { display:flex; flex-direction:column; gap:4px; }
+.chart-metrics span { font-size:11px; color:var(--muted); }
+.chart-metrics strong { font:18px var(--mono); }
+.price-chart { width:100%; flex:1; min-height:80px; position:relative; }
+.price-chart svg { width:100%; height:100%; display:block; }
+.chart-grid line { stroke:var(--border); stroke-width:1; }
+.chart-grid text { fill:var(--muted); font:11px var(--mono); }
+.chart-guide { stroke:var(--muted); stroke-width:1; stroke-dasharray:4 4; }
+.chart-hover { padding:12px 0 8px; min-height:34px; font:12px var(--mono); color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+@media(max-width:1450px) { .demo-controls~.header-right .clock { display:none; } #demo-progress { max-width:165px; } .brand-sub { display:none; } }
+@media(max-width:1080px) { #demo-progress { display:none; } .header-right { gap:6px; } .brand-divider { display:none; } }
+@media(max-height:650px) { .chart-dialog { padding:12px; } .chart-metrics { padding-bottom:6px; } .chart-dialog .dialog-heading { margin-bottom:8px; } }
+
+/* Give direct and implied quantities their own lines instead of clipping a sum. */
+.depth-header,.depth-side { grid-template-columns:1.6ch minmax(0,1fr) 3.6ch; }
+.depth-header.ask,.depth-side.ask { grid-template-columns:3.6ch minmax(0,1fr) 1.6ch; }
+.depth-quantity { display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:0; overflow:visible; text-overflow:clip; line-height:1; }
+.depth-side.ask .depth-quantity { align-items:flex-start; }
+.depth-quantity .direct-value { font-size:var(--book-qty-size,12px); line-height:1; white-space:nowrap; }
+.depth-quantity .implied-value { font-size:max(8px,calc(var(--book-qty-size,12px) - 1px)); line-height:1; white-space:nowrap; }
+.depth-header { font-size:var(--book-meta-size,10px); }
+.depth-orders { text-overflow:clip; }
+#publisher-log { --log-row-height:34px; }
+#publisher-log .log-text { white-space:normal; overflow-wrap:anywhere; line-height:16px; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.history-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); gap:4px; padding:3px 0 5px; flex-shrink:0; }
+.history-filters select,.history-filters input { width:100%; min-width:0; height:27px; padding:0 6px; font-size:12px; }
+.history-filters input { grid-column:1 / -1; font-family:var(--mono); }
+.history-footer { font-size:10px; }
+.trader .activity-tabs { gap:9px; }
+.trader .activity-tab { font-size:12px; }
+.trader .order-row-title { min-width:0; }
+.trader .order-row-values { flex-shrink:0; }
+@media(max-height:700px) { #publisher-log { --log-row-height:18px; } #publisher-log .log-text { white-space:nowrap; display:block; } .history-filters select,.history-filters input { height:24px; } }

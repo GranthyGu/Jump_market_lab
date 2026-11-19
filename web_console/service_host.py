@@ -58,6 +58,20 @@ def main():
         if members:
             os.killpg(os.getpgrp(), signal.SIGCONT)
             os.killpg(os.getpgrp(), signal.SIGTERM)
+        # Do not report completion while a descendant could still write session data.
+        while True:
+            remaining = []
+            for row in process_rows().values():
+                if row["group"] != os.getpgrp() or row["pid"] == os.getpid():
+                    continue
+                try:
+                    os.kill(row["pid"], 0)
+                    remaining.append(row["pid"])
+                except ProcessLookupError:
+                    pass
+            if not remaining:
+                break
+            time.sleep(.1)
         record.update(status="exited", exit_code=child.returncode, stopped=time.time())
         atomic_json(args.record, record)
         print(f"HOST EXIT component={args.name} code={child.returncode}", flush=True)

@@ -21,6 +21,8 @@ import webbrowser
 from bridge import Config, Journal, MarketFeed, Trader
 from services import Services
 from deployment import data_directory
+from deployment import atomic_json
+from demo import DemoWorkspace, DemoReplay, PriceTape
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
@@ -30,28 +32,55 @@ class Console:
     def __init__(self, args):
         self.config = Config(args.config, args.market_config, args.cluster_config)
         self.runtime, self.token = args.runtime, secrets.token_urlsafe(32)
+        self.instance = secrets.token_hex(12)
+        self.stop_receipt = args.runtime / "stops" / (self.instance + ".json")
         self.log = Journal()
-        selected_data = data_directory(self.config, args.runtime, args.data_dir, self.log)
+        disposable = not (args.persistent or args.data_dir or args.attach)
+        self.demo_workspace = DemoWorkspace(args.runtime) if disposable else None
+        selected_data = data_directory(self.config, args.runtime,
+                                       self.demo_workspace.data if disposable else args.data_dir, self.log)
         self.market = MarketFeed(self.config, self.log)
-        self.traders = {slot: Trader(slot, self.config, self.log) for slot in ("alice", "bob")}
-        self.session_lock = threading.Lock()
+        self.tape = PriceTape(self.config.products)
+        self.traders = {slot: Trader(slot, self.config, self.log, self.tape.record) for slot in ("alice", "bob")}
+        self.session_lock = threading.RLock()
         self.services = Services(self.config, REPO, args.runtime, selected_data,
-                                 args.build_dir, self.log, args.attach)
+                                 args.build_dir, self.log, args.attach, disposable)
         self.stop = threading.Event()
+        self.demo = DemoReplay(self, disposable)
+        for trader in self.traders.values():
+            trader.on_order = self.demo.observe
+        self.log.add("console", "DEMO WORKSPACE Starts empty; Stop removes this session's orders and trades" if disposable
+                     else "PERSISTENT WORKSPACE Orders and trade history are retained")
 
-    def state(self, after=0):
+    def state(self, after=0, history_versions=None):
         logs, sequence = self.log.after(after)
         market = self.market.snapshot()
         services = self.services.snapshot()
         services["publisher_listening"] = services["publisher"]
         services["publisher"] = services["publisher"] and any(book["status"] == "Live" for book in market["books"].values())
-        return dict(products=self.config.products, accounts=list(self.config.accounts),
+        return dict(products=self.config.products, accounts=list(self.config.accounts), demo=self.demo.snapshot(),
+                    instance_id=self.instance, stop_receipt=str(self.stop_receipt),
                     services=services, market=market,
-                    traders={key: client.snapshot() for key, client in self.traders.items()},
+                    traders={key: client.snapshot((history_versions or {}).get(key)) for key, client in self.traders.items()},
                     logs=logs, log_sequence=sequence, time=time.time(),
                     config_path=str(self.config.exchange), csrf=self.token)
 
     def command(self, path, body):
+        with self.session_lock:
+            if self.stop.is_set() and path != "/api/stop":
+                raise RuntimeError("Console is shutting down")
+            if self.demo.snapshot()["running"] and path not in ("/api/demo/cancel", "/api/stop", "/api/market/refresh"):
+                raise RuntimeError("Wait for the demo to finish, or stop loading before manual operations")
+            return self._command(path, body)
+
+    def _command(self, path, body):
+        if path == "/api/demo/start":
+            self.demo.start(body.get("duration", 12))
+            return {"message": "Demo replay started"}
+        if path == "/api/demo/cancel":
+            if self.demo.snapshot()["running"]:
+                self.demo.cancel.set()
+            return {"message": "Demo loading is stopping; engines continue running"}
         if path == "/api/services":
             action, target = body.get("action"), str(body.get("target", "all"))
             def recovered():
@@ -93,7 +122,7 @@ class Console:
         if path == "/api/cancel":
             return {"request_id": client.cancel(body.get("order_id"))}
         if path == "/api/history":
-            client.query_history(body.get("more") is True)
+            client.query_history(body.get("more") is True, body.get("all") is True)
             return {"message": "Trade query started"}
         if path == "/api/reconnect":
             client.reconnect()
@@ -101,10 +130,15 @@ class Console:
         raise ValueError("Unknown API operation")
 
     def close(self):
+        self.demo.close()
         for trader in self.traders.values():
             trader.logout()
         self.market.close()
-        self.services.close()
+        if not self.services.close():
+            raise RuntimeError("Services are still stopping; demo data retained until they exit")
+        if self.demo_workspace:
+            self.demo_workspace.cleanup()
+            print("Demo data cleared. The next start will be empty.", flush=True)
 
 
 class Server(ThreadingHTTPServer):
@@ -144,13 +178,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path)
         if path.path == "/api/health":
-            self.send(200, {"service": "marketlab-console", "version": 1})
+            self.send(200, {"service": "marketlab-console", "version": 1, "instance_id": self.server.app.instance})
         elif path.path == "/api/state":
             try:
-                after = int(parse_qs(path.query).get("after", ["0"])[0])
-                self.send(200, self.server.app.state(after))
+                query = parse_qs(path.query)
+                after = int(query.get("after", ["0"])[0])
+                versions = {slot:int(query["history_"+slot][0]) for slot in ("alice","bob") if "history_"+slot in query}
+                self.send(200, self.server.app.state(after, versions))
             except ValueError:
                 self.send(400, {"error": "Invalid journal cursor"})
+        elif path.path == "/api/chart":
+            try:
+                symbol = parse_qs(path.query).get("symbol", [""])[0]
+                self.send(200, self.server.app.tape.snapshot(symbol))
+            except ValueError as exc:
+                self.send(400, {"error": str(exc)})
         elif path.path == "/api/logs":
             rows, _ = self.server.app.log.after(0)
             self.send(200, "\n".join(f"{r['time']} [{r['source']}] {r['text']}" for r in rows).encode(), "text/plain; charset=utf-8")
@@ -169,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
                 writer.writerow(safe)
             self.send(200, out.getvalue().encode(), "text/csv; charset=utf-8")
         else:
-            filename = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/favicon.svg": "favicon.svg"}.get(path.path)
+            filename = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/history-index.js": "history-index.js", "/charts.js": "charts.js", "/styles.css": "styles.css", "/favicon.svg": "favicon.svg"}.get(path.path)
             if not filename:
                 self.send(404, {"error": "Not found"})
                 return
@@ -204,6 +246,7 @@ def arguments():
     parser.add_argument("--cluster-config", type=Path, default=REPO / "src/config/engine_cluster.json")
     parser.add_argument("--runtime", type=Path, default=ROOT / "runtime")
     parser.add_argument("--data-dir", type=Path, help="Compatible existing cluster data, or a new persistent directory")
+    parser.add_argument("--persistent", action="store_true", help="Keep orders and trades between sessions (default: disposable empty demo)")
     parser.add_argument("--build-dir", type=Path, help="Explicit existing binaries (default: build current source inside this folder)")
     parser.add_argument("--rebuild", action="store_true", help="Build current C++ source inside this folder")
     parser.add_argument("--attach", action="store_true", help="Connect to already running services; never launch them")
@@ -232,6 +275,30 @@ def main():
                                          {"Content-Type": "application/json", "X-Console-Token": state["csrf"]})
         with urllib.request.urlopen(request, timeout=3) as response:
             print(response.read().decode())
+        receipt = Path(state["stop_receipt"]) if state.get("stop_receipt") else None
+        print("Waiting for native services to stop and session cleanup to finish…", flush=True)
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if receipt and receipt.exists():
+                result = json.loads(receipt.read_text())
+                if not result["ok"]:
+                    raise RuntimeError(result["error"])
+                # Receipt is written after cleanup; the runtime lock is released just afterwards.
+                try:
+                    with urllib.request.urlopen(url + "/api/health", timeout=.5):
+                        pass
+                except OSError:
+                    print("Stopped. Demo data cleared." if result["demo_cleaned"] else "Stopped. Persistent data retained.")
+                    return
+            elif receipt is None:
+                try:
+                    with urllib.request.urlopen(url + "/api/health", timeout=.5):
+                        pass
+                except OSError:
+                    print("Stopped. Previous persistent data retained.")
+                    return
+            time.sleep(.2)
+        raise TimeoutError("Shutdown has not finished. Data was not force-deleted; inspect the console terminal")
         return
     os.umask(0o077)
     args.runtime.mkdir(parents=True, exist_ok=True)
@@ -248,7 +315,8 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: app.stop.set())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print(f"\nMarketLab Console  {url}\nConfig: {args.config}\nData:   {app.services.data}\nCtrl-C stops this console and its owned services.\n", flush=True)
+    mode = "Disposable demo · starts empty · cleared on Stop" if app.demo_workspace else "Persistent · retained on Stop"
+    print(f"\nMarketLab Console  {url}\nConfig: {args.config}\nData:   {app.services.data}\nMode:   {mode}\nCtrl-C stops this console and its owned services.\n", flush=True)
     if args.rebuild and not args.attach:
         app.services.action("build" if args.no_start else "build-and-start")
     elif not args.no_start:
@@ -259,10 +327,18 @@ def main():
         app.stop.wait()
     finally:
         print("Shutting down owned services gracefully…", flush=True)
-        server.shutdown()
-        server.server_close()
-        app.close()
-        lock.close()
+        result = dict(instance_id=app.instance, ok=False, demo_cleaned=False, error="")
+        try:
+            app.close()
+            result.update(ok=True, demo_cleaned=bool(app.demo_workspace))
+        except Exception as exc:
+            result["error"] = str(exc)
+            raise
+        finally:
+            atomic_json(app.stop_receipt, result)
+            server.shutdown()
+            server.server_close()
+            lock.close()
 
 
 if __name__ == "__main__":

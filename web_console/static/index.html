@@ -7,12 +7,15 @@
   <title>MarketLab · Local Exchange</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
+  <script src="/history-index.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/charts.js" defer></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/" aria-label="MarketLab home"><img src="/favicon.svg" alt="" width="32" height="32"><span>MarketLab<span class="brand-divider">/</span><span class="brand-sub">Exchange console</span></span></a>
-    <div class="header-right"><span class="local-tag"><span class="dot"></span> LOCAL</span><span class="connection" id="connection"><span class="dot amber"></span>Connecting</span><span class="clock" id="clock">--:--:--</span><button class="icon-button" id="info-button" title="Connection details" aria-label="Connection details" data-icon="info"></button></div>
+    <div class="demo-controls" id="demo-controls" hidden><label class="sr-only" for="demo-duration">Demo replay duration</label><select id="demo-duration"><option value="10">10 seconds</option><option value="12" selected>12 seconds</option><option value="15">15 seconds</option></select><button id="demo-button" class="button primary" disabled><span data-icon="play"></span><span id="demo-button-label">Load demo</span></button><span id="demo-progress" role="status" aria-live="polite">Empty demo</span></div>
+    <div class="header-right"><span class="connection" id="connection"><span class="dot amber"></span>Connecting</span><span class="clock" id="clock">--:--:--</span><button class="icon-button" id="info-button" title="Connection details" aria-label="Connection details" data-icon="info"></button></div>
   </header>
   <div id="connection-banner" class="connection-banner" hidden>Console connection lost. Displayed data may be out of date. Retrying…</div>
   <main class="workspace">
@@ -34,7 +37,7 @@
         <div class="section-heading"><div class="heading-label"><h2>Engine control</h2><span id="cluster-badge" class="badge">Offline</span></div><button class="text-button log-expand" data-source="system">System log <span aria-hidden="true">↗</span></button></div>
         <div id="shards" class="shard-strip" aria-label="Shard status"></div>
         <div class="operation-controls"><button id="power-button" class="button secondary" data-action="recover"><span data-icon="power"></span><span id="power-label">Start engines</span></button><div class="restart-control"><label class="sr-only" for="restart-target">Restart target</label><select id="restart-target"><option value="all">All shards</option></select><button id="restart-button" class="button secondary"><span data-icon="refresh"></span>Restart</button></div><button id="fault-button" class="button quiet"><span data-icon="activity"></span>Interrupt</button></div>
-        <div class="operation-status" id="operation-status"><span class="muted">Persistent state is kept between sessions.</span></div>
+        <div class="operation-status" id="operation-status"><span class="muted">Connecting to the local workspace…</span></div>
       </section>
     </section>
     <section class="trading-column" aria-label="Trading workspaces">
@@ -49,5 +52,6 @@
   <dialog id="fault-dialog" class="dialog small-dialog"><div class="dialog-heading"><div><div class="eyebrow">PROCESS CONTROL</div><h2>Interruption & recovery</h2></div><button class="icon-button close-dialog" aria-label="Close interruption controls" data-icon="close"></button></div><label>Matching engine<select id="fault-target"></select></label><p class="dialog-note">Pause a real engine process, then resume it to observe connection recovery. The order book stays in memory.</p><div class="fault-actions"><button class="button secondary" id="pause-shard"><span data-icon="pause"></span>Pause shard</button><button class="button primary" id="resume-shard"><span data-icon="play"></span>Resume shard</button></div><details class="advanced"><summary>Crash recovery test</summary><p class="dialog-note">Force-stop a spread-group member. The existing supervisor restarts it from disk. An interrupted cross-shard execution may remain paused for inspection.</p><label class="checkbox-label"><input id="crash-confirm" type="checkbox">Force-stop the selected engine with SIGKILL</label><button class="button danger full-width" id="crash-shard" disabled>Crash selected shard</button></details><div class="form-error" id="fault-error" role="alert"></div></dialog>
   <dialog id="info-dialog" class="dialog details-dialog"><div class="dialog-heading"><div><div class="eyebrow">LOCAL CONNECTION</div><h2>Workspace details</h2></div><button class="icon-button close-dialog" aria-label="Close workspace details" data-icon="close"></button></div><div id="workspace-details"></div></dialog>
   <dialog id="trade-dialog" class="dialog details-dialog"><div class="dialog-heading"><div><div class="eyebrow">PERSISTED EXECUTION</div><h2>Trade details</h2></div><button class="icon-button close-dialog" aria-label="Close trade details" data-icon="close"></button></div><div id="trade-details"></div></dialog>
+  <dialog id="chart-dialog" class="dialog chart-dialog"><div class="dialog-heading"><div><div class="eyebrow">LIVE EXECUTION PRICES</div><h2 id="chart-title">Price history</h2></div><div class="chart-actions"><label class="sr-only" for="chart-symbol">Chart symbol</label><select id="chart-symbol"></select><button class="icon-button close-dialog" aria-label="Close price chart" data-icon="close"></button></div></div><div id="chart-metrics" class="chart-metrics"></div><div id="price-chart" class="price-chart" tabindex="0" aria-label="Executed price chart. Use arrow keys to inspect trades."></div><div id="chart-hover" class="chart-hover" role="status">Move over the chart to inspect a trade</div><p class="dialog-footnote">Actual executions from connected accounts · Latest 400 trades · UTC · Updates live during replay and manual trading</p></dialog>
 </body>
 </html>

@@ -83,6 +83,14 @@ function traderTemplate(slot) {
 }
 $('traders').innerHTML = ['alice','bob'].map(traderTemplate).join('');
 for (const slot of ['alice','bob']) {
+  ui.panels[slot].filters={symbol:'all',execution:'all',query:''};
+  $(`${slot}-activity`).insertAdjacentHTML('beforebegin', `<div class="history-filters" id="${slot}-filters" hidden><label class="sr-only" for="${slot}-history-symbol">Filter ${slot} trades by executed symbol</label><select id="${slot}-history-symbol" title="Executed symbol"><option value="all">All symbols</option></select><label class="sr-only" for="${slot}-history-type">Filter ${slot} execution type</label><select id="${slot}-history-type"><option value="all">All executions</option><option value="implied">Implied-related</option><option value="Direct">Direct</option><option value="Implied leg">Implied leg</option><option value="Calendar spread">Calendar spread</option><option value="Butterfly">Butterfly</option></select><label class="sr-only" for="${slot}-history-id">Find ${slot} trade or order ID</label><input id="${slot}-history-id" type="search" inputmode="numeric" placeholder="Trade / order ID" autocomplete="off"></div>`);
+  for(const [suffix,key] of [['symbol','symbol'],['type','execution'],['id','query']]) {
+    $(`${slot}-history-${suffix}`).addEventListener(suffix==='id'?'input':'change',event=>{
+      const panel=ui.panels[slot];panel.filters[key]=event.target.value;panel.page=0;panel.revision=-1;
+      if(ui.state)renderActivity(slot,ui.state.traders[slot]);
+    });
+  }
   $(`${slot}-activity`).insertAdjacentHTML('afterend', `<div class="activity-pagination pagination" aria-label="${slot} activity pages"><button class="icon-button small-button" id="${slot}-previous" aria-label="Previous ${slot} records">${icon('chevron-left')}</button><span id="${slot}-page-label">1 / 1</span><button class="icon-button small-button" id="${slot}-next" aria-label="Next ${slot} records">${icon('chevron-right')}</button></div>`);
   $(`${slot}-pause-log`).title = 'Pause live log';
   $(`${slot}-pause-log`).setAttribute('aria-label', `Pause ${slot} live log`);
@@ -108,10 +116,10 @@ function updateTicket(slot, resetPrice=false) {
     if (resetPrice) $(`${slot}-price`).value = product.close;
     $(`${slot}-limits`).textContent = `Limits ${product.lower} – ${product.upper}`;
   }
-  const ready = ui.state?.traders[slot].status === 'Ready';
+  const ready = ui.state?.traders[slot].status === 'Ready' && !ui.state?.demo?.running;
   $(`${slot}-submit`).disabled = !ready;
   $(`${slot}-cancel`).disabled = !ready;
-  $(`${slot}-submit-label`).textContent = ready ? `${ui.panels[slot].side} ${product?.symbol || 'order'}` : 'Log in to trade';
+  $(`${slot}-submit-label`).textContent = ui.state?.demo?.running ? 'Demo loading…' : ready ? `${ui.panels[slot].side} ${product?.symbol || 'order'}` : 'Log in to trade';
 }
 
 function selectSymbol(slot, symbol, price, side) {
@@ -208,7 +216,7 @@ async function cancelOrder(slot, id) {
   catch(error) {toast(error.message,'error');}
 }
 async function queryHistory(slot, more) {
-  try {await api('/api/history',{slot,more});}
+  try {await api('/api/history',{slot,more,all:!more});}
   catch(error) {toast(error.message,'error');}
 }
 
@@ -236,15 +244,27 @@ function renderActivity(slot, trader) {
   $(`${slot}-fill-count`).textContent = trader.fills.length;
   const activity = $(`${slot}-activity`);
   $(`${slot}-activity-caption`).textContent = tab === 'orders' ? (trader.status === 'Ready' ? 'Active orders' : 'Last known active orders') : tab === 'history' ? (trader.history_busy ? 'Querying committed trades…' : 'Committed trade history') : 'Live session fills';
-  $(`${slot}-query`).disabled = trader.status !== 'Ready' || trader.history_busy;
+  $(`${slot}-query`).disabled = trader.status !== 'Ready' || trader.history_busy || ui.state.demo?.running;
   $(`${slot}-export`).hidden = tab !== 'history' || !trader.history.length;
   $(`${slot}-cancel-form`).hidden = tab !== 'orders';
   $(`${slot}-history-footer`).hidden = tab !== 'history';
-  $(`${slot}-history-caption`).textContent = trader.history_error || `${number(trader.history.length)} loaded${trader.history_more ? ' · more available' : ''}`;
+  $(`${slot}-filters`).hidden = tab !== 'history';
   $(`${slot}-more`).hidden = !trader.history_more;
-  $(`${slot}-more`).disabled = trader.history_busy || trader.status !== 'Ready';
+  $(`${slot}-more`).disabled = trader.history_busy || trader.status !== 'Ready' || ui.state.demo?.running;
   const capacity = visibleCapacity(activity, '--activity-row-height', 46);
-  const allRecords = tab === 'orders' ? [...trader.orders].reverse() : tab === 'history' ? trader.history : trader.fills;
+  let allRecords = tab === 'orders' ? [...trader.orders].reverse() : trader.fills;
+  if(tab==='history') {
+    if(panel.historyIndexVersion!==trader.history_version||!panel.historyIndex) {
+      panel.historyIndex=buildHistoryIndex(trader.history);panel.historyIndexVersion=trader.history_version;
+      panel.filterKey='';
+    }
+    const filterKey=JSON.stringify(panel.filters);
+    if(panel.filterKey!==filterKey) {
+      panel.filtered=selectHistory(panel.historyIndex,panel.filters);panel.filterKey=filterKey;
+    }
+    allRecords=panel.filtered;
+  }
+  $(`${slot}-history-caption`).textContent = trader.history_error || `${number(tab==='history'?allRecords.length:trader.history.length)} / ${number(trader.history.length)} loaded${trader.history_more?' · more available':''}`;
   const page = pageSlice(allRecords, panel.page, capacity);
   panel.page = page.page;
   updatePager(`${slot}-previous`, `${slot}-next`, `${slot}-page-label`, page);
@@ -255,7 +275,7 @@ function renderActivity(slot, trader) {
     html = page.items.length ? page.items.map(order => `<div class="order-row"><div class="order-row-main"><div class="order-row-title">${esc(order.symbol)} <span class="side-word ${className(order.side)}">${esc(order.side.toUpperCase())}</span></div><div class="order-row-sub" title="Order ID">${esc(order.id)}</div></div><div class="order-row-values">${number(order.remaining)} @ ${order.price}<small>${order.filled ? `${number(order.filled)} / ${number(order.original)} filled` : 'Resting'}</small></div><button class="icon-button cancel-small" data-cancel="${esc(order.id)}" title="Cancel order ${esc(order.id)}" aria-label="Cancel order ${esc(order.id)}" ${trader.status !== 'Ready' ? 'disabled' : ''}>${icon('close')}</button></div>`).join('') : empty('No active orders',trader.status === 'Ready' ? 'Resting limit orders will appear here.' : 'Log in to view your exchange orders.');
   } else {
     const records = page.items;
-    html = records.length ? records.map(record => `<button class="history-row" data-trade-id="${esc(record.id)}" data-trade-type="${esc(record.type)}" title="View execution details"><div><div class="order-row-title">${esc(record.symbol)} <span class="side-word ${className(record.side)}">${esc(record.side.toUpperCase())}</span></div><span class="history-type">${esc(record.type)}</span> <span class="order-row-sub">${timeText(record.timestamp)}</span></div><div class="order-row-values">${number(record.quantity)} @ ${record.price}<small>View details ↗</small></div></button>`).join('') : empty(trader.history_busy && tab === 'history' ? 'Loading trade history' : tab === 'history' ? 'No trades loaded' : 'No fills yet',tab === 'history' ? 'Query trades to read persisted executions.' : 'New executions arrive here automatically.','activity');
+    html = records.length ? records.map(record => `<button class="history-row" data-trade-id="${esc(record.id)}" data-trade-type="${esc(record.type)}" title="View execution details"><div><div class="order-row-title">${esc(record.symbol)} <span class="side-word ${className(record.side)}">${esc(record.side.toUpperCase())}</span></div><span class="history-type">${esc(record.type)}</span> <span class="order-row-sub">${timeText(record.timestamp)}</span></div><div class="order-row-values">${number(record.quantity)} @ ${record.price}<small>View details ↗</small></div></button>`).join('') : empty(trader.history_busy && tab === 'history' ? 'Loading trade history' : tab === 'history' ? (trader.history.length ? 'No matching trades' : 'No trades loaded') : 'No fills yet',tab === 'history' ? (trader.history.length ? 'Change the symbol, execution type or ID filter.' : 'Query trades to read persisted executions.') : 'New executions arrive here automatically.','activity');
   }
   activity.innerHTML = html;
 }
@@ -270,6 +290,7 @@ function renderTraders() {
     $(`${slot}-status`).title = trader.error || trader.status;
     $(`${slot}-name`).textContent = trader.username[0]?.toUpperCase() + trader.username.slice(1);
     $(`${slot}-login`).textContent = active ? 'Log out' : 'Log in';
+    $(`${slot}-login`).disabled = Boolean(ui.state.demo?.running);
     updateTicket(slot);
     renderActivity(slot,trader);
   }
@@ -280,7 +301,8 @@ function depthSide(level, side, max, symbol) {
   const total = level.quantity + level.implied;
   const background = `<i class="depth-fill" style="width:${max ? total/max*100 : 0}%"><b style="width:${total ? level.implied/total*100 : 0}%"></b></i>`;
   const price = `<span class="depth-price">${level.price}</span>`;
-  const quantity = `<span class="depth-quantity">${number(level.quantity)}${level.implied?` <em class="implied-value">+${number(level.implied)}</em>`:''}</span>`;
+  const fullQuantity=value=>new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(value||0);
+  const quantity = `<span class="depth-quantity"><span class="direct-value">${fullQuantity(level.quantity)}</span><em class="implied-value" title="Implied quantity">+${fullQuantity(level.implied)}</em></span>`;
   const orders = `<span class="depth-orders">${number(level.orders)}</span>`;
   const action = side==='bid'?'Sell':'Buy';
   return `<button class="depth-side ${side}" data-symbol="${esc(symbol)}" data-price="${level.price}" data-order-side="${action}" title="${action} ${esc(symbol)} at ${level.price} · Direct ${level.quantity}, implied ${level.implied}, orders ${level.orders}" aria-label="${action} ${esc(symbol)} at ${level.price}">${background}${side==='bid'?orders+quantity+price:price+quantity+orders}</button>`;
@@ -305,6 +327,7 @@ function fitBookGrid(container, rows) {
   container.style.setProperty('--book-number-size', `${size}px`);
   container.style.setProperty('--book-title-size', `${Math.min(15, size + 2)}px`);
   container.style.setProperty('--book-meta-size', `${Math.max(8, Math.min(11, size - 1))}px`);
+  container.style.setProperty('--book-qty-size', `${Math.max(8,Math.min(13,Math.floor(levelHeight/2)))}px`);
 }
 
 function renderMarkets(force=false) {
@@ -335,6 +358,10 @@ function renderMarkets(force=false) {
 document.querySelector('.markets-panel').addEventListener('click', event => {
   const target = event.target.closest('button[data-symbol]');
   if (!target) return;
+  if (target.classList.contains('book-select')) {
+    openPriceChart(target.dataset.symbol);
+    return;
+  }
   selectSymbol(ui.focused,target.dataset.symbol,target.dataset.price === undefined ? undefined : Number(target.dataset.price),target.dataset.orderSide);
 });
 $('previous-page').addEventListener('click',()=>{ui.page--; renderMarkets(true);});
@@ -402,6 +429,7 @@ $('journal-download').addEventListener('click',()=>{
 
 function renderServices() {
   const s=ui.state.services, running=s.cluster!=='Offline';
+  const demoBusy=Boolean(ui.state.demo?.running);
   $('publisher-light').classList.toggle('live',s.publisher);
   $('gateway-light').classList.toggle('live',s.gateway);
   const sessions=Object.values(ui.state.traders).filter(t=>t.status==='Ready').length;
@@ -423,17 +451,44 @@ function renderServices() {
   $('power-label').textContent=running?'Shutdown engines':s.data_dir?'Recover engines':'Start engines';
   $('power-button').dataset.action=running?'shutdown':'recover';
   $('power-button').classList.toggle('danger',running);
-  $('power-button').disabled=Boolean(s.operation)||(running&&!s.owned);
+  $('power-button').disabled=demoBusy||Boolean(s.operation)||(running&&!s.owned);
   $('power-button').title=running&&!s.owned?'Attached services are owned by another terminal':'Gracefully stop or recover the matching cluster';
-  $('restart-button').disabled=!running||Boolean(s.operation);
-  $('fault-button').disabled=!s.owned||Boolean(s.operation);
+  $('restart-button').disabled=demoBusy||!running||Boolean(s.operation);
+  $('fault-button').disabled=demoBusy||!s.owned||Boolean(s.operation);
   const status=$('operation-status');
   if(s.operation){status.className='operation-status busy';status.textContent=`${s.operation.action.toUpperCase()} · ${s.operation.target==='all'?'all shards':`shard ${s.operation.target}`} · ${Math.max(0,Math.floor(ui.state.time-s.operation.started))}s`;} 
   else if(s.error){status.className='operation-status error';status.textContent=s.error;}
   else if(s.cluster==='Paused'){status.className='operation-status busy';status.textContent=s.shards.some(row=>row.phase==='interrupted')?'Engine process interrupted · use Interrupt → Resume shard':'Exchange paused · inspect System log and Workspace details for recovery status';}
-  else {status.className='operation-status';status.textContent=running?(s.owned?'Managed locally · data preserved across restarts':'Attached to existing services · planned restart available'):'Persistent state is kept. Recover engines to reconnect.';}
-  $('footer-data').textContent=`${ui.products.length} symbols · ${s.shards.length || 8} shards · ${s.owned?'Managed':'Local'} workspace`;
+  else {status.className='operation-status';status.textContent=ui.state.demo?.enabled?'Demo workspace · restart preserves data · stop.sh clears this session':running?(s.owned?'Managed locally · data preserved across restarts':'Attached to existing services · planned restart available'):'Persistent state is kept. Recover engines to reconnect.';}
+  $('footer-data').textContent=`${ui.products.length} symbols · ${s.shards.length || 8} shards · ${ui.state.demo?.enabled?'Disposable demo':s.owned?'Managed':'Local'} workspace`;
 }
+
+function renderDemo() {
+  const d=ui.state.demo, s=ui.state.services;
+  $('demo-controls').hidden=!d?.enabled;
+  if(!d?.enabled)return;
+  $('demo-duration').disabled=d.status!=='Empty';
+  $('demo-button').disabled=!d.running&&(d.status!=='Empty'||s.cluster!=='Live'||!s.owned||Boolean(s.operation));
+  $('demo-button-label').textContent=d.running?'Stop loading':d.status==='Empty'?'Load demo':d.status==='Ready'?'Demo loaded':'Replay ended';
+  $('demo-button').classList.toggle('danger',d.running);
+  const percentage=d.total?Math.round(100*d.accepted/d.total):0;
+  $('demo-progress').textContent=d.error|| (d.running?`${d.phase} · ${percentage}%`:d.status==='Ready'?`${number(d.active_orders)} resting · ${number(d.filled_orders)} filled`:d.status==='Empty'?'Starts empty · clears on Stop':d.phase);
+  $('demo-progress').title=d.error||`${d.accepted} / ${d.total} real orders acknowledged · ${d.filled_orders} fully filled · ${d.elapsed}s · ${d.history_records} history records`;
+  $('demo-progress').classList.toggle('error',Boolean(d.error));
+  $('demo-controls').style.setProperty('--demo-progress',`${percentage}%`);
+  if(ui.demoStatus==='Loading'&&!d.running) {
+    for(const panel of Object.values(ui.panels))panel.revision=-1;
+    toast(d.error|| (d.status==='Ready'?'Demo ready · click a symbol for its price chart':d.phase),d.error?'error':'success');
+  }
+  ui.demoStatus=d.status;
+}
+$('demo-button').addEventListener('click',async()=>{
+  $('demo-button').disabled=true;
+  try {
+    if(ui.state.demo.running)await api('/api/demo/cancel',{});
+    else await api('/api/demo/start',{duration:Number($('demo-duration').value)});
+  }catch(error){toast(error.message,'error');}
+});
 async function serviceAction(action,target='all') {
   await api('/api/services',{action,target});
   toast(`${action[0].toUpperCase()+action.slice(1)} requested`);
@@ -459,14 +514,19 @@ function tradeDetails(trade){
 $('info-button').addEventListener('click',()=>{
   if(!ui.state)return;
   const s=ui.state.services;
-  $('workspace-details').innerHTML='<dl>'+[['Connection','Local TCP / UDP'],['Configuration',ui.state.config_path],['Data directory',s.data_dir],['Engine logs',s.log_dir],['Market transport',ui.state.market.transport],['Public feed interval','1 second'],['Interface refresh','500 milliseconds'],['Group status',s.group]].map(([k,v])=>detailRow(k,v)).join('')+'</dl><p class="dialog-note">Orders and trades come from the running exchange. Closing a browser tab keeps services running. Stop the launch script with Ctrl-C for a graceful shutdown.</p>';
+  $('workspace-details').innerHTML='<dl>'+[['Connection','Local TCP / UDP'],['Workspace',ui.state.demo?.enabled?'Disposable demo · cleared on Stop':'Persistent'],['Configuration',ui.state.config_path],['Data directory',s.data_dir],['Engine logs',s.log_dir],['Market transport',ui.state.market.transport],['Public feed interval','1 second'],['Interface refresh','500 milliseconds'],['Group status',s.group]].map(([k,v])=>detailRow(k,v)).join('')+'</dl><p class="dialog-note">Closing a browser tab keeps services running. Run stop.sh or press Ctrl-C to stop services gracefully. '+(ui.state.demo?.enabled?'This demo session is then deleted; the next start is empty.':'Persistent orders and history remain on disk.')+'</p>';
   $('info-dialog').showModal();
 });
 
 function initializeProducts(state){
   ui.products=state.products;
   const options=ui.products.map(p=>`<option value="${esc(p.symbol)}">${esc(p.symbol)}</option>`).join('');
-  for(const slot of ['alice','bob']){$(`${slot}-symbol`).innerHTML=options;updateTicket(slot,true);}
+  for(const slot of ['alice','bob']){
+    $(`${slot}-symbol`).innerHTML=options;
+    $(`${slot}-history-symbol`).innerHTML='<option value="all">All symbols</option>'+options;
+    $(`${slot}-history-symbol`).value=ui.panels[slot].filters.symbol;
+    updateTicket(slot,true);
+  }
   const shards=[...new Set(ui.products.map(p=>p.shard))].sort((a,b)=>a-b);
   $('restart-target').innerHTML='<option value="all">All shards</option>'+shards.map(id=>`<option value="${id}">Shard ${id}</option>`).join('');
   $('fault-target').innerHTML=shards.map(id=>`<option value="${id}">Shard ${id}</option>`).join('');
@@ -476,23 +536,28 @@ function initializeProducts(state){
 async function poll(){
   const started=performance.now();
   try{
-    const response=await fetch(`/api/state?after=${ui.cursor}`,{cache:'no-store',signal:AbortSignal.timeout(5000)});
+    const historyVersions=['alice','bob'].map(slot=>`&history_${slot}=${ui.state?.traders[slot].history_version??-1}`).join('');
+    const response=await fetch(`/api/state?after=${ui.cursor}${historyVersions}`,{cache:'no-store',signal:AbortSignal.timeout(5000)});
     if(!response.ok)throw new Error(`Console returned ${response.status}`);
     let state=await response.json();
     if(ui.csrf && ui.csrf!==state.csrf){
       ui.cursor=0;ui.logs=[];ui.marketKey='';ui.systemKey='';ui.products=[];
-      for(const p of Object.values(ui.panels))p.revision=-1;
+      for(const p of Object.values(ui.panels)){p.revision=-1;p.historyIndex=null;}
       for(const source of ['publisher','gateway','alice','bob'])$(`${source}-log`).dataset.last='';
       const fresh=await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(5000)});
       if(!fresh.ok)throw new Error('Console is restarting');
       state=await fresh.json();
     }
+    for(const slot of ['alice','bob'])if(state.traders[slot].history===null)state.traders[slot].history=ui.state?.traders[slot].history||[];
     ui.csrf=state.csrf;ui.state=state;
     if(!ui.products.length)initializeProducts(state);
     const newRows=state.logs.filter(r=>r.id>ui.cursor);
     ui.logs.push(...newRows);ui.logs=ui.logs.slice(-4000);ui.cursor=state.log_sequence;
     ui.failures=0;$('connection-banner').hidden=true;
-    renderServices();renderTraders();renderMarkets();renderSmallLogs();
+    renderDemo();renderServices();renderTraders();renderMarkets();renderSmallLogs();
+    for(const button of document.querySelectorAll('.book-select'))button.title=`View ${button.dataset.symbol} price history`;
+    if(ui.state.demo?.running)for(const button of document.querySelectorAll('[data-cancel]'))button.disabled=true;
+    if(typeof refreshPriceChart==='function')refreshPriceChart();
     for(const row of newRows){if(['alice','bob'].includes(row.source)&&row.level==='error')toast(`${row.source}: ${row.text}`,'error');}
   }catch(error){
     ui.failures++;

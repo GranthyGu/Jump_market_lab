@@ -18,6 +18,7 @@ REPO=ROOT.parent
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--build-dir",type=Path,default=ROOT/"runtime/build/bin")
+    parser.add_argument("--demo-only",action="store_true")
     args=parser.parse_args()
     (ROOT/"runtime/tests").mkdir(parents=True,exist_ok=True)
     root=Path(tempfile.mkdtemp(prefix="integration-",dir=ROOT/"runtime/tests"))
@@ -61,6 +62,13 @@ def main():
     command=[sys.executable,"-B",ROOT/"server.py","--no-open","--port",str(web),
         "--runtime",root/"web","--data-dir",root/"data","--build-dir",args.build_dir,
         "--config",root/"exchange.conf","--market-config",root/"publisher.conf","--cluster-config",root/"cluster.json"]
+    if args.demo_only:
+        from demo_integration import run
+        try:
+            run(command,root,log,web)
+            print("RESULTS",root,flush=True)
+        finally:log.close()
+        return
     process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT)
     base=f"http://127.0.0.1:{web}"
     results=[]
@@ -201,6 +209,10 @@ def main():
         post("/api/history",dict(slot="bob"))
         wait(lambda s:any(r["type"]=="Butterfly" for r in s["traders"]["bob"]["history"]),"retained history after console crash")
         checked("Fresh console restarts on the same ports with original live orders and trade history")
+        process.terminate()
+        process.wait(45)
+        from demo_integration import run
+        results.extend(run(command,root,log,web))
         (root/"results.json").write_text(json.dumps(dict(ok=True,checks=results),indent=2))
         print("RESULTS",root,flush=True)
     except Exception as exc:
