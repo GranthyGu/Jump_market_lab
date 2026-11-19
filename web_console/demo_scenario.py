@@ -40,28 +40,54 @@ def scenario(config, seed=None):
             batch += 1
     batch += 1
 
-    def special(which):
+    # Each episode creates several real leg makers, then a spread aggressor.
+    # This produces Calendar spread / Butterfly records, rather than only direct
+    # trades in the spread symbols. Balanced roles are shuffled across the replay.
+    episodes = []
+    if spreads:
+        for which, repeats in ((0,20),(1,20),(2,8)):
+            for index, pieces in enumerate([3,4,5,6,7]*repeats):
+                quantities = [max(1,min(80,round(rng.lognormvariate(2.3,.6)))) for _ in range(pieces)]
+                episodes.append(dict(which=which, quantities=quantities,
+                                     side="Buy" if index%2==0 else "Sell",
+                                     slot="alice" if index%4<2 else "bob"))
+        rng.shuffle(episodes)
+
+    def special(episode):
         nonlocal batch
         a,b,c,ab,ac,bf = [config.by_symbol[n] for n in names]
-        if which < 2:
+        which, quantities, side, slot = (episode[k] for k in ("which","quantities","side","slot"))
+        opposite = "Sell" if side=="Buy" else "Buy"
+        maker = "bob" if slot=="alice" else "alice"
+        if which<2:
             spread,leg = (ab,b) if which==0 else (ac,c)
-            orders = [("alice",spread,"Sell",2),("alice",leg,"Sell",2),("bob",a,"Buy",2)]
+            legs = ((a,opposite,1),(leg,side,1))
+            phase = "Calendar spread flow"
         else:
-            orders = [("alice",a,"Sell",1),("alice",b,"Buy",2),("alice",c,"Sell",1),("bob",bf,"Buy",1)]
-        for i,(slot,p,side,qty) in enumerate(orders):
-            add("Implied executions",slot,p,side,p["close"],qty,settle=i==len(orders)-1)
+            spread = bf
+            legs = ((a,opposite,1),(b,side,2),(c,opposite,1))
+            phase = "Butterfly flow"
+        for p,leg_side,ratio in legs:
+            for qty in quantities:
+                add(phase,maker,p,leg_side,p["close"],ratio*qty)
             batch += 1
+        add(phase,slot,spread,side,spread["close"],sum(quantities),settle=True)
+        batch += 1
 
     # A full price-level sweep consumes five old makers and its aggressor. Five
     # replacement quotes restore the depth, so six new orders mean six filled.
-    remaining = 20000 - len(steps) - (10 if spreads else 0)
+    spread_orders = sum((3 if e["which"]==2 else 2)*len(e["quantities"])+1 for e in episodes)
+    remaining = 20000 - len(steps) - spread_orders
     if remaining < 6*len(products) or remaining % 2:
         raise ValueError("The configured universe does not fit the 20,000-order scenario")
     full_sweeps, residual = divmod(remaining,6)
     wave = 0
     common = 0.
-    special_at = {35:0, 65:1, 90:2}
-    done_special = set()
+    waves = (full_sweeps+len(products)-1)//len(products)
+    special_at = {}
+    for index,episode in enumerate(episodes):
+        at = min(waves-1,int((index+rng.random())*waves/len(episodes)))
+        special_at.setdefault(at,[]).append(episode)
     while full_sweeps:
         common = max(-2., min(2., .94*common+rng.gauss(0,.3)))
         selected = rng.sample(products,min(full_sweeps,len(products)))
@@ -100,10 +126,8 @@ def scenario(config, seed=None):
                 add("Trading & quoting","bob" if side=="Sell" else "alice",p,side,price,qty,True)
         batch += 1
         full_sweeps -= len(selected)
-        if spreads and wave in special_at:
-            which = special_at[wave]
-            special(which)
-            done_special.add(which)
+        for episode in special_at.get(wave,[]):
+            special(episode)
         wave += 1
 
     for _ in range(residual//2):
@@ -119,9 +143,6 @@ def scenario(config, seed=None):
         book[side][price].append(quantity)
         add("Trading & quoting","alice" if side=="Buy" else "bob",p,side,price,quantity,True)
         batch += 1
-    if spreads:
-        for which in sorted(set(range(3))-done_special):
-            special(which)
     if len(steps)!=20000:
         raise AssertionError("Demo order budget mismatch")
     total_weight = sum(s["weight"] for s in steps)

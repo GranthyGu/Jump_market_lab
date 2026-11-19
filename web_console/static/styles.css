@@ -11,6 +11,7 @@
   --activity-row-height:46px;
   --log-row-height:18px;
   --journal-row-height:40px;
+  --shutdown-red:#ff6b7c;
   --ui-size:clamp(12px,.94vw,15px);
   --depth-size:clamp(11px,.9vw,14px);
 }
@@ -44,10 +45,12 @@ h2 { font-size:14px; }
 .text-button { font-size:12px; }
 .icon-button { width:27px; height:27px; padding:4px; }
 .small-button { width:24px; height:24px; padding:3px; }
-.compact-journal { height:70px; flex:0 0 70px; display:flex; flex-direction:column; }
+/* Header + three 18px log lines + margins and borders. */
+.compact-journal { height:88px; flex:0 0 88px; display:flex; flex-direction:column; }
 .compact-journal .section-heading { height:28px; flex:0 0 28px; padding:3px 8px; }
 .mini-log { flex:1; min-height:0; height:auto; margin:0 8px 4px; overflow:hidden; font:12px/var(--log-row-height) var(--mono); }
 .log-row { height:var(--log-row-height); min-height:var(--log-row-height); padding:0; gap:6px; line-height:var(--log-row-height); overflow:hidden; }
+.mini-log .log-row { align-items:baseline; }
 .log-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .log-time { font-size:11px; }
 .log-empty { font-size:12px; padding:0; }
@@ -204,7 +207,7 @@ h2 { font-size:14px; }
   .topbar { height:38px; flex-basis:38px; }
   .workspace { padding:5px 8px; gap:6px; }
   .market-column,.trading-column { gap:6px; }
-  .compact-journal { height:52px; flex-basis:52px; }
+  .compact-journal { height:86px; flex-basis:86px; }
   .compact-journal .section-heading { height:26px; flex-basis:26px; }
   .trader { grid-template-rows:41px auto minmax(0,1.5fr) minmax(0,.7fr); }
   .account-header { height:41px; padding-top:3px; padding-bottom:3px; }
@@ -255,8 +258,13 @@ h2 { font-size:14px; }
 .depth-quantity .implied-value { font-size:max(8px,calc(var(--book-qty-size,12px) - 1px)); line-height:1; white-space:nowrap; }
 .depth-header { font-size:var(--book-meta-size,10px); }
 .depth-orders { text-overflow:clip; }
-#publisher-log { --log-row-height:34px; }
-#publisher-log .log-text { white-space:normal; overflow-wrap:anywhere; line-height:16px; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+/* Keep engine shutdown conspicuous in both the controls and the event journal. */
+#power-button[data-action="shutdown"] { color:var(--shutdown-red); font-weight:750; background:#ff6b7c18; border-color:#ff6b7c88; }
+#power-button[data-action="shutdown"]:hover:not(:disabled) { background:#ff6b7c2b; border-color:var(--shutdown-red); }
+#power-button[data-action="shutdown"]:disabled { opacity:.75; }
+#cluster-badge.offline,.operation-status.shutdown { color:var(--shutdown-red); font-weight:750; }
+.log-row.engine-shutdown { color:var(--shutdown-red); font-weight:700; background:#ff6b7c12; box-shadow:inset 3px 0 0 var(--shutdown-red); padding-left:7px; }
+.log-row.engine-shutdown .log-text,.log-row.engine-shutdown .log-time,.log-row.engine-shutdown .log-source { color:var(--shutdown-red); }
 .history-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); gap:4px; padding:3px 0 5px; flex-shrink:0; }
 .history-filters select,.history-filters input { width:100%; min-width:0; height:27px; padding:0 6px; font-size:12px; }
 .history-filters input { grid-column:1 / -1; font-family:var(--mono); }
@@ -265,4 +273,4 @@ h2 { font-size:14px; }
 .trader .activity-tab { font-size:12px; }
 .trader .order-row-title { min-width:0; }
 .trader .order-row-values { flex-shrink:0; }
-@media(max-height:700px) { #publisher-log { --log-row-height:18px; } #publisher-log .log-text { white-space:nowrap; display:block; } .history-filters select,.history-filters input { height:24px; } }
+@media(max-height:700px) { .history-filters select,.history-filters input { height:24px; } }

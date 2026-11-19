@@ -376,8 +376,12 @@ function sourceMatch(row, source) {
   if (source==='system') return !['publisher','feed','gateway','alice','bob'].includes(row.source);
   return row.source===source;
 }
+function isEngineShutdown(row) {
+  if (row.source==='console') return /^(?:SHUTDOWN\b|ENGINES OFFLINE\b)/i.test(row.text);
+  return row.source==='cluster' && /(?:^|\s)(?:GROUP_SHUTDOWN_(?:DRAINED|UNRESOLVED)|HOST STOP component=cluster|PROCESS EXIT)\b/i.test(row.text);
+}
 function logRow(row, full=false) {
-  return `<div class="log-row ${className(row.level)}" title="${esc(row.time+' ['+row.source+'] '+row.text)}"><span class="log-time">${timeText(row.time)}</span>${full?`<span class="log-source">${esc(row.source)}</span>`:''}<span class="log-text">${esc(row.text)}</span></div>`;
+  return `<div class="log-row ${className(row.level)}${isEngineShutdown(row)?' engine-shutdown':''}" title="${esc(row.time+' ['+row.source+'] '+row.text)}"><span class="log-time">${timeText(row.time)}</span>${full?`<span class="log-source">${esc(row.source)}</span>`:''}<span class="log-text">${esc(row.text)}</span></div>`;
 }
 
 function renderSmallLogs() {
@@ -456,7 +460,7 @@ function renderServices() {
   $('restart-button').disabled=demoBusy||!running||Boolean(s.operation);
   $('fault-button').disabled=demoBusy||!s.owned||Boolean(s.operation);
   const status=$('operation-status');
-  if(s.operation){status.className='operation-status busy';status.textContent=`${s.operation.action.toUpperCase()} · ${s.operation.target==='all'?'all shards':`shard ${s.operation.target}`} · ${Math.max(0,Math.floor(ui.state.time-s.operation.started))}s`;} 
+  if(s.operation){status.className=`operation-status busy${s.operation.action==='shutdown'?' shutdown':''}`;status.textContent=`${s.operation.action.toUpperCase()} · ${s.operation.target==='all'?'all shards':`shard ${s.operation.target}`} · ${Math.max(0,Math.floor(ui.state.time-s.operation.started))}s`;}
   else if(s.error){status.className='operation-status error';status.textContent=s.error;}
   else if(s.cluster==='Paused'){status.className='operation-status busy';status.textContent=s.shards.some(row=>row.phase==='interrupted')?'Engine process interrupted · use Interrupt → Resume shard':'Exchange paused · inspect System log and Workspace details for recovery status';}
   else {status.className='operation-status';status.textContent=ui.state.demo?.enabled?'Demo workspace · restart preserves data · stop.sh clears this session':running?(s.owned?'Managed locally · data preserved across restarts':'Attached to existing services · planned restart available'):'Persistent state is kept. Recover engines to reconnect.';}

@@ -1,6 +1,7 @@
 """Real demo replay, chart, lifecycle and disposal checks on isolated services."""
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 import subprocess
 import time
@@ -113,6 +114,17 @@ def run(command, root, log, web):
         assert all(not t["history_more"] for t in state["traders"].values())
         kinds={r["type"] for t in state["traders"].values() for r in t["history"]}
         assert {"Direct","Calendar spread","Implied leg","Butterfly"}<=kinds,kinds
+        executions={(r["type"],r["symbol"],r["id"]):r for t in state["traders"].values() for r in t["history"]}
+        execution_counts=Counter(r["type"] for r in executions.values())
+        calendar_counts=Counter(r["symbol"] for r in executions.values() if r["type"]=="Calendar spread")
+        assert calendar_counts=={"SP_AB":500,"SP_AC":500},calendar_counts
+        assert execution_counts["Butterfly"]==200,execution_counts
+        for slot,trader in state["traders"].items():
+            calendars=[r for r in trader["history"] if r["type"]=="Calendar spread"]
+            assert len(calendars)==500,(slot,len(calendars))
+            assert {(r["symbol"],r["side"]) for r in calendars}=={
+                (symbol,side) for symbol in ("SP_AB","SP_AC") for side in ("Buy","Sell")}
+        checked("1,000 native calendar executions (500 per spread) and 200 butterflies, with both accounts buying and selling")
         for product in state["products"]:
             chart=get("/api/chart?symbol="+urllib.parse.quote(product["symbol"]))
             assert len(chart["points"])>=300,product
@@ -166,7 +178,8 @@ def run(command, root, log, web):
         stop(third)
         assert before==fingerprint()
         checked("stop.sh during replay cancels injection and clears the partially populated session")
-        (root/"demo-results.json").write_text(json.dumps(dict(ok=True,checks=checks,replay=demo,liquidity_observations=mixed_samples),indent=2))
+        (root/"demo-results.json").write_text(json.dumps(dict(ok=True,checks=checks,replay=demo,
+            liquidity_observations=mixed_samples,execution_counts=execution_counts,calendar_by_symbol=calendar_counts),indent=2))
         return checks
     finally:
         if process and process.poll() is None:
